@@ -1,0 +1,12 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- 펜처럼 45도로 기울인 지우개: 위는 종이 띠(진하게), 아래는 고무(연하게). 지우는 끝이 왼쪽 아래 -->
+    <group android:pivotX="12" android:pivotY="12" android:rotation="45"
+        android:translateX="1.2" android:translateY="-1.2">
+        <path android:fillColor="?attr/colorControlNormal"
+            android:pathData="M10.4,3h3.2a1.1,1.1 0,0 1,1.1 1.1V10.6H9.3V4.1a1.1,1.1 0,0 1,1.1 -1.1z" />
+        <path android:fillColor="?attr/colorControlNormal" android:fillAlpha="0.45"
+            android:pathData="M9.3,11.4h5.4v4.1a1.1,1.1 0,0 1,-1.1 1.1h-3.2a1.1,1.1 0,0 1,-1.1 -1.1z" />
+    </group>
+</vector>

@@ -10,10 +10,12 @@ import android.graphics.drawable.LayerDrawable
 import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Bundle
+import android.text.format.DateFormat
 import android.view.InputDevice
 import android.widget.PopupMenu
 import android.view.View
 import android.widget.ImageButton
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
@@ -24,7 +26,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.IntentCompat
 import androidx.lifecycle.lifecycleScope
-import com.google.android.material.button.MaterialButtonToggleGroup
 import com.google.android.material.chip.Chip
 import com.google.android.material.chip.ChipGroup
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -35,6 +36,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.Date
 import kotlin.math.abs
 
 class ViewerActivity : AppCompatActivity() {
@@ -57,13 +59,17 @@ class ViewerActivity : AppCompatActivity() {
     private lateinit var saveButton: View
 
     /** 탭 하나 = 열린 문서 하나. 문서 화면(DocumentView)은 하나를 같이 쓰고 탭을 바꿀 때 갈아 끼운다 */
-    private class DocTab(val uri: Uri, var canOverwrite: Boolean) {
+    private class DocTab(var uri: Uri, var canOverwrite: Boolean, var isNewNote: Boolean) {
         var name = "문서"
         var type = DocType.UNKNOWN
         var pdf: PdfDoc? = null
         var ink: InkDocument? = null
         /** 앱 캐시에 복사한 원본 PDF (저장할 때 이 파일에 필기를 얹는다) */
         var sourcePdf: File? = null
+        /** 화면에 그리는 PDF (필기를 뺀 사본이거나 [sourcePdf] 그대로) */
+        var renderPdf: File? = null
+        /** 빈 쪽 넣기·쪽 지우기로 PDF를 다시 만드는 중 */
+        var pagesBusy = false
         /** 다른 탭에 가 있는 동안 기억해 둔 스크롤·확대 위치 */
         var viewState: DocumentView.ViewState? = null
     }
@@ -112,6 +118,7 @@ class ViewerActivity : AppCompatActivity() {
         pasteButton = findViewById(R.id.pasteButton)
         selectionBar = findViewById(R.id.selectionBar)
         setupSelectionTools()
+        setupEraserTools()
 
         docView.listener = object : DocumentView.Listener {
             override fun onPageChanged(page: Int, count: Int) {
@@ -121,12 +128,19 @@ class ViewerActivity : AppCompatActivity() {
 
             override fun onSelectionChanged(rect: RectF?, count: Int) = placeSelectionBar(rect, count)
 
+            override fun onPenDown() = hideOptionBar()
+
             override fun onShapeFailed(kind: ShapeKind) {
-                Toast.makeText(this@ViewerActivity, "${kind.label}으로 맞추지 못했어요. 조금 더 크게 그려 보세요.", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@ViewerActivity, "${withRo(kind.label)} 맞추지 못했어요. 조금 더 크게 그려 보세요.", Toast.LENGTH_SHORT).show()
             }
         }
 
         setupTools()
+        // 문서 위에 겹쳐 뜬 줄들의 높이만큼 문서를 더 스크롤할 수 있게 한다
+        findViewById<View>(R.id.bottomOverlay).addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            docView.bottomInset = listOf(shapeBar, optionBar)
+                .sumOf { if (it.visibility == View.VISIBLE) it.height else 0 }.toFloat()
+        }
         setupTabs()
         setupActions()
         onBackPressedDispatcher.addCallback(this, backCallback)
@@ -153,7 +167,7 @@ class ViewerActivity : AppCompatActivity() {
         uri ?: return false
         val writable = intent.getBooleanExtra(EXTRA_WRITABLE, false) ||
             (intent.flags and Intent.FLAG_GRANT_WRITE_URI_PERMISSION) != 0
-        openTab(uri, writable)
+        openTab(uri, writable, intent.getBooleanExtra(EXTRA_NEW_NOTE, false))
         return true
     }
 
@@ -180,7 +194,7 @@ class ViewerActivity : AppCompatActivity() {
         }
     }
 
-    private fun openTab(uri: Uri, writable: Boolean) {
+    private fun openTab(uri: Uri, writable: Boolean, newNote: Boolean) {
         docs.firstOrNull { it.uri == uri }?.let {
             // 이미 열려 있는 문서면 그 탭으로
             docTabs.select(docs.indexOf(it), notify = true)
@@ -193,7 +207,7 @@ class ViewerActivity : AppCompatActivity() {
                 .show()
             return
         }
-        val t = DocTab(uri, writable)
+        val t = DocTab(uri, writable && !newNote, newNote)
         docs.add(t)
         openTabs = docs.size
         updateAddButton()
@@ -357,6 +371,7 @@ class ViewerActivity : AppCompatActivity() {
                 clean to PdfInk.extract(file, clean)
             } else file to null
         }
+        t.renderPdf = renderFile
         val d = PdfDoc.open(renderFile)
         if (t !in docs) {
             // 읽는 사이 탭이 닫힘
@@ -419,10 +434,16 @@ class ViewerActivity : AppCompatActivity() {
         val popup = PopupMenu(this, anchor)
         popup.menuInflater.inflate(R.menu.viewer, popup.menu)
         popup.menu.findItem(R.id.action_save_as).isEnabled = ink != null
+        popup.menu.findItem(R.id.action_insert_page).isEnabled = ink != null
+        popup.menu.findItem(R.id.action_delete_page).isEnabled = (current?.pdf?.pageCount ?: 0) > 1
         popup.menu.findItem(R.id.action_finger).isChecked = docView.fingerDrawing
         popup.setOnMenuItemClickListener { item ->
             when (item.itemId) {
                 R.id.action_save_as -> current?.let { save(it, asNew = true) }
+                R.id.action_insert_plain -> insertBlankPage(Paper.PLAIN)
+                R.id.action_insert_grid -> insertBlankPage(Paper.GRID)
+                R.id.action_insert_lined -> insertBlankPage(Paper.LINED)
+                R.id.action_delete_page -> confirmDeletePage()
                 R.id.action_finger -> {
                     docView.fingerDrawing = !docView.fingerDrawing
                     prefs.edit().putBoolean("finger", docView.fingerDrawing).apply()
@@ -438,15 +459,106 @@ class ViewerActivity : AppCompatActivity() {
         popup.show()
     }
 
+    // ================= 쪽 넣기 · 지우기 =================
+
+    /** 보고 있는 쪽 뒤에 같은 크기의 빈 쪽을 넣고 그 쪽으로 간다 */
+    private fun insertBlankPage(paper: Paper) {
+        val t = current ?: return
+        val d = t.pdf ?: return
+        val page = docView.currentPage().coerceIn(0, d.pageCount - 1)
+        val size = d.sizes[page]
+        val at = page + 1
+        editPages(t, { src, out -> BlankPages.insert(src, out, at, paper, size.width, size.height) }) { inkDoc ->
+            inkDoc.insertPage(at)
+            at
+        }
+    }
+
+    private fun confirmDeletePage() {
+        val t = current ?: return
+        val d = t.pdf ?: return
+        if (d.pageCount <= 1) return
+        val page = docView.currentPage().coerceIn(0, d.pageCount - 1)
+        val hasInk = t.ink?.pages?.getOrNull(page)?.isNotEmpty() == true
+        MaterialAlertDialogBuilder(this)
+            .setTitle("${page + 1}쪽을 지울까요?")
+            .setMessage(
+                (if (hasInk) "이 쪽의 필기도 함께 지워집니다. " else "") +
+                    "쪽 지우기는 실행 취소할 수 없습니다.\n(저장하기 전까지 원본 파일은 그대로입니다)"
+            )
+            .setPositiveButton("지우기") { _, _ ->
+                editPages(t, { src, out -> BlankPages.remove(src, out, page) }) { inkDoc ->
+                    inkDoc.removePage(page)
+                    page.coerceAtMost(inkDoc.pages.size - 1)
+                }
+            }
+            .setNegativeButton("취소", null)
+            .show()
+    }
+
+    /**
+     * 탭의 PDF 쪽 구성을 바꾼다. [pdfOp]로 원본·화면용 PDF를 새로 만들고,
+     * 다 되면 [applyInk]로 필기 쪽 목록을 같이 맞춘 뒤 돌려준 쪽으로 옮긴다.
+     */
+    private fun editPages(t: DocTab, pdfOp: (File, File) -> Unit, applyInk: (InkDocument) -> Int) {
+        val src = t.sourcePdf ?: return
+        val render = t.renderPdf ?: return
+        val inkDoc = t.ink ?: return
+        if (t.pagesBusy) return
+        t.pagesBusy = true
+        docView.clearSelection()
+        lifecycleScope.launch {
+            progress.visibility = View.VISIBLE
+            try {
+                val (newSrc, newRender) = withContext(Dispatchers.IO) {
+                    val ns = FileUtil.tempFile(this@ViewerActivity, "pages_src", "pdf")
+                    pdfOp(src, ns)
+                    val nr = if (render == src) ns
+                    else FileUtil.tempFile(this@ViewerActivity, "pages_view", "pdf").also { pdfOp(render, it) }
+                    ns to nr
+                }
+                val nd = PdfDoc.open(newRender)
+                if (t !in docs) {
+                    nd.close()
+                    return@launch
+                }
+                val old = t.pdf
+                t.pdf = nd
+                t.sourcePdf = newSrc
+                t.renderPdf = newRender
+                val target = applyInk(inkDoc)
+                if (current === t) {
+                    docView.setDocument(nd, inkDoc, docView.viewState())
+                    docView.post { docView.scrollToPage(target) }
+                } else t.viewState = null
+                old?.close()
+                updateTabTitle(t)
+            } catch (e: Exception) {
+                MaterialAlertDialogBuilder(this@ViewerActivity)
+                    .setMessage("쪽을 바꾸지 못했습니다.\n${e.message ?: e.javaClass.simpleName}")
+                    .setPositiveButton("확인", null)
+                    .show()
+            } finally {
+                t.pagesBusy = false
+                if (current === t) progress.visibility = View.GONE
+            }
+        }
+    }
+
     // ================= 저장 =================
 
     private fun suggestedName(t: DocTab): String {
+        if (t.isNewNote) return "노트 ${DateFormat.format("yyyy-MM-dd", Date())}.pdf"
         val base = FileUtil.baseName(t.name)
         return if (t.type == DocType.PDF) "${base}_필기.pdf" else "$base.pdf"
     }
 
     private fun save(t: DocTab, asNew: Boolean) {
         if (t.ink == null) return
+        if (t.pagesBusy) {
+            Toast.makeText(this, "쪽을 바꾸는 중입니다. 잠시 뒤에 저장해 주세요.", Toast.LENGTH_SHORT).show()
+            return
+        }
         if (!asNew && t.canOverwrite && t.type == DocType.PDF) saveTo(t, t.uri, overwrite = true)
         else saveAs(t)
     }
@@ -477,6 +589,7 @@ class ViewerActivity : AppCompatActivity() {
                 if (target.scheme == "file") target.path?.let {
                     MediaScannerConnection.scanFile(this@ViewerActivity, arrayOf(it), null, null)
                 }
+                if (t.isNewNote && !overwrite) adoptSavedNote(t, target)
                 inkDoc.markSaved()
                 Toast.makeText(this@ViewerActivity, "'${t.name}' 저장했습니다.", Toast.LENGTH_SHORT).show()
                 if (closeAfterSave === t) {
@@ -499,6 +612,29 @@ class ViewerActivity : AppCompatActivity() {
                 progress.visibility = View.GONE
             }
         }
+    }
+
+    /** 새 노트를 처음 저장하면 그 파일을 이 탭의 문서로 삼는다 (다음부터는 저장 버튼이 그 파일에 덮어쓴다) */
+    private fun adoptSavedNote(t: DocTab, target: Uri) {
+        runCatching {
+            contentResolver.takePersistableUriPermission(
+                target, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+        }
+        t.uri = target
+        t.isNewNote = false
+        t.canOverwrite = true
+        t.name = FileUtil.displayName(this, target)
+        Recents.add(this, target.toString(), t.name)
+        updateTabTitle(t)
+    }
+
+    /** '직선으로', '지수로', '원으로' (받침이 없거나 ㄹ받침이면 '로') */
+    private fun withRo(word: String): String {
+        val last = word.lastOrNull() ?: return word
+        if (last !in '가'..'힣') return word + "로"
+        val jong = (last - '가') % 28
+        return word + if (jong == 0 || jong == 8) "로" else "으로"
     }
 
     /** 기기에 펜 입력(S펜 등)이 있는지. 펜을 인식하는 화면은 입력 장치에 SOURCE_STYLUS가 붙는다 */
@@ -526,15 +662,166 @@ class ViewerActivity : AppCompatActivity() {
         }
         pasteButton.setOnClickListener { docView.pasteClipboard() }
 
-        // 자유 선택 / 네모 선택
+        // 자유 선택 / 네모 선택 (고르는 곳은 옵션 줄)
         docView.lassoRect = prefs.getBoolean("lassoRect", false)
-        val mode = findViewById<MaterialButtonToggleGroup>(R.id.lassoMode)
-        mode.check(if (docView.lassoRect) R.id.lassoRectBtn else R.id.lassoFree)
-        mode.addOnButtonCheckedListener { _, id, checked ->
-            if (!checked) return@addOnButtonCheckedListener
-            docView.lassoRect = id == R.id.lassoRectBtn
-            prefs.edit().putBoolean("lassoRect", docView.lassoRect).apply()
+    }
+
+    // ================= 지우개 · 선택 옵션 줄 =================
+    // 지우개나 선택 도구를 누르면 도구막대 위로 옵션 줄이 올라오고, 하나 고르면 사라진다.
+    // 도구 버튼 아이콘은 지금 고른 방식을 보여 준다.
+
+    private lateinit var optionBar: View
+    private lateinit var optionRow: LinearLayout
+    /** 옵션 줄이 떠 있는 도구 (없으면 null) */
+    private var optionTool: Tool? = null
+
+    private fun setupEraserTools() {
+        optionBar = findViewById(R.id.toolOptionBar)
+        optionRow = findViewById(R.id.toolOptions)
+        docView.eraserMode = prefs.getString("eraserMode", null)
+            ?.let { n -> EraserMode.entries.firstOrNull { it.name == n } } ?: EraserMode.STROKE
+        docView.eraseHlOnly = prefs.getBoolean("eraseHlOnly", false)
+    }
+
+    /** 지우개 버튼: 획/영역 표시 + 형광펜만이면 형광색 지우개 */
+    private fun updateEraserIcon() {
+        val area = docView.eraserMode == EraserMode.AREA
+        val mark = getDrawable(if (area) R.drawable.ic_eraser_mark_area else R.drawable.ic_eraser_mark_stroke)
+        val body = getDrawable(if (docView.eraseHlOnly) R.drawable.ic_eraser_body_hl else R.drawable.ic_eraser_body)
+        val button = toolButtons.getValue(Tool.ERASER)
+        button.setImageDrawable(LayerDrawable(arrayOf(mark, body)))
+        button.contentDescription = (if (area) "영역 지우개" else "획 지우개") + if (docView.eraseHlOnly) " (형광펜만)" else ""
+    }
+
+    /** 선택 버튼: 자유 선택이면 올가미, 네모 선택이면 점선 네모 */
+    private fun updateLassoIcon() {
+        val button = toolButtons.getValue(Tool.LASSO)
+        button.setImageResource(if (docView.lassoRect) R.drawable.ic_select_rect else R.drawable.ic_lasso)
+        button.contentDescription = if (docView.lassoRect) "네모 선택" else "자유 선택"
+    }
+
+    private fun showOptionBar(t: Tool) {
+        optionRow.removeAllViews()
+        when (t) {
+            Tool.ERASER -> {
+                val hl = docView.eraseHlOnly
+                addOption(R.drawable.ic_eraser_stroke, "획 지우개", docView.eraserMode == EraserMode.STROKE) {
+                    setEraserMode(EraserMode.STROKE)
+                }
+                addOption(R.drawable.ic_eraser_area, "영역 지우개", docView.eraserMode == EraserMode.AREA) {
+                    setEraserMode(EraserMode.AREA)
+                }
+                addOptionSeparator()
+                addOption(R.drawable.ic_eraser_body_hl, "형광펜만", hl) {
+                    docView.eraseHlOnly = !hl
+                    prefs.edit().putBoolean("eraseHlOnly", !hl).apply()
+                    updateEraserIcon()
+                }
+                addOptionSeparator()
+                addOption(R.drawable.ic_eraser_page, if (hl) "쪽 형광펜 모두 지우기" else "쪽 전체 지우기", false) {
+                    confirmClearPage()
+                }
+            }
+            Tool.LASSO -> {
+                addOption(R.drawable.ic_lasso, "자유 선택", !docView.lassoRect) { setLassoRect(false) }
+                addOption(R.drawable.ic_select_rect, "네모 선택", docView.lassoRect) { setLassoRect(true) }
+            }
+            else -> return
         }
+        optionTool = t
+        optionBar.visibility = View.VISIBLE
+        // 도구막대 쪽에서 살짝 올라오며 나타난다
+        optionBar.animate().cancel()
+        optionBar.alpha = 0f
+        optionBar.translationY = 12 * resources.displayMetrics.density
+        optionBar.animate().alpha(1f).translationY(0f).setDuration(150).start()
+    }
+
+    private fun hideOptionBar() {
+        if (optionTool == null) return
+        optionTool = null
+        optionBar.animate().cancel()
+        optionBar.visibility = View.GONE
+    }
+
+    private fun setEraserMode(m: EraserMode) {
+        docView.eraserMode = m
+        prefs.edit().putString("eraserMode", m.name).apply()
+        updateEraserIcon()
+    }
+
+    private fun setLassoRect(rect: Boolean) {
+        docView.lassoRect = rect
+        prefs.edit().putBoolean("lassoRect", rect).apply()
+        updateLassoIcon()
+    }
+
+    /** 옵션 줄의 칸 하나 (아이콘 + 이름). 누르면 옵션 줄을 닫고 실행한다 */
+    private fun addOption(icon: Int, label: String, selected: Boolean, onClick: () -> Unit) {
+        val d = resources.displayMetrics.density
+        val item = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = android.view.Gravity.CENTER_HORIZONTAL
+            minimumWidth = (72 * d).toInt()
+            setPadding((10 * d).toInt(), (6 * d).toInt(), (10 * d).toInt(), (4 * d).toInt())
+            setBackgroundResource(R.drawable.bg_tool)
+            isSelected = selected
+            contentDescription = if (selected) "$label (선택됨)" else label
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { marginEnd = (4 * d).toInt() }
+            setOnClickListener {
+                hideOptionBar()
+                onClick()
+            }
+        }
+        item.addView(ImageView(this).apply {
+            setImageResource(icon)
+            layoutParams = LinearLayout.LayoutParams((28 * d).toInt(), (28 * d).toInt())
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        })
+        item.addView(TextView(this).apply {
+            text = label
+            isSingleLine = true
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_LabelMedium)
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        })
+        optionRow.addView(item)
+    }
+
+    private fun addOptionSeparator() {
+        val d = resources.displayMetrics.density
+        optionRow.addView(View(this).apply {
+            layoutParams = LinearLayout.LayoutParams((1 * d).toInt(), (32 * d).toInt()).apply {
+                marginStart = (6 * d).toInt()
+                marginEnd = (10 * d).toInt()
+            }
+            setBackgroundColor(com.google.android.material.color.MaterialColors.getColor(
+                this, com.google.android.material.R.attr.colorOutlineVariant
+            ))
+        })
+    }
+
+    /** 보고 있는 쪽의 필기(형광펜만 켜 두었으면 형광펜만)를 모두 지운다. 실행 취소로 되돌릴 수 있다 */
+    private fun confirmClearPage() {
+        val inkDoc = ink ?: return
+        val page = docView.currentPage()
+        if (page < 0) return
+        val hl = docView.eraseHlOnly
+        val (subj, obj) = if (hl) "형광펜이" to "형광펜을" else "필기가" to "필기를"
+        if (inkDoc.pages[page].none { !hl || it.tool == Tool.HIGHLIGHTER }) {
+            Toast.makeText(this, "${page + 1}쪽에는 지울 ${subj} 없습니다.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        MaterialAlertDialogBuilder(this)
+            .setTitle("${page + 1}쪽의 ${obj} 모두 지울까요?")
+            .setMessage("실행 취소로 되돌릴 수 있습니다.")
+            .setPositiveButton("지우기") { _, _ -> docView.clearPage(hl) }
+            .setNegativeButton("취소", null)
+            .show()
     }
 
     /** 선택 상자 바로 위(자리가 없으면 아래)에 '삭제' 막대를 띄운다 */
@@ -650,11 +937,23 @@ class ViewerActivity : AppCompatActivity() {
 
         toolButtons.getValue(Tool.SHAPE).setImageDrawable(ShapePenDrawable(this))
         setupShapeBar()
-        toolButtons.forEach { (t, b) -> b.setOnClickListener { selectTool(t) } }
+        updateEraserIcon()
+        updateLassoIcon()
+        toolButtons.forEach { (t, b) ->
+            b.setOnClickListener {
+                if (t == Tool.ERASER || t == Tool.LASSO) {
+                    // 지우개·선택은 누를 때마다 옵션 줄을 열고, 열려 있으면 닫는다
+                    val showing = optionTool == t
+                    selectTool(t)
+                    if (showing) hideOptionBar() else showOptionBar(t)
+                } else selectTool(t)
+            }
+        }
         selectTool(Tool.PEN)
     }
 
     private fun selectTool(t: Tool) {
+        if (optionTool != t) hideOptionBar()
         docView.tool = t
         toolButtons.forEach { (k, b) -> b.isSelected = k == t }
         shapeBar.visibility = if (t == Tool.SHAPE) View.VISIBLE else View.GONE
@@ -666,12 +965,13 @@ class ViewerActivity : AppCompatActivity() {
     private fun setupShapeBar() {
         val group = findViewById<ChipGroup>(R.id.shapeChips)
         docView.shapeKind = prefs.getString("shapeKind", null)
+            // 지수·로그 버튼이 따로 있던 때 고른 값
+            ?.let { n -> if (n == "EXPONENTIAL" || n == "LOG") ShapeKind.EXP_LOG.name else n }
             ?.let { n -> ShapeKind.entries.firstOrNull { it.name == n } } ?: ShapeKind.LINE
-        fun planned(label: String) =
-            Toast.makeText(this, "$label: 구현 예정입니다", Toast.LENGTH_SHORT).show()
-
         // 펼쳐 고르는 무리: 칩에는 지금 고른 종류 이름이 보이고, 누르면 펼쳐진다
         val families = mapOf(
+            // 다항: 직선(일차)·이차·삼차·사차
+            ShapeKind.LINE to listOf(ShapeKind.LINE, ShapeKind.QUADRATIC, ShapeKind.CUBIC, ShapeKind.QUARTIC),
             ShapeKind.CIRCLE to listOf(ShapeKind.CIRCLE, ShapeKind.ELLIPSE, ShapeKind.CIRCLE_CR),
             ShapeKind.TRIANGLE to listOf(
                 ShapeKind.TRIANGLE, ShapeKind.TRI_EQUILATERAL, ShapeKind.TRI_RIGHT,
@@ -682,17 +982,18 @@ class ViewerActivity : AppCompatActivity() {
                 ShapeKind.RHOMBUS, ShapeKind.PARALLELOGRAM,
             ),
         )
-        // null = 아직 구현하지 않은 도형 (버튼만)
         val order = listOf(
-            "직선" to ShapeKind.LINE, "이차" to ShapeKind.QUADRATIC, "삼차" to ShapeKind.CUBIC,
-            "사차" to ShapeKind.QUARTIC, "원" to ShapeKind.CIRCLE, "쌍곡선" to null,
+            "다항" to ShapeKind.LINE, "원" to ShapeKind.CIRCLE, "쌍곡선" to ShapeKind.HYPERBOLA,
             "삼각형" to ShapeKind.TRIANGLE, "사각형" to ShapeKind.QUADRILATERAL,
-            "지수" to null, "로그" to null, "사인·코사인" to null, "탄젠트" to null,
+            "지수·로그" to ShapeKind.EXP_LOG,
+            "사인·코사인" to ShapeKind.SINE, "탄젠트" to ShapeKind.TANGENT,
         )
         fun selectKind(kind: ShapeKind) {
             docView.shapeKind = kind
+            docView.shapeGuide = guideStyle(kind)
             prefs.edit().putString("shapeKind", kind.name).apply()
         }
+        docView.shapeGuide = guideStyle(docView.shapeKind)
         for ((label, kind) in order) {
             val chip = layoutInflater.inflate(R.layout.item_shape_chip, group, false) as Chip
             chip.text = label
@@ -719,20 +1020,54 @@ class ViewerActivity : AppCompatActivity() {
                         show()
                     }
                 }
-            } else if (kind != null) {
+            } else {
                 chip.tag = kind
                 chip.isCheckable = true
                 group.addView(chip)
                 if (kind == docView.shapeKind) group.check(chip.id)
-            } else {
-                chip.isCheckable = false
-                chip.setOnClickListener { planned(label) }
-                group.addView(chip)
+                // 점근선·축이 있는 도형: 누르면 위로 보조선 방식 고르는 창
+                if (kind in GUIDE_KINDS) {
+                    chip.text = "$label ▾"
+                    chip.setOnClickListener { v ->
+                        group.check(chip.id)
+                        showGuideMenu(v, kind)
+                    }
+                }
             }
         }
+
+
         group.setOnCheckedStateChangeListener { g, ids ->
             val kind = ids.firstOrNull()?.let { g.findViewById<Chip>(it)?.tag as? ShapeKind } ?: return@setOnCheckedStateChangeListener
             selectKind(kind)
+        }
+    }
+
+    /** 보정 펜 도형별 보조선 방식 (도형마다 따로 기억) */
+    private fun guideStyle(kind: ShapeKind): GuideStyle {
+        if (kind !in GUIDE_KINDS) return GuideStyle.NONE
+        val n = prefs.getString("guide_${kind.name}", null)
+        return GuideStyle.entries.firstOrNull { it.name == n } ?: GuideStyle.NONE
+    }
+
+    /** 점근선(또는 사인·코사인의 축)을 안 그림 / 점선 / (축만) 실선 중에서 고르는 창 */
+    private fun showGuideMenu(anchor: View, kind: ShapeKind) {
+        val what = if (kind == ShapeKind.SINE) "축" else "점근선"
+        val styles = if (kind == ShapeKind.SINE) GuideStyle.entries else listOf(GuideStyle.NONE, GuideStyle.DASHED)
+        val names = mapOf(GuideStyle.NONE to "안 그림", GuideStyle.DASHED to "점선", GuideStyle.SOLID to "실선")
+        val cur = guideStyle(kind)
+        PopupMenu(this, anchor).apply {
+            styles.forEachIndexed { i, st ->
+                menu.add(1, i, i, "$what ${names.getValue(st)}").isChecked = st == cur
+            }
+            menu.setGroupCheckable(1, true, true)
+            setOnMenuItemClickListener { item ->
+                val st = styles[item.itemId]
+                prefs.edit().putString("guide_${kind.name}", st.name).apply()
+                if (docView.shapeKind == kind) docView.shapeGuide = st
+                true
+            }
+            show()
         }
     }
 
@@ -916,7 +1251,11 @@ class ViewerActivity : AppCompatActivity() {
         const val EXTRA_WRITABLE = "writable"
         /** 앱의 파일 탐색기에서 연 문서 */
         const val EXTRA_FROM_BROWSER = "fromBrowser"
+        /** 탐색기의 '새 노트'로 만든 빈 문서 (처음 저장할 때 저장 위치를 고른다) */
+        const val EXTRA_NEW_NOTE = "newNote"
         private const val MAX_TABS = 6
+        /** 보조선(점근선·축)을 고를 수 있는 보정 펜 도형 */
+        private val GUIDE_KINDS = setOf(ShapeKind.HYPERBOLA, ShapeKind.EXP_LOG, ShapeKind.TANGENT, ShapeKind.SINE)
         private val TAB_ICON_PDF = Color.parseColor("#D93025")
         private val TAB_ICON_HWP = Color.parseColor("#2F6FC4")
         private val TAB_ICON_GRAY = Color.parseColor("#9E9E9E")

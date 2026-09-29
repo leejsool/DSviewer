@@ -4,6 +4,9 @@
     <item android:id="@+id/action_open_tabs" android:icon="@drawable/ic_doc"
         android:title="열린 문서" android:visible="false"
         app:showAsAction="ifRoom|withText" />
+    <item android:id="@+id/action_new_note" android:icon="@drawable/ic_add"
+        android:title="새 노트"
+        app:showAsAction="ifRoom|withText" />
     <item android:id="@+id/action_search" android:icon="@drawable/ic_search"
         android:title="이름으로 찾기"
         app:actionViewClass="androidx.appcompat.widget.SearchView"

@@ -1,6 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- 뷰어 탭 줄의 ⋮ 버튼 메뉴 (실행 취소·다시 실행·저장은 탭 줄 버튼) -->
 <menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@+id/action_insert_page" android:title="이 쪽 뒤에 빈 쪽 넣기">
+        <menu>
+            <item android:id="@+id/action_insert_plain" android:title="흰 바탕" />
+            <item android:id="@+id/action_insert_grid" android:title="모눈" />
+            <item android:id="@+id/action_insert_lined" android:title="줄" />
+        </menu>
+    </item>
+    <item android:id="@+id/action_delete_page" android:title="이 쪽 지우기" />
     <item android:id="@+id/action_save_as" android:title="다른 이름으로 저장" />
     <item android:id="@+id/action_finger" android:title="손가락으로 쓰기"
         android:checkable="true" />

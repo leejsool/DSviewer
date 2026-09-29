@@ -6,4 +6,4 @@ local.properties
 *.iml
 
 # 테스트용 실제 문서 (업무 문서 포함) — 저장소에 넣지 않음
-test/
+/test/

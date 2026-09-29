@@ -72,18 +72,70 @@
             android:layout_gravity="center"
             android:visibility="gone" />
 
-        <TextView
-            android:id="@+id/pageLabel"
-            android:layout_width="wrap_content"
+        <!-- 문서 위에 겹쳐 뜨는 아래쪽 묶음: 쪽 번호, 보정 펜 도형 줄, 지우개·선택 옵션 줄.
+             줄이 나타나도 문서 화면 크기는 그대로라 필기가 밀리지 않는다.
+             빈 곳은 터치를 받지 않아 아래 문서로 그대로 전달된다 -->
+        <LinearLayout
+            android:id="@+id/bottomOverlay"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_gravity="bottom|center_horizontal"
-            android:layout_marginBottom="12dp"
-            android:background="@drawable/bg_pill"
-            android:paddingHorizontal="14dp"
-            android:paddingVertical="5dp"
-            android:textColor="#FFFFFF"
-            android:textSize="13sp"
-            android:visibility="gone" />
+            android:layout_gravity="bottom"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/pageLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginBottom="12dp"
+                android:background="@drawable/bg_pill"
+                android:paddingHorizontal="14dp"
+                android:paddingVertical="5dp"
+                android:textColor="#FFFFFF"
+                android:textSize="13sp"
+                android:visibility="gone" />
+
+            <!-- 보정 펜을 고르면 나오는 도형 줄 (칩은 ViewerActivity.setupShapeBar에서 만든다) -->
+            <HorizontalScrollView
+                android:id="@+id/shapeBar"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="?attr/colorSurfaceContainer"
+                android:scrollbars="none"
+                android:visibility="gone">
+
+                <com.google.android.material.chip.ChipGroup
+                    android:id="@+id/shapeChips"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:paddingHorizontal="12dp"
+                    android:paddingTop="6dp"
+                    app:chipSpacingHorizontal="6dp"
+                    app:selectionRequired="true"
+                    app:singleLine="true"
+                    app:singleSelection="true" />
+            </HorizontalScrollView>
+
+            <!-- 지우개·선택 도구를 누르면 올라오는 옵션 줄. 하나 고르면 사라진다 (ViewerActivity.showOptionBar) -->
+            <HorizontalScrollView
+                android:id="@+id/toolOptionBar"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="?attr/colorSurfaceContainer"
+                android:scrollbars="none"
+                android:visibility="gone">
+
+                <LinearLayout
+                    android:id="@+id/toolOptions"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="8dp"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="2dp" />
+            </HorizontalScrollView>
+        </LinearLayout>
 
         <!-- 올가미로 고른 부분 위에 뜨는 막대 (위치는 ViewerActivity에서) -->
         <com.google.android.material.card.MaterialCardView
@@ -139,26 +191,7 @@
         </com.google.android.material.card.MaterialCardView>
     </FrameLayout>
 
-    <!-- 보정 펜을 고르면 나오는 도형 줄 (칩은 ViewerActivity.setupShapeBar에서 만든다) -->
-    <HorizontalScrollView
-        android:id="@+id/shapeBar"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:background="?attr/colorSurfaceContainer"
-        android:scrollbars="none"
-        android:visibility="gone">
 
-        <com.google.android.material.chip.ChipGroup
-            android:id="@+id/shapeChips"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:paddingHorizontal="12dp"
-            android:paddingTop="6dp"
-            app:chipSpacingHorizontal="6dp"
-            app:selectionRequired="true"
-            app:singleLine="true"
-            app:singleSelection="true" />
-    </HorizontalScrollView>
 
     <HorizontalScrollView
         android:layout_width="match_parent"
@@ -206,7 +239,7 @@
                 android:layout_marginStart="4dp"
                 android:background="@drawable/bg_tool"
                 android:contentDescription="지우개"
-                android:src="@drawable/ic_eraser" />
+                android:src="@drawable/ic_eraser_stroke" />
 
             <ImageButton
                 android:id="@+id/toolLasso"
@@ -237,7 +270,7 @@
                 android:layout_marginHorizontal="10dp"
                 android:background="?attr/colorOutlineVariant" />
 
-            <!-- 선택 도구: 자유/네모 선택 방식과 붙여넣기 -->
+            <!-- 선택 도구: 붙여넣기 (자유/네모 선택은 위 옵션 줄에서) -->
             <LinearLayout
                 android:id="@+id/lassoRow"
                 android:layout_width="wrap_content"
@@ -246,36 +279,11 @@
                 android:orientation="horizontal"
                 android:visibility="gone">
 
-                <com.google.android.material.button.MaterialButtonToggleGroup
-                    android:id="@+id/lassoMode"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    app:selectionRequired="true"
-                    app:singleSelection="true">
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/lassoFree"
-                        style="?attr/materialButtonOutlinedStyle"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="자유 선택"
-                        app:icon="@drawable/ic_lasso" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/lassoRectBtn"
-                        style="?attr/materialButtonOutlinedStyle"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="네모 선택"
-                        app:icon="@drawable/ic_select_rect" />
-                </com.google.android.material.button.MaterialButtonToggleGroup>
-
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/pasteButton"
                     style="?attr/materialButtonTonalStyle"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginStart="12dp"
                     android:text="붙여넣기"
                     android:visibility="gone"
                     app:icon="@drawable/ic_paste" />

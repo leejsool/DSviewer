@@ -1,0 +1,21 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- 쪽 전체 지우기: 모서리 접힌 쪽 + 쪽 위의 작은 지우개 -->
+    <path android:strokeColor="?attr/colorControlNormal" android:strokeWidth="1.6"
+        android:strokeLineJoin="round"
+        android:pathData="M4.5,2.8h7.2l3.8,3.8v4.4M11.7,2.8v3.8h3.8M4.5,2.8v17.4a0.8,0.8 0,0 0,0.8 0.8h6.2" />
+    <path android:strokeColor="?attr/colorControlNormal" android:strokeWidth="1.4" android:strokeAlpha="0.4"
+        android:strokeLineCap="round"
+        android:pathData="M7,10h5M7,13.2h4M7,16.4h3" />
+    <group android:pivotX="12" android:pivotY="12" android:scaleX="0.62" android:scaleY="0.62"
+        android:translateX="5.2" android:translateY="5.4">
+        <group android:pivotX="12" android:pivotY="12" android:rotation="45"
+            android:translateX="1.2" android:translateY="-1.2">
+            <path android:fillColor="?attr/colorControlNormal"
+                android:pathData="M10.4,3h3.2a1.1,1.1 0,0 1,1.1 1.1V10.6H9.3V4.1a1.1,1.1 0,0 1,1.1 -1.1z" />
+            <path android:fillColor="?attr/colorControlNormal" android:fillAlpha="0.45"
+                android:pathData="M9.3,11.4h5.4v4.1a1.1,1.1 0,0 1,-1.1 1.1h-3.2a1.1,1.1 0,0 1,-1.1 -1.1z" />
+        </group>
+    </group>
+</vector>

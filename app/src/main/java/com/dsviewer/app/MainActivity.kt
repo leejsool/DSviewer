@@ -30,6 +30,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.appbar.MaterialToolbar
+import com.google.android.material.button.MaterialButtonToggleGroup
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -192,6 +193,7 @@ class MainActivity : AppCompatActivity() {
         })
         toolbar.setOnMenuItemClickListener { item ->
             when (item.itemId) {
+                R.id.action_new_note -> { newNote(); true }
                 R.id.action_pick -> { openDoc.launch(arrayOf("*/*")); true }
                 R.id.action_open_tabs -> { backToViewer(); true }
                 else -> false
@@ -380,8 +382,56 @@ class MainActivity : AppCompatActivity() {
         openViewer(uri)
     }
 
-    private fun openViewer(uri: Uri) {
-        val writable = if (uri.scheme == "file") File(uri.path ?: "").canWrite()
+    /** 새 노트: 바탕·방향을 골라 빈 쪽 문서를 만들어 연다. 처음 저장할 때 저장 위치를 고른다 */
+    private fun newNote() {
+        val view = layoutInflater.inflate(R.layout.dialog_new_note, null)
+        val paperGroup = view.findViewById<MaterialButtonToggleGroup>(R.id.paperGroup)
+        val orientGroup = view.findViewById<MaterialButtonToggleGroup>(R.id.orientGroup)
+        val paperIds = mapOf(Paper.PLAIN to R.id.paperPlain, Paper.GRID to R.id.paperGrid, Paper.LINED to R.id.paperLined)
+        val lastPaper = prefs.getString("notePaper", null)?.let { n -> Paper.entries.firstOrNull { it.name == n } } ?: Paper.GRID
+        paperGroup.check(paperIds.getValue(lastPaper))
+        orientGroup.check(if (prefs.getBoolean("notePortrait", false)) R.id.orientPortrait else R.id.orientLandscape)
+        MaterialAlertDialogBuilder(this)
+            .setTitle("새 노트")
+            .setView(view)
+            .setPositiveButton("만들기") { _, _ ->
+                val paper = paperIds.entries.first { it.value == paperGroup.checkedButtonId }.key
+                val portrait = orientGroup.checkedButtonId == R.id.orientPortrait
+                prefs.edit().putString("notePaper", paper.name).putBoolean("notePortrait", portrait).apply()
+                createNote(paper, portrait)
+            }
+            .setNegativeButton("취소", null)
+            .show()
+    }
+
+    private fun createNote(paper: Paper, portrait: Boolean) {
+        lifecycleScope.launch {
+            val file = try {
+                withContext(Dispatchers.IO) {
+                    // 탭 이름이 '새 노트.pdf'로 보이도록 폴더를 따로 만든다. 하루 지난 폴더는 정리
+                    val notes = File(cacheDir, "notes")
+                    val limit = System.currentTimeMillis() - 24L * 3600 * 1000
+                    notes.listFiles()?.forEach { if (it.lastModified() < limit) it.deleteRecursively() }
+                    val dir = File(notes, "${System.currentTimeMillis()}").apply { mkdirs() }
+                    val f = File(dir, "새 노트.pdf")
+                    val (w, h) = if (portrait) BlankPages.A4_SHORT to BlankPages.A4_LONG
+                    else BlankPages.A4_LONG to BlankPages.A4_SHORT
+                    BlankPages.create(f, paper, w, h)
+                    f
+                }
+            } catch (e: Exception) {
+                MaterialAlertDialogBuilder(this@MainActivity)
+                    .setMessage("노트를 만들지 못했습니다.\n${e.message ?: e.javaClass.simpleName}")
+                    .setPositiveButton("확인", null)
+                    .show()
+                return@launch
+            }
+            openViewer(Uri.fromFile(file), newNote = true)
+        }
+    }
+
+    private fun openViewer(uri: Uri, newNote: Boolean = false) {
+        val writable = if (newNote) false else if (uri.scheme == "file") File(uri.path ?: "").canWrite()
         else contentResolver.persistedUriPermissions.any { it.uri == uri && it.isWritePermission }
         // 뷰어가 이미 떠 있으면 그 뷰어에 새 탭으로 연다
         startActivity(
@@ -390,6 +440,7 @@ class MainActivity : AppCompatActivity() {
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
                 .putExtra(ViewerActivity.EXTRA_WRITABLE, writable)
                 .putExtra(ViewerActivity.EXTRA_FROM_BROWSER, true)
+                .putExtra(ViewerActivity.EXTRA_NEW_NOTE, newNote)
         )
         setPickMode(false)
     }

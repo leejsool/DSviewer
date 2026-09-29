@@ -11,7 +11,7 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.sqrt
 
-/** 보정 펜으로 그릴 수 있는 도형 (구현된 것만). 나머지 버튼은 ViewerActivity에서 '구현 예정' */
+/** 보정 펜으로 그릴 수 있는 도형 */
 enum class ShapeKind(val label: String) {
     LINE("직선"),
     QUADRATIC("이차"),
@@ -31,7 +31,23 @@ enum class ShapeKind(val label: String) {
     RECTANGLE("직사각형"),
     RHOMBUS("마름모"),
     PARALLELOGRAM("평행사변형"),
+    /** 이차곡선 x²/a²−y²/b²=±1 (축에 나란한). 한 가지를 그리면 반대쪽 가지도 */
+    HYPERBOLA("쌍곡선"),
+    /** 지수인지 로그인지는 그린 모양으로 알아서 */
+    EXP_LOG("지수·로그"),
+    SINE("사인·코사인"),
+    /** 한 획에 한 가지 (점근선 사이) */
+    TANGENT("탄젠트"),
 }
+
+/**
+ * 보정 결과: 곡선들(쌍곡선은 두 가지)과 보조선들 (좌표는 [x0, y0, x1, y1, ...]).
+ * 보조선은 지수·로그·탄젠트·쌍곡선의 점근선, 사인·코사인의 축(가운데 가로선)
+ */
+class Fitted(val curves: List<FloatArray>, val guides: List<FloatArray> = emptyList())
+
+/** 보조선(점근선·축)을 그리는 방식 */
+enum class GuideStyle { NONE, DASHED, SOLID }
 
 /**
  * 대충 그린 획을 고른 도형으로 맞춘다 (최소제곱).
@@ -40,10 +56,17 @@ enum class ShapeKind(val label: String) {
  */
 object ShapeFit {
 
-    fun fit(kind: ShapeKind, st: Stroke): FloatArray? {
-        if (kind == ShapeKind.CIRCLE_CR) return centerRadius(st)
+    fun fit(kind: ShapeKind, st: Stroke): Fitted? {
+        if (kind == ShapeKind.CIRCLE_CR) return centerRadius(st)?.let { Fitted(listOf(it)) }
         val p = resample(st) ?: return null
-        return when (kind) {
+        when (kind) {
+            ShapeKind.HYPERBOLA -> return ShapeCurves.hyperbola(p)
+            ShapeKind.EXP_LOG -> return ShapeCurves.expOrLog(p)
+            ShapeKind.SINE -> return ShapeCurves.sine(p)
+            ShapeKind.TANGENT -> return ShapeCurves.tangent(p)
+            else -> {}
+        }
+        val one = when (kind) {
             ShapeKind.LINE -> line(p)
             ShapeKind.QUADRATIC -> poly(p, 2)
             ShapeKind.CUBIC -> schematic(p, 3) ?: poly(p, 3)
@@ -55,7 +78,9 @@ object ShapeFit {
             ShapeKind.TRI_ISOSCELES, ShapeKind.TRI_RIGHT_ISOSCELES -> polygon(p, 3)?.let { Polygons.triangle(kind, it) }
             ShapeKind.QUADRILATERAL, ShapeKind.SQUARE, ShapeKind.RECTANGLE,
             ShapeKind.RHOMBUS, ShapeKind.PARALLELOGRAM -> polygon(p, 4)?.let { Polygons.quad(kind, it) }
+            else -> null
         }
+        return one?.let { Fitted(listOf(it)) }
     }
 
     /**
@@ -451,7 +476,7 @@ object ShapeFit {
         return out
     }
 
-    private fun reversePoints(a: FloatArray): FloatArray {
+    internal fun reversePoints(a: FloatArray): FloatArray {
         val n = a.size / 2
         val out = FloatArray(a.size)
         for (i in 0 until n) {
@@ -462,7 +487,7 @@ object ShapeFit {
     }
 
     /** 가우스 소거 (부분 피벗). 풀 수 없으면 null */
-    private fun solve(a: Array<DoubleArray>, b: DoubleArray): DoubleArray? {
+    internal fun solve(a: Array<DoubleArray>, b: DoubleArray): DoubleArray? {
         val n = b.size
         for (col in 0 until n) {
             var piv = col

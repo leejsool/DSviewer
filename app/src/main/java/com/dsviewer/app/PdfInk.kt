@@ -123,6 +123,7 @@ object PdfInk {
                 cs.setGraphicsStateParameters(gs)
             }
             cs.setStrokingColor(color)
+            if (s.dashed) cs.setLineDashPattern(s.dashIntervals(), 0f)
             cs.setLineCapStyle(1)
             cs.setLineJoinStyle(1)
             s.forEachGroup { w, from, to ->
@@ -155,6 +156,10 @@ object PdfInk {
         dict.setItem(COSName.getPDFName("InkList"), inkList)
         val bs = COSDictionary()
         bs.setFloat(COSName.W, s.width)
+        if (s.dashed) {
+            bs.setName(COSName.S, "D")
+            bs.setItem(COSName.D, COSArray().apply { s.dashIntervals().forEach { add(COSFloat(it)) } })
+        }
         dict.setItem(COSName.BS, bs)
         if (s.tool == Tool.HIGHLIGHTER) dict.setFloat(COSName.CA, HL_ALPHA)
         dict.setString(KEY_NAME, encode(s))
@@ -179,10 +184,10 @@ object PdfInk {
         }
     }
 
-    // 형식: 1|P|ff000000|1.2|x,y,p;x,y,p;...
+    // 형식: 1|P|ff000000|1.2|x,y,p;x,y,p;...  (도구: P 펜, H 형광펜, D 점선 펜)
     private fun encode(s: Stroke): String {
         val sb = StringBuilder(s.count * 16 + 32)
-        sb.append("1|").append(if (s.tool == Tool.HIGHLIGHTER) 'H' else 'P').append('|')
+        sb.append("1|").append(if (s.tool == Tool.HIGHLIGHTER) 'H' else if (s.dashed) 'D' else 'P').append('|')
         sb.append(Integer.toHexString(s.color)).append('|').append(r2(s.width)).append('|')
         for (i in 0 until s.count) {
             if (i > 0) sb.append(';')
@@ -197,7 +202,7 @@ object PdfInk {
         else {
             val tool = if (parts[1] == "H") Tool.HIGHLIGHTER else Tool.PEN
             val color = parts[2].toLong(16).toInt()
-            val s = Stroke(tool, color, parts[3].toFloat())
+            val s = Stroke(tool, color, parts[3].toFloat(), dashed = parts[1] == "D")
             for (pt in parts[4].split(';')) {
                 val v = pt.split(',')
                 if (v.size == 3) s.add(v[0].toFloat(), v[1].toFloat(), v[2].toFloat())

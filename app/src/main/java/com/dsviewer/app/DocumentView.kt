@@ -55,6 +55,8 @@ class DocumentView @JvmOverloads constructor(
         fun onSelectionChanged(rect: RectF?, count: Int) {}
         /** 보정 펜으로 그린 획을 고른 도형으로 맞추지 못함 */
         fun onShapeFailed(kind: ShapeKind) {}
+        /** 펜(또는 손가락 필기)이 문서에 닿음 */
+        fun onPenDown() {}
     }
 
     var listener: Listener? = null
@@ -70,12 +72,18 @@ class DocumentView @JvmOverloads constructor(
     var hlColor = 0xFFFFEB3B.toInt()
     var hlWidth = 12f
     var eraserRadiusDp = 12f
+    /** 획 지우개 / 영역 지우개 */
+    var eraserMode = EraserMode.STROKE
+    /** true면 형광펜 획만 지운다 */
+    var eraseHlOnly = false
     /** true면 손가락 한 개로 필기, 두 손가락으로 이동/확대 */
     var fingerDrawing = false
     /** 보정 펜으로 그릴 도형 */
     var shapeKind = ShapeKind.LINE
     /** 보정 펜: 그리는 중에 맞춰 본 도형 (흐리게 미리 보여 줌) */
-    private var shapePreview: Stroke? = null
+    private var shapePreview: List<Stroke>? = null
+    /** 보정 펜: 보조선(지수·로그·탄젠트·쌍곡선의 점근선, 사인·코사인의 축)을 그리는 방식 */
+    var shapeGuide = GuideStyle.NONE
     private var lastShapeFit = 0L
 
     private val density = resources.displayMetrics.density
@@ -144,6 +152,8 @@ class DocumentView @JvmOverloads constructor(
     private var lastSx = 0f
     private var lastSy = 0f
     private val erased = ArrayList<Pair<Int, Stroke>>()
+    /** 영역 지우개가 이번 획에서 잘라 남긴 조각들 */
+    private val pieces = ArrayList<Pair<Int, Stroke>>()
     private var zoomAnimator: ValueAnimator? = null
 
     // ---- 올가미 선택 (좌표는 모두 해당 페이지 기준) ----
@@ -267,9 +277,26 @@ class DocumentView @JvmOverloads constructor(
         invalidate()
     }
 
+    /**
+     * 화면 아래쪽을 가리는 줄(보정 펜 도형 줄, 지우개 옵션 줄)의 높이(px).
+     * 그만큼 더 스크롤할 수 있게 해서 마지막 쪽 아래 끝도 줄 위로 올려 쓸 수 있다.
+     */
+    var bottomInset = 0f
+        set(v) {
+            if (field == v) return
+            field = v
+            if (doc != null) {
+                clamp()
+                invalidate()
+            }
+        }
+
+    /** 스크롤할 수 있는 전체 높이 (화면 px) */
+    private fun contentH() = docH * scale + bottomInset
+
     private fun clamp() {
         val cw = docW * scale
-        val ch = docH * scale
+        val ch = contentH()
         offX = if (cw <= width) -(width - cw) / 2f else offX.coerceIn(0f, cw - width)
         offY = if (ch <= height) -(height - ch) / 2f else offY.coerceIn(0f, ch - height)
     }
@@ -318,6 +345,24 @@ class DocumentView @JvmOverloads constructor(
         return null
     }
 
+    /** 화면 가운데에 걸친 쪽 (문서가 없으면 -1) */
+    fun currentPage(): Int {
+        if (sizes.isEmpty()) return -1
+        val centerDoc = (offY + height / 2f) / scale
+        return sizes.indices.firstOrNull { tops[it] + sizes[it].height + gap / 2 >= centerDoc } ?: sizes.lastIndex
+    }
+
+    /** [page]쪽의 위쪽 끝이 화면 맨 위에 오도록 옮긴다 */
+    fun scrollToPage(page: Int) {
+        if (page !in sizes.indices || width == 0) return
+        scroller.forceFinished(true)
+        zoomAnimator?.cancel()
+        offY = (tops[page] - gap / 2) * scale
+        clamp()
+        scheduleDetail()
+        invalidate()
+    }
+
     private fun toPageX(page: Int, sx: Float) = (sx + offX) / scale - lefts[page]
     private fun toPageY(page: Int, sy: Float) = (sy + offY) / scale - tops[page]
 
@@ -362,7 +407,7 @@ class DocumentView @JvmOverloads constructor(
                 if (tool == Tool.SHAPE) {
                     // 보정 펜: 내 획은 흐리게, 맞춘 도형은 조금 더 진하게 미리 보기
                     drawStroke(canvas, it, 0.3f)
-                    shapePreview?.let { sp -> drawStroke(canvas, sp, 0.6f) }
+                    shapePreview?.forEach { sp -> drawStroke(canvas, sp, 0.6f) }
                 } else drawStroke(canvas, it)
             }
             canvas.restore()
@@ -456,6 +501,7 @@ class DocumentView @JvmOverloads constructor(
             strokePaint.blendMode = null
         }
         if (alphaMul < 1f) strokePaint.alpha = (strokePaint.alpha * alphaMul).roundToInt()
+        strokePaint.pathEffect = if (st.dashed) DashPathEffect(st.dashIntervals(), 0f) else null
         for ((w, path) in st.paths()) {
             strokePaint.strokeWidth = w
             c.drawPath(path, strokePaint)
@@ -617,7 +663,7 @@ class DocumentView @JvmOverloads constructor(
         override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
             if (scaling) return false
             val cw = docW * scale
-            val ch = docH * scale
+            val ch = contentH()
             val maxX = max(0f, cw - width).toInt()
             val maxY = max(0f, ch - height).toInt()
             val minX = if (cw <= width) offX.toInt() else 0
@@ -689,7 +735,7 @@ class DocumentView @JvmOverloads constructor(
     private fun barVisible() = barAlpha > 0.05f
 
     private fun noteScrolled(dy: Float) {
-        if (dy == 0f || docH * scale <= height * 1.05f) return
+        if (dy == 0f || contentH() <= height * 1.05f) return
         if (barVisible() && (barAnimator?.isRunning != true || barAlpha > 0.5f)) {
             fadeBar(1f)
         } else {
@@ -720,7 +766,7 @@ class DocumentView @JvmOverloads constructor(
 
     /** 스크롤 막대의 (트랙 위, 트랙 길이, 손잡이 위, 손잡이 높이). 문서가 화면보다 짧으면 null */
     private fun barGeometry(): FloatArray? {
-        val ch = docH * scale
+        val ch = contentH()
         if (ch <= height * 1.05f) return null
         val trackTop = barMargin
         val trackLen = height - barMargin * 2
@@ -775,7 +821,7 @@ class DocumentView @JvmOverloads constructor(
     }
 
     private fun moveThumbTo(y: Float, g: FloatArray) {
-        val ch = docH * scale
+        val ch = contentH()
         val movable = g[1] - g[3]
         if (movable <= 0f) return
         val frac = ((y - barGrabOffset - g[0]) / movable).coerceIn(0f, 1f)
@@ -898,11 +944,13 @@ class DocumentView @JvmOverloads constructor(
     }
 
     private fun startPen(sx: Float, sy: Float, p: Float) {
+        listener?.onPenDown()
         scroller.forceFinished(true)
         zoomAnimator?.cancel()
         lastSx = sx
         lastSy = sy
         erased.clear()
+        pieces.clear()
         curStroke = null
         curPage = -1
         if (tool == Tool.LASSO && !penErasing) {
@@ -986,14 +1034,20 @@ class DocumentView @JvmOverloads constructor(
         invalidate()
     }
 
-    /** 보정 펜 획을 고른 도형으로 맞춘 새 펜 획 (굵기는 그린 획의 평균 필압) */
-    private fun fitShape(raw: Stroke): Stroke? {
-        val pts = ShapeFit.fit(shapeKind, raw) ?: return null
+    /**
+     * 보정 펜 획을 고른 도형으로 맞춘 새 펜 획들 (굵기는 그린 획의 평균 필압).
+     * 쌍곡선은 두 가지, 보조선(점근선·축)을 켜 두었으면 그 획이 더 붙는다
+     */
+    private fun fitShape(raw: Stroke): List<Stroke>? {
+        val fitted = ShapeFit.fit(shapeKind, raw) ?: return null
         var pSum = 0f
         for (i in 0 until raw.count) pSum += raw.p(i)
         val pAvg = pSum / raw.count
-        val out = Stroke(Tool.PEN, raw.color, raw.width)
-        for (i in 0 until pts.size / 2) out.add(pts[i * 2], pts[i * 2 + 1], pAvg)
+        fun toStroke(pts: FloatArray, dashed: Boolean) = Stroke(Tool.PEN, raw.color, raw.width, dashed).apply {
+            for (i in 0 until pts.size / 2) add(pts[i * 2], pts[i * 2 + 1], pAvg)
+        }
+        val out = fitted.curves.map { toStroke(it, false) }.toMutableList()
+        if (shapeGuide != GuideStyle.NONE) fitted.guides.mapTo(out) { toStroke(it, shapeGuide == GuideStyle.DASHED) }
         return out
     }
 
@@ -1004,11 +1058,15 @@ class DocumentView @JvmOverloads constructor(
         var removed = false
         for (k in list.indices.reversed()) {
             val st = list[k]
-            if (st.hitTest(px, py, r)) {
-                list.removeAt(k)
-                erased.add(page to st)
-                removed = true
-            }
+            if (eraseHlOnly && st.tool != Tool.HIGHLIGHTER) continue
+            val rest = if (eraserMode == EraserMode.AREA) st.cut(px, py, r) ?: continue
+            else if (st.hitTest(px, py, r)) emptyList() else continue
+            list.removeAt(k)
+            list.addAll(k, rest)
+            // 이번에 잘라 넣은 조각을 다시 자르면 조각 목록에서만 뺀다 (원래 획이 아니므로)
+            if (!pieces.removeAll { it.second === st }) erased.add(page to st)
+            rest.forEach { pieces.add(page to it) }
+            removed = true
         }
         if (removed) invalidate()
     }
@@ -1036,14 +1094,14 @@ class DocumentView @JvmOverloads constructor(
             if (commit) finishLasso()
         } else if (inkDoc != null) {
             if (penErasing) {
-                if (erased.isNotEmpty()) inkDoc.erased(ArrayList(erased))
+                inkDoc.erased(ArrayList(erased), ArrayList(pieces))
             } else {
                 val st = curStroke
                 if (st != null && commit) {
                     if (tool == Tool.SHAPE) {
                         // 보정 펜: 흐린 획 대신 맞춘 도형을 남긴다
                         val fitted = fitShape(st)
-                        if (fitted != null) inkDoc.add(curPage, fitted)
+                        if (fitted != null) inkDoc.addAll(curPage, fitted)
                         else if (st.count > 2) listener?.onShapeFailed(shapeKind)
                     } else inkDoc.add(curPage, st)
                 }
@@ -1051,6 +1109,7 @@ class DocumentView @JvmOverloads constructor(
             shapePreview = null
         }
         erased.clear()
+        pieces.clear()
         curStroke = null
         curPage = -1
         penPointerId = -1
@@ -1177,6 +1236,17 @@ class DocumentView @JvmOverloads constructor(
         invalidate()
     }
 
+    /** 보고 있는 쪽의 필기(hlOnly면 형광펜만)를 모두 지운다 (실행 취소 가능). 지운 획 수 */
+    fun clearPage(hlOnly: Boolean): Int {
+        val inkDoc = ink ?: return 0
+        val page = currentPage().takeIf { it >= 0 } ?: return 0
+        val targets = inkDoc.pages[page].filter { !hlOnly || it.tool == Tool.HIGHLIGHTER }
+        if (targets.isEmpty()) return 0
+        clearSelection()
+        inkDoc.remove(page, targets)
+        return targets.size
+    }
+
     /** 선택한 획 지우기 (실행 취소 가능) */
     fun deleteSelection() {
         val inkDoc = ink ?: return
@@ -1208,7 +1278,7 @@ class DocumentView @JvmOverloads constructor(
         val inkDoc = ink ?: return
         if (clipboard.isEmpty() || sizes.isEmpty()) return
         val centerDoc = (offY + height / 2f) / scale
-        val page = sizes.indices.firstOrNull { tops[it] + sizes[it].height + gap / 2 >= centerDoc } ?: sizes.lastIndex
+        val page = currentPage()
         val cx = (offX + width / 2f) / scale - lefts[page]
         val cy = (centerDoc - tops[page]).coerceIn(0f, sizes[page].height)
         val w = clipSize.width(); val h = clipSize.height()
