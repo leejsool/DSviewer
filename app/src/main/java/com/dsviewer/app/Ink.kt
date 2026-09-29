@@ -49,28 +49,49 @@ private fun drawInkImage(c: Canvas, st: Stroke, alphaMul: Float) {
  * 그림처럼 획의 네 점(상자 모서리)에 맞춰 그리므로 옮기고 키우고 돌려도 따라간다.
  * 문서 위에서 치는 글 상자(InlineTextEditor의 EditText)와 줄바꿈이 같도록 같은 설정으로 배치한다.
  */
-class InkText(val text: String, val size: Float, val wrap: Float = NO_WRAP) {
+class InkText(val rich: RichDoc, val size: Float, val wrap: Float = NO_WRAP) {
+    constructor(text: String, size: Float, wrap: Float = NO_WRAP) : this(RichDoc.plain(text), size, wrap)
+
+    /** 서식을 뺀 글 */
+    val text: String get() = rich.text
+
+    // 배치는 Q배 크게 한다: 글꼴 높이가 정수로 반올림되는데 pt 단위 그대로면 줄마다 오차가 커져
+    // 화면(px 단위)의 글 상자와 줄 간격이 어긋나므로
     private val paint = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.LINEAR_TEXT_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
-        textSize = size
+        textSize = size * Q
         typeface = Typeface.DEFAULT
     }
-    private val layout: StaticLayout =
-        StaticLayout.Builder.obtain(text, 0, text.length, paint, ceil(min(wrap, NO_WRAP)).toInt().coerceAtLeast(1))
+    private val content = rich.toSpannable(size * Q)
+    private val layout: StaticLayout
+
+    /** 상자 크기 (pt). 저장할 때 PDF 한 쪽 크기로도 쓰므로 정수로 올린다. 폭은 적어도 글자 하나 (빈 글 상자와 같게) */
+    val boxW: Int
+    val boxH: Int
+
+    init {
+        var l = build(ceil(min(wrap, NO_WRAP) * Q).toInt().coerceAtLeast(1))
+        val inner = ceil(max((0 until l.lineCount).maxOf { l.getLineMax(it) }, size * Q)).toInt()
+        // 가운데·오른쪽 맞춤은 상자 폭 안에서 맞추므로 그 폭으로 다시 배치 (글 상자 EditText가 내용 폭으로 줄어드는 것과 같게)
+        if (rich.paras.any { it.align != TextAlign.LEFT }) l = build(inner)
+        layout = l
+        boxW = ceil(inner / Q + PAD * 2).toInt().coerceAtLeast(1)
+        boxH = ceil(l.height / Q + PAD * 2f).toInt().coerceAtLeast(1)
+    }
+
+    private fun build(width: Int): StaticLayout =
+        StaticLayout.Builder.obtain(content, 0, content.length, paint, width)
             .setIncludePad(false)
             .setUseLineSpacingFromFallbacks(true)
             .setBreakStrategy(android.text.Layout.BREAK_STRATEGY_SIMPLE)
             .setHyphenationFrequency(android.text.Layout.HYPHENATION_FREQUENCY_NONE)
             .build()
 
-    /** 상자 크기 (pt). 저장할 때 PDF 한 쪽 크기로도 쓰므로 정수로 올린다 */
-    val boxW: Int = ceil((0 until layout.lineCount).maxOf { layout.getLineWidth(it) } + PAD * 2).toInt().coerceAtLeast(1)
-    val boxH: Int = ceil(layout.height + PAD * 2f).toInt().coerceAtLeast(1)
-
     /** (0, 0) ~ (boxW, boxH) 상자에 글을 그린다. 쪽 미리보기가 다른 스레드에서 같이 그릴 수 있어 잠근다 */
     fun draw(c: Canvas, color: Int) = synchronized(this) {
         paint.color = color
         c.save()
         c.translate(PAD, PAD)
+        c.scale(1f / Q, 1f / Q)
         layout.draw(c)
         c.restore()
     }
@@ -80,6 +101,8 @@ class InkText(val text: String, val size: Float, val wrap: Float = NO_WRAP) {
         const val NO_WRAP = 100_000f
         /** 글자가 상자 끝에서 잘리지 않게 두르는 여백 (pt) */
         const val PAD = 2f
+        /** 배치 배율 */
+        private const val Q = 8f
     }
 }
 

@@ -146,6 +146,25 @@
                     app:singleSelection="true" />
             </HorizontalScrollView>
 
+            <!-- 글 상자를 치는 동안 뜨는 서식 줄 (ViewerActivity.setupFormatBar) -->
+            <HorizontalScrollView
+                android:id="@+id/formatBar"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="?attr/colorSurfaceContainer"
+                android:scrollbars="none"
+                android:visibility="gone">
+
+                <LinearLayout
+                    android:id="@+id/formatRow"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="8dp"
+                    android:paddingVertical="4dp" />
+            </HorizontalScrollView>
+
             <!-- 지우개·선택 도구를 누르면 올라오는 옵션 줄. 하나 고르면 사라진다 (ViewerActivity.showOptionBar) -->
             <HorizontalScrollView
                 android:id="@+id/toolOptionBar"

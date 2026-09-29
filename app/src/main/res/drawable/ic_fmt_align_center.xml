@@ -1,0 +1,8 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- 서식: 가운데 맞춤 -->
+    <path android:strokeColor="?attr/colorControlNormal" android:strokeWidth="1.8"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M4,6h16M7,10h10M4,14h16M7,18h10" />
+</vector>
