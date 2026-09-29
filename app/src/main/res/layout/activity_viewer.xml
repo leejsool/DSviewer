@@ -89,6 +89,12 @@
             android:layout_height="match_parent"
             android:background="@color/doc_bg" />
 
+        <!-- 문서 위에서 바로 치는 글 상자 (InlineTextEditor). 빈 곳은 터치를 문서로 넘긴다 -->
+        <com.dsviewer.app.TextEditHost
+            android:id="@+id/textEditHost"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
         <ProgressBar
             android:id="@+id/progress"
             android:layout_width="wrap_content"
@@ -445,6 +451,15 @@
                     android:visibility="gone"
                     app:icon="@drawable/ic_paste" />
             </LinearLayout>
+
+            <!-- 글 도구: 글자 크기 '가' 칸 4개 (ViewerActivity.buildTextSizes) -->
+            <LinearLayout
+                android:id="@+id/textSizeRow"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:visibility="gone" />
 
             <!-- 굵기 칸 3개 (ViewerActivity.buildWidths) -->
             <LinearLayout

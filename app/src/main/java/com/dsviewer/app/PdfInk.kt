@@ -321,7 +321,7 @@ object PdfInk {
     }
 
     // 형식: 1|P|ff000000|1.2|x,y,p;x,y,p;...  (도구: P 펜, H 형광펜, D 점선 펜, I 그림, T 글 — 그림·글은 네 모서리)
-    // 글은 굵기 자리에 글자 크기, 끝에 |글(UTF-8 Base64)을 붙인다
+    // 글은 굵기 자리에 글자 크기, 끝에 |글(UTF-8 Base64)|줄 바꾸는 폭을 붙인다
     private fun encode(s: Stroke): String {
         val sb = StringBuilder(s.count * 16 + 32)
         val kind = when {
@@ -337,7 +337,10 @@ object PdfInk {
             if (i > 0) sb.append(';')
             sb.append(r2(s.x(i))).append(',').append(r2(s.y(i))).append(',').append(r2(s.p(i)))
         }
-        s.text?.let { sb.append('|').append(Base64.encodeToString(it.text.toByteArray(), Base64.NO_WRAP)) }
+        s.text?.let {
+            sb.append('|').append(Base64.encodeToString(it.text.toByteArray(), Base64.NO_WRAP))
+            if (it.wrap < InkText.NO_WRAP) sb.append('|').append(r2(it.wrap))
+        }
         return sb.toString()
     }
 
@@ -353,7 +356,10 @@ object PdfInk {
                 val v = pt.split(',')
                 if (v.size == 3) s.add(v[0].toFloat(), v[1].toFloat(), v[2].toFloat())
             }
-            if (isText) s.text = InkText(String(Base64.decode(parts[5], Base64.NO_WRAP)), parts[3].toFloat())
+            if (isText) s.text = InkText(
+                String(Base64.decode(parts[5], Base64.NO_WRAP)), parts[3].toFloat(),
+                parts.getOrNull(6)?.toFloatOrNull() ?: InkText.NO_WRAP,
+            )
             if (s.count > 0 && (!isText || s.count >= 4)) s else null
         }
     } catch (e: Exception) {

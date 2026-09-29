@@ -42,7 +42,6 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.button.MaterialButton
-import com.google.android.material.button.MaterialButtonToggleGroup
 import com.google.android.material.chip.Chip
 import com.google.android.material.chip.ChipGroup
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -72,6 +71,7 @@ class ViewerActivity : AppCompatActivity() {
     private lateinit var selectionBar: View
     private lateinit var toolButtons: Map<Tool, ImageButton>
     private lateinit var dock: ToolbarDock
+    private lateinit var textEditor: InlineTextEditor
     private lateinit var topOverlay: LinearLayout
     private lateinit var bottomOverlay: LinearLayout
 
@@ -151,6 +151,7 @@ class ViewerActivity : AppCompatActivity() {
         insertButton = findViewById(R.id.actionInsert)
 
         docView = findViewById(R.id.docView)
+        textEditor = InlineTextEditor(findViewById(R.id.textEditHost), docView)
         progress = findViewById(R.id.progress)
         pageLabel = findViewById(R.id.pageLabel)
         // 쪽 번호를 누르면 쪽 이동
@@ -160,6 +161,7 @@ class ViewerActivity : AppCompatActivity() {
         colorSep = findViewById(R.id.colorSep)
         shapeBar = findViewById(R.id.shapeBar)
         lassoRow = findViewById(R.id.lassoRow)
+        textSizeRow = findViewById(R.id.textSizeRow)
         pasteButton = findViewById(R.id.pasteButton)
         selectionBar = findViewById(R.id.selectionBar)
         setupSelectionTools()
@@ -176,7 +178,10 @@ class ViewerActivity : AppCompatActivity() {
 
             override fun onPenDown() = hideOptionBar()
 
-            override fun onTextTap(page: Int, x: Float, y: Float, existing: Stroke?) = showTextDialog(page, x, y, existing)
+            override fun onTextTap(page: Int, x: Float, y: Float, existing: Stroke?) =
+                this@ViewerActivity.onTextTap(page, x, y, existing)
+
+            override fun onViewportChanged() = textEditor.reposition()
 
             override fun onShapeFailed(kind: ShapeKind) {
                 Toast.makeText(this@ViewerActivity, "${withRo(kind.label)} 맞추지 못했어요. 조금 더 크게 그려 보세요.", Toast.LENGTH_SHORT).show()
@@ -194,6 +199,12 @@ class ViewerActivity : AppCompatActivity() {
             Toast.makeText(this, "열 파일이 없습니다.", Toast.LENGTH_SHORT).show()
             finish()
         }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // 다른 앱으로 가거나 화면이 꺼지면 치던 글을 쪽에 넣어 둔다
+        textEditor.commit()
     }
 
     /** 뷰어가 이미 떠 있을 때 탐색기에서 문서를 고르면 새 탭으로 연다 */
@@ -278,6 +289,7 @@ class ViewerActivity : AppCompatActivity() {
     /** 이 탭의 문서를 화면에 띄운다 */
     private fun showTab(t: DocTab) {
         if (current === t) return
+        textEditor.commit()
         overview.hide()
         current?.let { it.viewState = docView.viewState() }
         current = t
@@ -463,8 +475,8 @@ class ViewerActivity : AppCompatActivity() {
 
     private fun setupActions() {
         // 쪽을 넣고 빼는 중에는 기다린다 (PDF를 다 만든 뒤에야 기록이 생기므로)
-        undoButton.setOnClickListener { if (current?.pagesBusy == false) { docView.clearSelection(); ink?.undo() } }
-        redoButton.setOnClickListener { if (current?.pagesBusy == false) { docView.clearSelection(); ink?.redo() } }
+        undoButton.setOnClickListener { if (current?.pagesBusy == false) { textEditor.commit(); docView.clearSelection(); ink?.undo() } }
+        redoButton.setOnClickListener { if (current?.pagesBusy == false) { textEditor.commit(); docView.clearSelection(); ink?.redo() } }
         saveButton.setOnClickListener { showSaveMenu(it) }
         overview = PageOverview(findViewById(R.id.overviewPanel), lifecycleScope) { page -> docView.scrollToPage(page) }
         overviewButton.setOnClickListener { toggleOverview() }
@@ -636,6 +648,7 @@ class ViewerActivity : AppCompatActivity() {
     // ================= 쪽 한눈에 보기 =================
 
     private fun toggleOverview() {
+        textEditor.commit()
         if (overview.isShowing) {
             overview.hide()
             return
@@ -759,6 +772,7 @@ class ViewerActivity : AppCompatActivity() {
         if (t.pagesBusy) return
         t.pagesBusy = true
         overview.hide()
+        textEditor.commit()
         docView.clearSelection()
         val before = PageFiles(src, render, docView.currentPage().coerceAtLeast(0))
         lifecycleScope.launch {
@@ -1021,6 +1035,7 @@ class ViewerActivity : AppCompatActivity() {
 
     private fun save(t: DocTab, asNew: Boolean) {
         if (t.ink == null) return
+        if (current === t) textEditor.commit()
         if (t.pagesBusy) {
             Toast.makeText(this, "쪽을 바꾸는 중입니다. 잠시 뒤에 저장해 주세요.", Toast.LENGTH_SHORT).show()
             return
@@ -1137,73 +1152,56 @@ class ViewerActivity : AppCompatActivity() {
     }
 
     // ================= 글 넣기 =================
+    // 글 도구로 쪽을 누르면 그 자리에 글 상자가 생기고 바로 친다 (InlineTextEditor).
+    // 글자 크기는 툴바의 '가' 칸 4개로 고른다 (굵기 칸 자리).
 
     /** 글 크기 (pt): 작게 · 보통 · 크게 · 아주 크게 */
     private val textSizes = floatArrayOf(14f, 20f, 28f, 40f)
-    private val textSizeLabels = arrayOf("작게", "보통", "크게", "아주 크게")
+    private val textSizeNames = arrayOf("작게", "보통", "크게", "아주 크게")
+    private lateinit var textSizeRow: LinearLayout
+    private var textSizeIdx = 1
 
-    /**
-     * 글 넣기·고치기 창. 새 글은 펜 색으로 누른 자리에 넣고, 고칠 때는 그 글의 색·자리를 그대로 둔다.
-     * 글을 모두 지우고 '고치기'를 누르거나 '지우기'를 누르면 그 글을 지운다
-     */
-    private fun showTextDialog(page: Int, x: Float, y: Float, existing: Stroke?) {
-        val old = existing?.text
+    private fun onTextTap(page: Int, x: Float, y: Float, existing: Stroke?) {
+        // 글 상자를 치는 중이면 상자 밖을 누른 것: 그 글만 넣고 끝낸다
+        if (textEditor.isEditing) {
+            textEditor.commit()
+            return
+        }
+        textEditor.start(page, x, y, existing, textSizes[textSizeIdx], docView.penColor)
+        // 고치는 글의 크기를 '가' 칸에 보인다
+        if (existing != null) buildTextSizes(nearestTextSize(textEditor.size))
+    }
+
+    private fun nearestTextSize(size: Float) = textSizes.indices.minBy { kotlin.math.abs(textSizes[it] - size) }
+
+    /** '가' 칸 4개 (글자 크기). [shown]은 선택 표시할 칸 (고치는 글의 크기일 수 있다) */
+    private fun buildTextSizes(shown: Int = textSizeIdx) {
+        textSizeRow.removeAllViews()
         val d = resources.displayMetrics.density
-        val input = EditText(this).apply {
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
-            isSingleLine = false
-            minLines = 2
-            maxLines = 8
-            gravity = android.view.Gravity.TOP or android.view.Gravity.START
-            hint = "넣을 글 (Enter로 줄 바꿈)"
-            setText(old?.text ?: "")
-            setSelection(text.length)
-        }
-        val sizeGroup = MaterialButtonToggleGroup(this).apply {
-            isSingleSelection = true
-            isSelectionRequired = true
-        }
-        val sizeIds = textSizeLabels.map { label ->
-            val b = MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle)
-            b.id = View.generateViewId()
-            b.text = label
-            sizeGroup.addView(b)
-            b.id
-        }
-        // 고칠 때는 그 글의 크기, 새 글은 지난번에 고른 크기
-        val startIdx = if (old != null) textSizes.indices.minBy { kotlin.math.abs(textSizes[it] - old.size) }
-        else prefs.getInt("textSizeIdx", 1).coerceIn(textSizes.indices)
-        sizeGroup.check(sizeIds[startIdx])
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding((24 * d).toInt(), (8 * d).toInt(), (24 * d).toInt(), 0)
-            addView(input)
-            addView(sizeGroup, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = (12 * d).toInt() })
-        }
-        val builder = MaterialAlertDialogBuilder(this)
-            .setTitle(if (old == null) "글 넣기" else "글 고치기")
-            .setView(box)
-            .setPositiveButton(if (old == null) "넣기" else "고치기") { _, _ ->
-                val idx = sizeIds.indexOf(sizeGroup.checkedButtonId).coerceAtLeast(0)
-                prefs.edit().putInt("textSizeIdx", idx).apply()
-                val txt = input.text.toString().trimEnd()
-                val t = if (txt.isBlank()) null else InkText(txt, textSizes[idx])
-                when {
-                    existing != null -> docView.replaceText(page, existing, t, existing.color)
-                    t != null -> docView.addText(page, x, y, t, docView.penColor)
+        val previewSp = floatArrayOf(11f, 14f, 17f, 21f)
+        textSizes.indices.forEach { i ->
+            val v = TextView(this).apply {
+                layoutParams = LinearLayout.LayoutParams((30 * d).toInt(), (40 * d).toInt()).apply {
+                    marginStart = (if (i == 0) 0 else 2 * d).toInt()
+                }
+                setBackgroundResource(R.drawable.bg_tool)
+                gravity = android.view.Gravity.CENTER
+                text = "가"
+                textSize = previewSp[i]
+                includeFontPadding = false
+                isSelected = i == shown
+                contentDescription = "글자 크기 ${textSizeNames[i]}"
+                tooltipText = "글자 크기 ${textSizeNames[i]}"
+                setOnClickListener {
+                    textSizeIdx = i
+                    prefs.edit().putInt("textSizeIdx", i).apply()
+                    if (textEditor.isEditing) textEditor.size = textSizes[i]
+                    buildTextSizes()
                 }
             }
-            .setNegativeButton("취소", null)
-        if (existing != null) builder.setNeutralButton("지우기") { _, _ -> docView.replaceText(page, existing, null, 0) }
-        val dialog = builder.create()
-        dialog.setOnShowListener {
-            // 바로 칠 수 있게 키보드를 띄운다
-            input.requestFocus()
-            dialog.window?.let { WindowCompat.getInsetsController(it, input).show(WindowInsetsCompat.Type.ime()) }
+            textSizeRow.addView(v)
         }
-        dialog.show()
+        dock.fit(textSizeRow)
     }
 
     // ================= 툴바 자리 =================
@@ -1525,7 +1523,11 @@ class ViewerActivity : AppCompatActivity() {
         when (t) {
             Tool.HIGHLIGHTER -> docView.hlColor = hlSlots.color
             Tool.LASER -> docView.laserColor = laserSlots.color
-            else -> docView.penColor = penSlots.color
+            else -> {
+                docView.penColor = penSlots.color
+                // 글 상자를 치는 중이면 그 글의 색도 바로 바꾼다
+                if (textEditor.isEditing) textEditor.color = penSlots.color
+            }
         }
     }
 
@@ -1581,6 +1583,8 @@ class ViewerActivity : AppCompatActivity() {
             auto
         }
 
+        textSizeIdx = prefs.getInt("textSizeIdx", 1).coerceIn(textSizes.indices)
+        buildTextSizes()
         toolButtons.getValue(Tool.SHAPE).setImageDrawable(ShapePenDrawable(this))
         setupShapeBar()
         updateEraserIcon()
@@ -1595,7 +1599,7 @@ class ViewerActivity : AppCompatActivity() {
                     if (showing) hideOptionBar() else showOptionBar(t)
                 } else {
                     if (t == Tool.TEXT && docView.tool != Tool.TEXT) {
-                        Toast.makeText(this, "글을 넣을 자리를 누르세요. 넣은 글을 누르면 고칠 수 있습니다.", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this, "글을 넣을 자리를 누르면 글 상자가 생깁니다. 넣은 글을 누르면 고칠 수 있습니다.", Toast.LENGTH_SHORT).show()
                     }
                     selectTool(t)
                 }
@@ -1605,6 +1609,7 @@ class ViewerActivity : AppCompatActivity() {
     }
 
     private fun selectTool(t: Tool) {
+        if (t != Tool.TEXT) textEditor.commit()
         if (optionTool != t) hideOptionBar()
         docView.tool = t
         toolButtons.forEach { (k, b) -> b.isSelected = k == t }
@@ -1847,6 +1852,7 @@ class ViewerActivity : AppCompatActivity() {
         val noColor = t == Tool.ERASER || t == Tool.LASSO
         colorSep.visibility = if (noColor) View.GONE else View.VISIBLE
         lassoRow.visibility = if (t == Tool.LASSO) View.VISIBLE else View.GONE
+        textSizeRow.visibility = if (t == Tool.TEXT) View.VISIBLE else View.GONE
         pasteButton.visibility = if (docView.hasClipboard) View.VISIBLE else View.GONE
         if (noColor) {
             colorRow.visibility = View.GONE

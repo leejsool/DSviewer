@@ -10,6 +10,7 @@ import android.graphics.Color
 import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.PointF
 import android.graphics.RectF
 import android.util.AttributeSet
 import android.util.Log
@@ -61,6 +62,8 @@ class DocumentView @JvmOverloads constructor(
         fun onPenDown() {}
         /** 글 도구로 쪽의 (x, y)를 톡 누름. 이미 있는 글 위면 [existing]이 그 글 */
         fun onTextTap(page: Int, x: Float, y: Float, existing: Stroke?) {}
+        /** 화면을 다시 그림 (스크롤·확대가 바뀌었을 수 있다. 문서 위에 띄운 글 상자를 따라 옮길 때) */
+        fun onViewportChanged() {}
     }
 
     var listener: Listener? = null
@@ -452,7 +455,7 @@ class DocumentView @JvmOverloads constructor(
             val dragging = (moving || resizing || rotating) && selPage == i
             // 그림을 먼저, 필기를 그 위에
             for (st in inkDoc.pages[i]) if (st.image != null && (!dragging || st !in selSet)) drawStroke(canvas, st)
-            for (st in inkDoc.pages[i]) if (st.image == null && (!dragging || st !in selSet)) drawStroke(canvas, st)
+            for (st in inkDoc.pages[i]) if (st.image == null && st !== hiddenStroke && (!dragging || st !in selSet)) drawStroke(canvas, st)
             if (dragging) {
                 // 옮기거나 크기를 바꾸는 중인 획은 손을 뗄 때까지 그림만 바꿔 그린다
                 canvas.save()
@@ -484,6 +487,7 @@ class DocumentView @JvmOverloads constructor(
             canvas.drawCircle(lastSx, lastSy, eraserRadiusDp * density, cursorPaint)
         }
         drawScrollBar(canvas)
+        listener?.onViewportChanged()
         reportPage(d.pageCount)
     }
 
@@ -1618,18 +1622,34 @@ class DocumentView @JvmOverloads constructor(
 
     // ================= 글 =================
 
-    private fun tapText(page: Int, x: Float, y: Float) {
-        listener?.onTextTap(page, x, y, boxAt(page, x, y, textOnly = true))
+    /** 문서 위 글 상자로 고치는 중이라 그리지 않는 글 */
+    var hiddenStroke: Stroke? = null
+        set(v) {
+            field = v
+            invalidate()
+        }
+
+    /** 화면 배율 (쪽 좌표 1pt가 화면 몇 px인지) */
+    val viewScale get() = scale
+
+    fun pageSize(page: Int): SizeF? = sizes.getOrNull(page)
+
+    /** 쪽 좌표 → 이 뷰의 화면 좌표 */
+    fun pageToScreen(page: Int, x: Float, y: Float): PointF? {
+        if (page !in sizes.indices) return null
+        return PointF((lefts[page] + x) * scale - offX, (tops[page] + y) * scale - offY)
     }
 
-    /** 쪽 (x, y)에 글을 넣는다 (첫 줄이 누른 높이에 오게, 쪽 밖으로 나가지 않게). 실행 취소 가능 */
-    fun addText(page: Int, x: Float, y: Float, text: InkText, color: Int) {
+    private fun tapText(page: Int, x: Float, y: Float) {
+        listener?.onTextTap(page, x, y, boxAt(page, x, y, textOnly = true)?.takeIf { it !== hiddenStroke })
+    }
+
+    /** 쪽의 (left, top)을 왼쪽 위 모서리로 글을 넣는다. 실행 취소 가능 */
+    fun addText(page: Int, left: Float, top: Float, text: InkText, color: Int) {
         val inkDoc = ink ?: return
-        val size = sizes.getOrNull(page) ?: return
+        if (page !in sizes.indices) return
         val w = text.boxW.toFloat()
         val h = text.boxH.toFloat()
-        val left = x.coerceIn(0f, max(0f, size.width - w))
-        val top = (y - text.size * 0.7f).coerceIn(0f, max(0f, size.height - h))
         val st = Stroke(Tool.PEN, color, 0f).apply {
             this.text = text
             add(left, top, 1f)

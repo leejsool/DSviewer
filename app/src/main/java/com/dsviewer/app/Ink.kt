@@ -13,6 +13,7 @@ import android.text.TextPaint
 import kotlin.math.ceil
 import kotlin.math.hypot
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
@@ -44,16 +45,22 @@ private fun drawInkImage(c: Canvas, st: Stroke, alphaMul: Float) {
 }
 
 /**
- * 쪽에 넣은 글. [size]는 글자 크기(pt). 줄바꿈은 입력한 대로만 한다.
+ * 쪽에 넣은 글. [size]는 글자 크기(pt), [wrap]은 줄을 바꾸는 폭(pt, 글 상자를 만든 자리에서 쪽 오른쪽 끝까지).
  * 그림처럼 획의 네 점(상자 모서리)에 맞춰 그리므로 옮기고 키우고 돌려도 따라간다.
+ * 문서 위에서 치는 글 상자(InlineTextEditor의 EditText)와 줄바꿈이 같도록 같은 설정으로 배치한다.
  */
-class InkText(val text: String, val size: Float) {
+class InkText(val text: String, val size: Float, val wrap: Float = NO_WRAP) {
     private val paint = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.LINEAR_TEXT_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
         textSize = size
         typeface = Typeface.DEFAULT
     }
     private val layout: StaticLayout =
-        StaticLayout.Builder.obtain(text, 0, text.length, paint, MAX_LINE).setIncludePad(false).build()
+        StaticLayout.Builder.obtain(text, 0, text.length, paint, ceil(min(wrap, NO_WRAP)).toInt().coerceAtLeast(1))
+            .setIncludePad(false)
+            .setUseLineSpacingFromFallbacks(true)
+            .setBreakStrategy(android.text.Layout.BREAK_STRATEGY_SIMPLE)
+            .setHyphenationFrequency(android.text.Layout.HYPHENATION_FREQUENCY_NONE)
+            .build()
 
     /** 상자 크기 (pt). 저장할 때 PDF 한 쪽 크기로도 쓰므로 정수로 올린다 */
     val boxW: Int = ceil((0 until layout.lineCount).maxOf { layout.getLineWidth(it) } + PAD * 2).toInt().coerceAtLeast(1)
@@ -68,8 +75,9 @@ class InkText(val text: String, val size: Float) {
         c.restore()
     }
 
-    private companion object {
-        const val MAX_LINE = 100_000
+    companion object {
+        /** 줄을 바꾸지 않음 (예전에 넣은 글) */
+        const val NO_WRAP = 100_000f
         /** 글자가 상자 끝에서 잘리지 않게 두르는 여백 (pt) */
         const val PAD = 2f
     }
