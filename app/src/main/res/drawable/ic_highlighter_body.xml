@@ -1,0 +1,16 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- 비스듬히 세운 형광펜: 뚜껑, 몸통, 목, 납작한 촉 -->
+    <group android:pivotX="12" android:pivotY="12" android:rotation="45"
+        android:translateX="-1" android:translateY="0.5">
+        <path android:fillColor="?attr/colorControlNormal"
+            android:pathData="M10,2.5h4a1,1 0,0 1,1 1V6.5H9V3.5a1,1 0,0 1,1 -1z" />
+        <path android:fillColor="?attr/colorControlNormal"
+            android:pathData="M9,7.3h6V12H9z" />
+        <path android:fillColor="?attr/colorControlNormal"
+            android:pathData="M9.3,12.6h5.4l-0.8,1.8h-3.8z" />
+        <path android:fillColor="?attr/colorControlNormal"
+            android:pathData="M10.4,15h3.2v2.2l-3.2,1.6z" />
+    </group>
+</vector>

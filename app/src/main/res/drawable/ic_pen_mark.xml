@@ -1,0 +1,8 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- 펜으로 쓴 S자 곡선. 색은 ViewerActivity에서 선택한 펜 색으로 칠한다 -->
+    <path android:strokeColor="@android:color/white" android:strokeWidth="1.8"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M3.2,21.2C4.4,18.9 6.4,18.9 7.4,20.6S10.6,22.6 12.2,20.2" />
+</vector>

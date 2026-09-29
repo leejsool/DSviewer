@@ -1,0 +1,8 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- 점선 네모 (네모 선택) -->
+    <path android:strokeColor="?attr/colorControlNormal" android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:pathData="M4,4h3M10.5,4h3M17,4h3v3M20,10.5v3M20,17v3h-3M13.5,20h-3M7,20H4v-3M4,13.5v-3M4,7V4" />
+</vector>

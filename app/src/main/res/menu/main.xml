@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+    <item android:id="@+id/action_open_tabs" android:icon="@drawable/ic_doc"
+        android:title="열린 문서" android:visible="false"
+        app:showAsAction="ifRoom|withText" />
+    <item android:id="@+id/action_search" android:icon="@drawable/ic_search"
+        android:title="이름으로 찾기"
+        app:actionViewClass="androidx.appcompat.widget.SearchView"
+        app:showAsAction="ifRoom|collapseActionView" />
+    <item android:id="@+id/action_pick" android:icon="@drawable/ic_folder"
+        android:title="다른 위치에서 열기"
+        app:showAsAction="ifRoom|withText" />
+</menu>

@@ -1,0 +1,7 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- 칠해진 형광 자국. 색은 ViewerActivity에서 선택한 형광펜 색으로 칠한다 -->
+    <path android:fillColor="#FFD60A"
+        android:pathData="M3,19h8.5a1.5,1.5 0,0 1,0 3H3a1.5,1.5 0,0 1,0 -3z" />
+</vector>

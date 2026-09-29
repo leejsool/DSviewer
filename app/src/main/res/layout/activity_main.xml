@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="?attr/colorSurfaceContainerHigh"
+    android:orientation="vertical">
+
+    <com.google.android.material.appbar.MaterialToolbar
+        android:id="@+id/toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="?attr/actionBarSize"
+        app:logo="@drawable/logo_school"
+        app:logoDescription="학교 로고"
+        app:title="@string/app_name" />
+
+    <!-- 크롬식 탭: 최근 파일 / 즐겨찾기 / 모든 문서 / 폴더 (MainActivity에서 채움) -->
+    <com.dsviewer.app.ChromeTabBar
+        android:id="@+id/tabs"
+        android:layout_width="match_parent"
+        android:layout_height="42dp"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp" />
+
+    <!-- 고른 탭과 같은 색으로 이어지는 내용 영역 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="?attr/colorSurface"
+        android:orientation="vertical">
+
+    <!-- 폴더 탭: 현재 위치와 위로 가기 -->
+    <LinearLayout
+        android:id="@+id/pathBar"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:background="?attr/colorSurfaceContainer"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:visibility="gone">
+
+        <ImageButton
+            android:id="@+id/upButton"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="위 폴더"
+            android:src="@drawable/ic_up" />
+
+        <HorizontalScrollView
+            android:id="@+id/pathScroll"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:scrollbars="none">
+
+            <TextView
+                android:id="@+id/pathText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:paddingEnd="16dp"
+                android:singleLine="true"
+                android:textAppearance="?attr/textAppearanceBodyMedium" />
+        </HorizontalScrollView>
+    </LinearLayout>
+
+    <!-- 저장소 권한 안내 -->
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/permCard"
+        style="?attr/materialCardViewFilledStyle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_margin="16dp"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="20dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="기기의 문서를 찾으려면 권한이 필요합니다"
+                android:textAppearance="?attr/textAppearanceTitleMedium" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="설정 화면에서 DS뷰어의 '모든 파일에 대한 접근 권한'을 켜 주세요. 문서는 기기 안에서만 읽으며 어디로도 보내지 않습니다."
+                android:textAppearance="?attr/textAppearanceBodyMedium" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/permButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="권한 허용하러 가기" />
+        </LinearLayout>
+    </com.google.android.material.card.MaterialCardView>
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/list"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:paddingVertical="4dp"
+            android:scrollbars="vertical" />
+
+        <TextView
+            android:id="@+id/emptyText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:padding="32dp"
+            android:textAppearance="?attr/textAppearanceBodyMedium"
+            android:visibility="gone" />
+
+        <com.google.android.material.progressindicator.CircularProgressIndicator
+            android:id="@+id/progress"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:indeterminate="true"
+            android:visibility="gone" />
+    </FrameLayout>
+    </LinearLayout>
+</LinearLayout>

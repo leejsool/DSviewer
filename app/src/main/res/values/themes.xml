@@ -1,0 +1,14 @@
+<resources>
+    <style name="Theme.DSViewer" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/brand</item>
+    </style>
+
+    <!-- 뷰어 탭 줄 오른쪽의 작은 아이콘 버튼 (아이콘 20dp) -->
+    <style name="TabBarAction">
+        <item name="android:layout_width">38dp</item>
+        <item name="android:layout_height">38dp</item>
+        <item name="android:padding">9dp</item>
+        <item name="android:scaleType">fitCenter</item>
+        <item name="android:background">?attr/selectableItemBackgroundBorderless</item>
+    </style>
+</resources>
