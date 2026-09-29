@@ -26,19 +26,26 @@ import kotlin.math.roundToInt
 enum class WidthKind(val min: Float, val max: Float, val step: Float, val defaults: FloatArray, val key: String) {
     PEN(0.3f, 4f, 0.05f, floatArrayOf(0.6f, 1.2f, 2.2f), "penWidth"),
     HIGHLIGHTER(4f, 30f, 0.5f, floatArrayOf(8f, 14f, 22f), "hlWidth"),
-    ERASER(6f, 40f, 1f, floatArrayOf(8f, 14f, 24f), "eraserRadius");
+    ERASER(6f, 40f, 1f, floatArrayOf(8f, 14f, 24f), "eraserRadius"),
+    /** 레이저는 확대와 상관없이 화면에서 늘 같은 굵기 (dp) */
+    LASER(2f, 16f, 0.5f, floatArrayOf(4f, 7f, 11f), "laserWidth");
 
     /** 범위 안에서의 위치 0..1 */
     fun t(v: Float) = ((v - min) / (max - min)).coerceIn(0f, 1f)
 
     fun label(v: Float) =
-        if (this == ERASER) "크기 ${v.roundToInt()}" else String.format("%.2f mm", v * 0.3528f)
+        when (this) {
+            ERASER -> "크기 ${v.roundToInt()}"
+            LASER -> "굵기 ${"%.1f".format(v)}"
+            else -> String.format("%.2f mm", v * 0.3528f)
+        }
 
     companion object {
         fun of(t: Tool) = when (t) {
             Tool.PEN, Tool.SHAPE -> PEN
             Tool.HIGHLIGHTER -> HIGHLIGHTER
             Tool.ERASER -> ERASER
+            Tool.LASER -> LASER
             Tool.LASSO -> error("선택 도구에는 굵기가 없습니다")
         }
     }

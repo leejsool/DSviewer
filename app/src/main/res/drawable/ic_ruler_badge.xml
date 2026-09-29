@@ -1,0 +1,9 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- 형광펜 버튼 오른쪽 아래의 작은 자 (직선 형광펜일 때) -->
+    <path android:fillColor="?attr/colorControlNormal"
+        android:pathData="M14.4,18h8.1a0.5,0.5 0,0 1,0.5 0.5v3a0.5,0.5 0,0 1,-0.5 0.5h-8.1a0.5,0.5 0,0 1,-0.5 -0.5v-3a0.5,0.5 0,0 1,0.5 -0.5z" />
+    <path android:strokeColor="?attr/colorSurface" android:strokeWidth="0.7"
+        android:pathData="M15.9,18v1.6M17.9,18v1.1M19.9,18v1.6M21.9,18v1.1" />
+</vector>

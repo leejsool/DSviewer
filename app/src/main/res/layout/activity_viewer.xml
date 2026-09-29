@@ -47,6 +47,20 @@
             android:tooltipText="저장" />
 
         <ImageButton
+            android:id="@+id/actionInsert"
+            style="@style/TabBarAction"
+            android:contentDescription="삽입"
+            android:src="@drawable/ic_insert"
+            android:tooltipText="삽입" />
+
+        <ImageButton
+            android:id="@+id/actionOverview"
+            style="@style/TabBarAction"
+            android:contentDescription="쪽 한눈에 보기"
+            android:src="@drawable/ic_grid_view"
+            android:tooltipText="쪽 한눈에 보기" />
+
+        <ImageButton
             android:id="@+id/actionMore"
             style="@style/TabBarAction"
             android:contentDescription="더 보기"
@@ -189,6 +203,93 @@
                     app:icon="@drawable/ic_delete" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
+
+        <!-- 쪽 한눈에 보기: 문서 화면을 덮는 쪽 미리보기 모음 (PageOverview) -->
+        <LinearLayout
+            android:id="@+id/overviewPanel"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@color/doc_bg"
+            android:clickable="true"
+            android:focusable="true"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:background="?attr/colorSurfaceContainer"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="16dp"
+                android:paddingEnd="4dp">
+
+                <TextView
+                    android:id="@+id/overviewTitle"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:singleLine="true"
+                    android:text="쪽 한눈에 보기"
+                    android:textAppearance="?attr/textAppearanceTitleMedium" />
+
+                <com.google.android.material.button.MaterialButtonToggleGroup
+                    android:id="@+id/overviewFilter"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    app:selectionRequired="true"
+                    app:singleSelection="true">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/overviewAll"
+                        style="?attr/materialButtonOutlinedStyle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="전체" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/overviewInked"
+                        style="?attr/materialButtonOutlinedStyle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="필기된 쪽" />
+                </com.google.android.material.button.MaterialButtonToggleGroup>
+
+                <ImageButton
+                    android:id="@+id/overviewClose"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:layout_marginStart="4dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="닫기"
+                    android:src="@drawable/ic_close" />
+            </LinearLayout>
+
+            <FrameLayout
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1">
+
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/overviewGrid"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:clipToPadding="false"
+                    android:padding="6dp"
+                    android:scrollbars="vertical" />
+
+                <TextView
+                    android:id="@+id/overviewEmpty"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center"
+                    android:gravity="center"
+                    android:padding="32dp"
+                    android:text="아직 필기한 쪽이 없습니다."
+                    android:textAppearance="?attr/textAppearanceBodyMedium"
+                    android:visibility="gone" />
+            </FrameLayout>
+        </LinearLayout>
     </FrameLayout>
 
 
@@ -249,6 +350,15 @@
                 android:background="@drawable/bg_tool"
                 android:contentDescription="선택"
                 android:src="@drawable/ic_lasso" />
+
+            <ImageButton
+                android:id="@+id/toolLaser"
+                android:layout_width="48dp"
+                android:layout_height="44dp"
+                android:layout_marginStart="4dp"
+                android:background="@drawable/bg_tool"
+                android:contentDescription="레이저 포인터"
+                android:src="@drawable/ic_laser" />
 
             <View
                 android:layout_width="1dp"

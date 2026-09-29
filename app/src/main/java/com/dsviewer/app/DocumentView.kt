@@ -4,6 +4,7 @@ import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BlendMode
+import android.graphics.BlurMaskFilter
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.DashPathEffect
@@ -20,6 +21,7 @@ import android.view.ScaleGestureDetector
 import android.view.View
 import android.view.animation.DecelerateInterpolator
 import android.widget.OverScroller
+import com.google.android.material.color.MaterialColors
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -71,7 +73,14 @@ class DocumentView @JvmOverloads constructor(
     var penWidth = 1.0f
     var hlColor = 0xFFFFEB3B.toInt()
     var hlWidth = 12f
+    /** 줄자: 형광펜을 시작점에서 지금 점까지 곧은 선으로만 긋는다 */
+    var hlStraight = false
     var eraserRadiusDp = 12f
+    var laserColor = 0xFFFF1744.toInt()
+    /** 레이저 굵기 (화면 dp, 확대해도 그대로) */
+    var laserWidthDp = 7f
+    /** 레이저를 마지막으로 뗀 뒤 사라지기 시작할 때까지 (ms) */
+    var laserFadeMs = 2000L
     /** 획 지우개 / 영역 지우개 */
     var eraserMode = EraserMode.STROKE
     /** true면 형광펜 획만 지운다 */
@@ -126,11 +135,7 @@ class DocumentView @JvmOverloads constructor(
         style = Paint.Style.STROKE
         strokeWidth = 1f
     }
-    private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeCap = Paint.Cap.ROUND
-        strokeJoin = Paint.Join.ROUND
-    }
+    private val strokePaint = inkPaint()
     private val cursorPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = 1.5f * resources.displayMetrics.density
@@ -176,8 +181,35 @@ class DocumentView @JvmOverloads constructor(
     private var anchorY = 0f
     private var startDist = 1f
     private var scaleK = 1f
+    /** 회전 손잡이로 돌리는 중: 선택 영역 가운데(rotCx, rotCy)를 중심으로 rotDeg도 */
+    private var rotating = false
+    private var rotCx = 0f
+    private var rotCy = 0f
+    private var rotStart = 0f
+    private var rotDeg = 0f
+    private val rotIconPath = Path()
+    private val rotBubblePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xE0303030.toInt() }
+    private val rotBubbleText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        textSize = 14f * resources.displayMetrics.density
+        typeface = android.graphics.Typeface.DEFAULT_BOLD
+    }
     /** true면 네모 선택, false면 자유 선택(올가미) */
     var lassoRect = false
+    // ---- 레이저 (쪽 좌표. 저장하지 않고, 마지막 획을 떼고 laserFadeMs 뒤 한꺼번에 사라진다) ----
+    private val laserStrokes = ArrayList<Pair<Int, Stroke>>()
+    private var laserAlpha = 1f
+    private var laserFadeAnim: ValueAnimator? = null
+    private val laserFadeRunnable = Runnable { startLaserFade() }
+    private val laserPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+    private val laserPath = Path()
+    private var laserBlur: BlurMaskFilter? = null
+    private var laserBlurRadius = -1f
+
     /** 복사해 둔 획 (복사한 영역의 왼쪽 위가 원점) */
     private var clipboard: List<Stroke> = emptyList()
     private val clipSize = RectF()
@@ -209,6 +241,7 @@ class DocumentView @JvmOverloads constructor(
     /** 문서 없이 빈 화면 (탭의 문서를 읽는 중) */
     fun clearDocument() {
         clearSelection()
+        clearLaser()
         cancelRendering()
         doc = null
         ink = null
@@ -229,6 +262,7 @@ class DocumentView @JvmOverloads constructor(
 
     fun setDocument(d: PdfDoc, inkDoc: InkDocument, state: ViewState? = null) {
         clearSelection()
+        clearLaser()
         cancelRendering()
         doc = d
         ink = inkDoc
@@ -260,6 +294,7 @@ class DocumentView @JvmOverloads constructor(
         }
         lastReportedPage = -1
         invalidate()
+        post { flashBar() }
     }
 
     // ================= 레이아웃 / 변환 =================
@@ -393,18 +428,23 @@ class DocumentView @JvmOverloads constructor(
             canvas.clipRect(r)
             canvas.translate(r.left, r.top)
             canvas.scale(s, s)
-            val dragging = (moving || resizing) && selPage == i
-            for (st in inkDoc.pages[i]) if (!dragging || st !in selSet) drawStroke(canvas, st)
+            val dragging = (moving || resizing || rotating) && selPage == i
+            // 그림을 먼저, 필기를 그 위에
+            for (st in inkDoc.pages[i]) if (st.image != null && (!dragging || st !in selSet)) drawStroke(canvas, st)
+            for (st in inkDoc.pages[i]) if (st.image == null && (!dragging || st !in selSet)) drawStroke(canvas, st)
             if (dragging) {
                 // 옮기거나 크기를 바꾸는 중인 획은 손을 뗄 때까지 그림만 바꿔 그린다
                 canvas.save()
                 canvas.translate(moveDx, moveDy)
                 if (resizing) canvas.scale(scaleK, scaleK, anchorX, anchorY)
+                if (rotating) canvas.rotate(rotDeg, rotCx, rotCy)
                 for (st in selection) drawStroke(canvas, st)
                 canvas.restore()
             }
+            for ((p, st) in laserStrokes) if (p == i) drawLaser(canvas, st, laserAlpha)
             if (curPage == i) curStroke?.let {
-                if (tool == Tool.SHAPE) {
+                if (it.tool == Tool.LASER) drawLaser(canvas, it, 1f)
+                else if (tool == Tool.SHAPE) {
                     // 보정 펜: 내 획은 흐리게, 맞춘 도형은 조금 더 진하게 미리 보기
                     drawStroke(canvas, it, 0.3f)
                     shapePreview?.forEach { sp -> drawStroke(canvas, sp, 0.6f) }
@@ -446,7 +486,25 @@ class DocumentView @JvmOverloads constructor(
             }
         }
         val rect = if (selection.isEmpty()) null else selectionScreenRect(selRect)
-        if (rect != null) {
+        if (rect != null && rotating) {
+            // 돌리는 중: 상자를 같이 돌려 그리고, 손잡이 옆에 각도를 띄운다
+            canvas.save()
+            canvas.rotate(rotDeg, rect.centerX(), rect.centerY())
+            canvas.drawRect(rect, selFill)
+            canvas.drawRect(rect, selLine)
+            canvas.restore()
+            val (hx, hy) = rotateHandlePos(rect)
+            // 수학에서처럼 시계 반대 방향을 +로 보여 준다
+            val text = "${(-rotDeg).roundToInt()}°"
+            val pad = 10f * density
+            val bw = rotBubbleText.measureText(text) + pad * 2
+            val bh = 30f * density
+            val bx = hx + ROT_HANDLE_DP * density + 8f * density
+            val by = hy - bh / 2
+            canvas.drawRoundRect(bx, by, bx + bw, by + bh, bh / 2, bh / 2, rotBubblePaint)
+            val fm = rotBubbleText.fontMetrics
+            canvas.drawText(text, bx + pad, by + bh / 2 - (fm.ascent + fm.descent) / 2, rotBubbleText)
+        } else if (rect != null) {
             canvas.drawRect(rect, selFill)
             canvas.drawRect(rect, selLine)
             // 크기 조절 손잡이
@@ -455,13 +513,70 @@ class DocumentView @JvmOverloads constructor(
                 canvas.drawCircle(cx, cy, hr, handleFill)
                 canvas.drawCircle(cx, cy, hr, handleLine)
             }
+            if (!moving && !resizing) drawRotateHandle(canvas, rect)
         }
-        // 옮기거나 크기를 바꾸는 동안에는 막대를 숨긴다
-        val report = if (moving || resizing) null else rect
+        // 옮기거나 크기를 바꾸거나 돌리는 동안에는 막대를 숨긴다.
+        // 알리는 영역에는 회전 손잡이도 넣어, 막대가 손잡이를 가리지 않게 한다
+        val report = if (moving || resizing || rotating || rect == null) null else {
+            val (hx, hy) = rotateHandlePos(rect)
+            val hr = ROT_HANDLE_DP * density
+            RectF(rect).apply { union(hx - hr, hy - hr, hx + hr, hy + hr) }
+        }
         if (report != reportedSel) {
             reportedSel = report?.let { RectF(it) }
             listener?.onSelectionChanged(reportedSel, selection.size)
         }
+    }
+
+    /**
+     * 회전 손잡이의 가운데 (화면 좌표): 선택 상자 아래 가운데. 아래에 자리가 없으면 위
+     * (선택 막대는 보통 상자 위에 뜨므로 겹치지 않게 아래를 먼저)
+     */
+    private fun rotateHandlePos(rect: RectF): Pair<Float, Float> {
+        val off = ROT_OFFSET_DP * density
+        val hr = ROT_HANDLE_DP * density
+        val below = rect.bottom + off
+        val y = if (below + hr <= height - bottomInset - 4f * density || rect.top - off - hr < 0f) below else rect.top - off
+        return rect.centerX() to y
+    }
+
+    /** 상자에서 뻗은 줄 끝의 동그란 회전 손잡이 (둥근 화살표 그림) */
+    private fun drawRotateHandle(canvas: Canvas, rect: RectF) {
+        val (hx, hy) = rotateHandlePos(rect)
+        val hr = ROT_HANDLE_DP * density
+        val edgeY = if (hy > rect.bottom) rect.bottom else rect.top
+        canvas.drawLine(hx, edgeY, hx, if (hy > rect.bottom) hy - hr else hy + hr, handleLine)
+        canvas.drawCircle(hx, hy, hr, handleFill)
+        canvas.drawCircle(hx, hy, hr, handleLine)
+        // ↻: 위쪽이 트인 원호(시계 방향으로 그림)와, 원호 끝에서 진행 방향을 가리키는 화살촉
+        val ar = hr * 0.5f
+        val a0 = -45f
+        val sweep = 290f
+        rotIconPath.reset()
+        rotIconPath.addArc(hx - ar, hy - ar, hx + ar, hy + ar, a0, sweep)
+        val end = Math.toRadians((a0 + sweep).toDouble())
+        val ex = hx + ar * kotlin.math.cos(end).toFloat()
+        val ey = hy + ar * kotlin.math.sin(end).toFloat()
+        // 시계 방향 접선 (tx, ty)의 반대쪽으로 ±35° 벌린 두 날개.
+        // 촉 전체를 끝점 기준으로 반시계 방향 20° 돌려야 ↻처럼 보인다
+        val tx = -kotlin.math.sin(end)
+        val ty = kotlin.math.cos(end)
+        val len = hr * 0.4f
+        val turn = Math.toRadians(-20.0)
+        for (sg in intArrayOf(1, -1)) {
+            val w = Math.toRadians(35.0 * sg) + turn
+            val bx = -(tx * kotlin.math.cos(w) - ty * kotlin.math.sin(w))
+            val by = -(tx * kotlin.math.sin(w) + ty * kotlin.math.cos(w))
+            rotIconPath.moveTo(ex + (bx * len).toFloat(), ey + (by * len).toFloat())
+            rotIconPath.lineTo(ex, ey)
+        }
+        canvas.drawPath(rotIconPath, handleLine)
+    }
+
+    private fun rotateHandleHit(sx: Float, sy: Float): Boolean {
+        if (selection.isEmpty()) return false
+        val (hx, hy) = rotateHandlePos(selectionScreenRect(RectF()))
+        return hypot(sx - hx, sy - hy) <= HANDLE_TOUCH_DP * density
     }
 
     /** 선택 영역(페이지 좌표)에 옮기기·크기 조절 중인 변화를 반영한다 */
@@ -492,20 +607,74 @@ class DocumentView @JvmOverloads constructor(
         return out
     }
 
-    private fun drawStroke(c: Canvas, st: Stroke, alphaMul: Float = 1f) {
-        strokePaint.color = st.color
-        if (st.tool == Tool.HIGHLIGHTER) {
-            strokePaint.alpha = (PdfInk.HL_ALPHA * 255).roundToInt()
-            strokePaint.blendMode = BlendMode.MULTIPLY
-        } else {
-            strokePaint.blendMode = null
+    private fun drawStroke(c: Canvas, st: Stroke, alphaMul: Float = 1f) = drawInkStroke(c, strokePaint, st, alphaMul)
+
+    /**
+     * 레이저 획: 번진 빛 + 색 선 + 가운데 흰 심. 캔버스는 쪽 좌표라서
+     * 굵기(dp)를 지금 배율로 나눠 화면에서 늘 같은 굵기로 보이게 한다
+     */
+    private fun drawLaser(c: Canvas, st: Stroke, a: Float) {
+        if (st.count == 0 || a <= 0f) return
+        laserPath.reset()
+        laserPath.moveTo(st.x(0), st.y(0))
+        if (st.count == 1) laserPath.lineTo(st.x(0) + 0.01f, st.y(0))
+        else for (k in 1 until st.count) laserPath.lineTo(st.x(k), st.y(k))
+        val w = st.width * density / scale
+        val blur = w * 0.9f
+        if (blur != laserBlurRadius) {
+            laserBlur = BlurMaskFilter(blur, BlurMaskFilter.Blur.NORMAL)
+            laserBlurRadius = blur
         }
-        if (alphaMul < 1f) strokePaint.alpha = (strokePaint.alpha * alphaMul).roundToInt()
-        strokePaint.pathEffect = if (st.dashed) DashPathEffect(st.dashIntervals(), 0f) else null
-        for ((w, path) in st.paths()) {
-            strokePaint.strokeWidth = w
-            c.drawPath(path, strokePaint)
+        laserPaint.maskFilter = laserBlur
+        laserPaint.color = st.color
+        laserPaint.alpha = (140 * a).roundToInt()
+        laserPaint.strokeWidth = w * 2.6f
+        c.drawPath(laserPath, laserPaint)
+        laserPaint.maskFilter = null
+        laserPaint.color = st.color
+        laserPaint.alpha = (255 * a).roundToInt()
+        laserPaint.strokeWidth = w
+        c.drawPath(laserPath, laserPaint)
+        laserPaint.color = Color.WHITE
+        laserPaint.alpha = (210 * a).roundToInt()
+        laserPaint.strokeWidth = w * 0.35f
+        c.drawPath(laserPath, laserPaint)
+    }
+
+    /** 레이저를 새로 긋기 시작하면 사라지던 것도 다시 또렷하게 */
+    private fun holdLaser() {
+        removeCallbacks(laserFadeRunnable)
+        laserFadeAnim?.cancel()
+        laserFadeAnim = null
+        laserAlpha = 1f
+    }
+
+    private fun startLaserFade() {
+        laserFadeAnim?.cancel()
+        laserFadeAnim = ValueAnimator.ofFloat(1f, 0f).apply {
+            duration = 400
+            addUpdateListener {
+                laserAlpha = it.animatedValue as Float
+                invalidate()
+            }
+            addListener(object : android.animation.AnimatorListenerAdapter() {
+                private var canceled = false
+                override fun onAnimationCancel(animation: android.animation.Animator) { canceled = true }
+                override fun onAnimationEnd(animation: android.animation.Animator) {
+                    if (canceled) return
+                    laserStrokes.clear()
+                    laserAlpha = 1f
+                    laserFadeAnim = null
+                    invalidate()
+                }
+            })
+            start()
         }
+    }
+
+    private fun clearLaser() {
+        holdLaser()
+        laserStrokes.clear()
     }
 
     private fun reportPage(count: Int) {
@@ -715,38 +884,58 @@ class DocumentView @JvmOverloads constructor(
         }
     }
 
-    // ================= 스크롤 막대 =================
-    // 평소에는 숨겨져 있다가, 화면 높이의 절반 이상 움직이면 오른쪽에 나타난다.
-    // 손잡이를 끌면 문서 위치로 바로 이동하고, 1.5초 동안 움직임이 없으면 사라진다.
+    // ================= 빠른 스크롤 손잡이 =================
+    // 삼성 노트처럼 오른쪽 가장자리에 위아래 화살표가 그려진 손잡이.
+    // 스크롤하면 나타나고 2초 동안 움직임이 없으면 사라진다 (문서를 열 때도 잠깐 보여 준다).
+    // 손잡이를 끌면 문서 위치로 바로 이동하고, 끄는 동안 옆에 쪽 번호를 띄운다.
 
     private var barAlpha = 0f
     private var barAnimator: ValueAnimator? = null
     private var barDragging = false
     private var barGrabOffset = 0f
-    private var scrollAccum = 0f
-    private val barTouchWidth = 40f * density
+    private val handleW = 32f * density
+    private val handleH = 56f * density
+    /** 손잡이가 오가는 범위의 위아래 여백과 오른쪽 여백 */
     private val barMargin = 10f * density
-    private val barMinThumb = 48f * density
-    private val barThumbPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val barRight = 6f * density
+    private val colorSurface = MaterialColors.getColor(context, com.google.android.material.R.attr.colorSurfaceContainerHighest, Color.WHITE)
+    private val colorOnSurface = MaterialColors.getColor(context, com.google.android.material.R.attr.colorOnSurfaceVariant, Color.DKGRAY)
+    private val colorAccent = MaterialColors.getColor(context, androidx.appcompat.R.attr.colorPrimary, 0xFF1E5AA8.toInt())
     private val barTrackPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val handlePaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val handleEdgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 1f * density
+    }
+    private val arrowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 2f * density
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+    private val arrowPath = Path()
+    private val bubblePaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val bubbleText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textSize = 15f * density
+        color = Color.WHITE
+        typeface = android.graphics.Typeface.DEFAULT_BOLD
+    }
+    private val barRect = RectF()
     private val hideBarRunnable = Runnable { if (!barDragging) fadeBar(0f) }
-    private val resetAccumRunnable = Runnable { scrollAccum = 0f }
 
     private fun barVisible() = barAlpha > 0.05f
 
     private fun noteScrolled(dy: Float) {
         if (dy == 0f || contentH() <= height * 1.05f) return
-        if (barVisible() && (barAnimator?.isRunning != true || barAlpha > 0.5f)) {
-            fadeBar(1f)
-        } else {
-            scrollAccum += abs(dy)
-            removeCallbacks(resetAccumRunnable)
-            postDelayed(resetAccumRunnable, 800)
-            if (scrollAccum >= height / 2f) {
-                scrollAccum = 0f
-                fadeBar(1f)
-            }
-        }
+        fadeBar(1f)
+        removeCallbacks(hideBarRunnable)
+        postDelayed(hideBarRunnable, 2000)
+    }
+
+    /** 문서를 열 때 손잡이가 있다는 걸 잠깐 보여 준다 */
+    private fun flashBar() {
+        if (contentH() <= height * 1.05f) return
+        fadeBar(1f)
         removeCallbacks(hideBarRunnable)
         postDelayed(hideBarRunnable, 1500)
     }
@@ -764,45 +953,88 @@ class DocumentView @JvmOverloads constructor(
         }
     }
 
-    /** 스크롤 막대의 (트랙 위, 트랙 길이, 손잡이 위, 손잡이 높이). 문서가 화면보다 짧으면 null */
+    /**
+     * (손잡이가 오가는 범위의 위, 길이, 손잡이 위, 손잡이 높이). 문서가 화면보다 짧으면 null.
+     * 아래쪽에 겹쳐 뜬 줄(bottomInset)에 가리지 않도록 그 위까지만
+     */
     private fun barGeometry(): FloatArray? {
         val ch = contentH()
         if (ch <= height * 1.05f) return null
         val trackTop = barMargin
-        val trackLen = height - barMargin * 2
-        val thumbH = max(barMinThumb, trackLen * height / ch).coerceAtMost(trackLen)
+        val trackLen = height - bottomInset - barMargin * 2
+        if (trackLen < handleH * 1.5f) return null
         val frac = (offY / (ch - height)).coerceIn(0f, 1f)
-        return floatArrayOf(trackTop, trackLen, trackTop + frac * (trackLen - thumbH), thumbH)
+        return floatArrayOf(trackTop, trackLen, trackTop + frac * (trackLen - handleH), handleH)
     }
+
+    private fun Paint.withAlpha(c: Int, a: Float) = apply { color = c; alpha = (Color.alpha(c) * a).roundToInt() }
 
     private fun drawScrollBar(canvas: Canvas) {
         if (!barVisible()) return
         val g = barGeometry() ?: return
-        val w = (if (barDragging) 10f else 6f) * density
-        val right = width - 5f * density
         val a = barAlpha
-        barTrackPaint.color = Color.argb((60 * a).toInt(), 0, 0, 0)
-        canvas.drawRoundRect(right - w, g[0], right, g[0] + g[1], w / 2, w / 2, barTrackPaint)
-        barThumbPaint.color = if (barDragging) Color.argb((230 * a).toInt(), 0x1E, 0x5A, 0xA8)
-        else Color.argb((170 * a).toInt(), 0x55, 0x55, 0x55)
-        canvas.drawRoundRect(right - w, g[2], right, g[2] + g[3], w / 2, w / 2, barThumbPaint)
+        val right = width - barRight
+        val left = right - handleW
+        val cx = (left + right) / 2
+        // 손잡이가 오가는 길: 가는 선
+        val tw = 1.5f * density
+        barTrackPaint.withAlpha(Color.argb(50, 0, 0, 0), a)
+        canvas.drawRoundRect(cx - tw, g[0], cx + tw, g[0] + g[1], tw, tw, barTrackPaint)
+        // 손잡이: 알약 모양, 끄는 동안은 강조색
+        barRect.set(left, g[2], right, g[2] + g[3])
+        val r = handleW / 2
+        if (barDragging) {
+            handlePaint.withAlpha(colorAccent, a)
+            canvas.drawRoundRect(barRect, r, r, handlePaint)
+        } else {
+            handlePaint.withAlpha(colorSurface, a)
+            handlePaint.setShadowLayer(4f * density, 0f, 1f * density, Color.argb((70 * a).toInt(), 0, 0, 0))
+            canvas.drawRoundRect(barRect, r, r, handlePaint)
+            handlePaint.clearShadowLayer()
+            handleEdgePaint.withAlpha(Color.argb(40, 0, 0, 0), a)
+            canvas.drawRoundRect(barRect, r, r, handleEdgePaint)
+        }
+        // 위아래 화살표
+        val cy = barRect.centerY()
+        val s = 5f * density
+        val gap = 4.5f * density
+        arrowPath.reset()
+        arrowPath.moveTo(cx - s, cy - gap); arrowPath.lineTo(cx, cy - gap - s); arrowPath.lineTo(cx + s, cy - gap)
+        arrowPath.moveTo(cx - s, cy + gap); arrowPath.lineTo(cx, cy + gap + s); arrowPath.lineTo(cx + s, cy + gap)
+        arrowPaint.withAlpha(if (barDragging) Color.WHITE else colorOnSurface, a)
+        canvas.drawPath(arrowPath, arrowPaint)
+        // 끄는 동안: 손잡이 왼쪽에 쪽 번호 말풍선
+        if (barDragging && sizes.isNotEmpty()) {
+            val text = "${currentPage() + 1} / ${sizes.size}"
+            val padH = 12f * density
+            val bw = bubbleText.measureText(text) + padH * 2
+            val bh = 34f * density
+            val bRight = left - 10f * density
+            val top = (cy - bh / 2).coerceIn(0f, max(0f, height - bh))
+            bubblePaint.withAlpha(Color.argb(225, 0x30, 0x30, 0x30), a)
+            canvas.drawRoundRect(bRight - bw, top, bRight, top + bh, bh / 2, bh / 2, bubblePaint)
+            val fm = bubbleText.fontMetrics
+            canvas.drawText(text, bRight - bw + padH, top + bh / 2 - (fm.ascent + fm.descent) / 2, bubbleText)
+        }
     }
 
-    /** 스크롤 막대를 잡고 끄는 입력을 처리했으면 true */
+    /** 손잡이를 잡고 끄는 입력을 처리했으면 true. 손잡이 자체만 잡는다 (가장자리 필기를 가로채지 않게) */
     private fun handleBarTouch(ev: MotionEvent): Boolean {
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 val g = barGeometry() ?: return false
-                if (!barVisible() || ev.x < width - barTouchWidth) return false
-                // 손잡이 밖의 트랙을 누르면 그 위치로 손잡이 가운데를 옮긴다
-                val onThumb = ev.y >= g[2] - 12f * density && ev.y <= g[2] + g[3] + 12f * density
-                barGrabOffset = if (onThumb) ev.y - g[2] else g[3] / 2f
+                if (!barVisible()) return false
+                val slop = 10f * density
+                val left = width - barRight - handleW
+                val onHandle = ev.x >= left - slop && ev.y >= g[2] - slop && ev.y <= g[2] + g[3] + slop
+                if (!onHandle) return false
+                barGrabOffset = ev.y - g[2]
                 barDragging = true
                 scroller.forceFinished(true)
                 zoomAnimator?.cancel()
                 removeCallbacks(hideBarRunnable)
                 fadeBar(1f)
-                moveThumbTo(ev.y, g)
+                invalidate()
                 return true
             }
             MotionEvent.ACTION_MOVE -> if (barDragging) {
@@ -811,7 +1043,7 @@ class DocumentView @JvmOverloads constructor(
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> if (barDragging) {
                 barDragging = false
-                postDelayed(hideBarRunnable, 1500)
+                postDelayed(hideBarRunnable, 2000)
                 scheduleDetail()
                 invalidate()
                 return true
@@ -963,8 +1195,11 @@ class DocumentView @JvmOverloads constructor(
             eraseAt(hit.first, hit.second, hit.third)
         } else {
             curPage = hit.first
-            val st = if (tool == Tool.HIGHLIGHTER) Stroke(Tool.HIGHLIGHTER, hlColor, hlWidth)
-            else Stroke(Tool.PEN, penColor, penWidth)
+            val st = when (tool) {
+                Tool.HIGHLIGHTER -> Stroke(Tool.HIGHLIGHTER, hlColor, hlWidth)
+                Tool.LASER -> Stroke(Tool.LASER, laserColor, laserWidthDp).also { holdLaser() }
+                else -> Stroke(Tool.PEN, penColor, penWidth)
+            }
             lastPressure = p
             st.add(hit.second, hit.third, p)
             curStroke = st
@@ -972,7 +1207,30 @@ class DocumentView @JvmOverloads constructor(
         invalidate()
     }
 
+    /** 화면 좌표 점이 회전 중심에서 이루는 각 (도) */
+    private fun angleAt(sx: Float, sy: Float): Float {
+        val px = toPageX(selPage, sx)
+        val py = toPageY(selPage, sy)
+        return Math.toDegrees(kotlin.math.atan2((py - rotCy).toDouble(), (px - rotCx).toDouble())).toFloat()
+    }
+
     private fun movePen(sx: Float, sy: Float, p: Float) {
+        if (rotating) {
+            var d = angleAt(sx, sy) - rotStart
+            while (d > 180f) d -= 360f
+            while (d <= -180f) d += 360f
+            // 90° 배수(5° 안), 45° 배수(3° 안)에 딱 맞춘다
+            val r90 = (d / 90f).roundToInt() * 90f
+            val r45 = (d / 45f).roundToInt() * 45f
+            d = when {
+                abs(d - r90) <= 5f -> r90
+                abs(d - r45) <= 3f -> r45
+                else -> d
+            }
+            rotDeg = d
+            invalidate()
+            return
+        }
         if (moving) {
             moveDx = toPageX(selPage, sx) - moveStartX
             moveDy = toPageY(selPage, sy) - moveStartY
@@ -1016,6 +1274,24 @@ class DocumentView @JvmOverloads constructor(
         val st = curStroke ?: return
         val px = toPageX(curPage, sx)
         val py = toPageY(curPage, sy)
+        if (st.tool == Tool.HIGHLIGHTER && hlStraight) {
+            // 직선 형광펜: 첫 점에서 지금 점까지. 가로·세로 근처(5° 안)면 딱 맞춘다
+            var ex = px
+            var ey = py
+            val dx = ex - st.x(0)
+            val dy = ey - st.y(0)
+            if (dx != 0f || dy != 0f) {
+                val deg = Math.toDegrees(kotlin.math.atan2(abs(dy).toDouble(), abs(dx).toDouble()))
+                if (deg <= 5.0) ey = st.y(0)
+                else if (deg >= 85.0) ex = st.x(0)
+            }
+            st.keepFirst()
+            st.add(ex, ey, st.p(0))
+            lastSx = sx
+            lastSy = sy
+            invalidate()
+            return
+        }
         val last = st.count - 1
         val minDist = 0.8f / scale
         if (hypot(px - st.x(last), py - st.y(last)) < minDist) return
@@ -1058,6 +1334,7 @@ class DocumentView @JvmOverloads constructor(
         var removed = false
         for (k in list.indices.reversed()) {
             val st = list[k]
+            if (st.image != null) continue  // 그림은 선택해서 삭제
             if (eraseHlOnly && st.tool != Tool.HIGHLIGHTER) continue
             val rest = if (eraserMode == EraserMode.AREA) st.cut(px, py, r) ?: continue
             else if (st.hitTest(px, py, r)) emptyList() else continue
@@ -1073,7 +1350,15 @@ class DocumentView @JvmOverloads constructor(
 
     private fun endPen(commit: Boolean) {
         val inkDoc = ink
-        if (moving) {
+        if (rotating) {
+            if (commit && inkDoc != null && rotDeg != 0f) {
+                val deg = rotDeg
+                inkDoc.edit(selection) { selection.forEach { it.rotate(deg, rotCx, rotCy) } }
+                select(selPage, selection)
+            }
+            rotating = false
+            rotDeg = 0f
+        } else if (moving) {
             if (commit && inkDoc != null) {
                 inkDoc.move(selection, moveDx, moveDy)
                 selBounds.offset(moveDx, moveDy)
@@ -1103,6 +1388,11 @@ class DocumentView @JvmOverloads constructor(
                         val fitted = fitShape(st)
                         if (fitted != null) inkDoc.addAll(curPage, fitted)
                         else if (st.count > 2) listener?.onShapeFailed(shapeKind)
+                    } else if (st.tool == Tool.LASER) {
+                        // 레이저: 필기에 넣지 않고 잠깐 보였다가 사라진다
+                        laserStrokes.add(curPage to st)
+                        removeCallbacks(laserFadeRunnable)
+                        postDelayed(laserFadeRunnable, laserFadeMs)
                     } else inkDoc.add(curPage, st)
                 }
             }
@@ -1121,7 +1411,7 @@ class DocumentView @JvmOverloads constructor(
 
     /** 화면 좌표가 선택 상자나 손잡이 위인지 */
     private fun onSelection(sx: Float, sy: Float) =
-        selection.isNotEmpty() && (selectionScreenRect(RectF()).contains(sx, sy) || handleAt(sx, sy) >= 0)
+        selection.isNotEmpty() && (selectionScreenRect(RectF()).contains(sx, sy) || handleAt(sx, sy) >= 0 || rotateHandleHit(sx, sy))
 
     /** 누른 곳에 있는 손잡이: 0 왼쪽 위, 1 오른쪽 위, 2 왼쪽 아래, 3 오른쪽 아래, 없으면 -1 */
     private fun handleAt(sx: Float, sy: Float): Int {
@@ -1134,7 +1424,14 @@ class DocumentView @JvmOverloads constructor(
 
     private fun startLasso(sx: Float, sy: Float) {
         val handle = handleAt(sx, sy)
-        if (handle >= 0) {
+        if (rotateHandleHit(sx, sy)) {
+            // 회전 손잡이: 선택 영역 가운데를 중심으로 돌리기
+            rotCx = selBounds.centerX()
+            rotCy = selBounds.centerY()
+            rotStart = angleAt(sx, sy)
+            rotDeg = 0f
+            rotating = true
+        } else if (handle >= 0) {
             // 모서리 손잡이: 반대쪽 모서리를 기준으로 크기 조절
             val b = selBounds
             val left = handle == 0 || handle == 2
@@ -1176,6 +1473,16 @@ class DocumentView @JvmOverloads constructor(
     /** 올가미 안에 점이 절반 이상 들어간 획을 고른다 */
     private fun finishLasso() {
         val inkDoc = ink ?: return
+        // 그림 위를 톡 누르면(올가미가 아주 작으면) 그 그림을 고른다
+        var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE; var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
+        for (k in 0 until lassoCount) {
+            minX = min(minX, lasso[k * 2]); maxX = max(maxX, lasso[k * 2])
+            minY = min(minY, lasso[k * 2 + 1]); maxY = max(maxY, lasso[k * 2 + 1])
+        }
+        if (max(maxX - minX, maxY - minY) * scale < 10 * density) {
+            imageAt(lassoPage, lasso[0], lasso[1])?.let { select(lassoPage, listOf(it)) }
+            return
+        }
         if (lassoRect) {
             // 두 점을 네 모서리로 바꿔 자유 선택과 같은 규칙으로 고른다
             val x0 = min(lasso[0], lasso[2]); val y0 = min(lasso[1], lasso[3])
@@ -1199,15 +1506,67 @@ class DocumentView @JvmOverloads constructor(
         selPage = page
         selection = picked
         selSet = picked.toHashSet()
-        selBounds.setEmpty()
-        var first = true
+        // RectF.union은 넓이 0인 사각형을 무시하므로(굵기 0인 그림의 모서리) 직접 최소·최대를 잰다
+        var l = Float.MAX_VALUE; var t = Float.MAX_VALUE; var r = -Float.MAX_VALUE; var b = -Float.MAX_VALUE
         for (st in picked) {
-            val r = st.width / 2
+            val half = st.width / 2
             for (k in 0 until st.count) {
-                val l = st.x(k) - r; val t = st.y(k) - r; val rt = st.x(k) + r; val b = st.y(k) + r
-                if (first) { selBounds.set(l, t, rt, b); first = false } else selBounds.union(l, t, rt, b)
+                l = min(l, st.x(k) - half); r = max(r, st.x(k) + half)
+                t = min(t, st.y(k) - half); b = max(b, st.y(k) + half)
             }
         }
+        if (l <= r) selBounds.set(l, t, r, b) else selBounds.setEmpty()
+    }
+
+    /** 쪽 좌표 (x, y)를 덮고 있는 맨 위 그림 */
+    private fun imageAt(page: Int, x: Float, y: Float): Stroke? {
+        val list = ink?.pages?.getOrNull(page) ?: return null
+        for (k in list.indices.reversed()) {
+            val st = list[k]
+            if (st.image == null || st.count < 4) continue
+            var inside = false
+            var j = 3
+            for (i in 0 until 4) {
+                val xi = st.x(i); val yi = st.y(i); val xj = st.x(j); val yj = st.y(j)
+                if ((yi > y) != (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside
+                j = i
+            }
+            if (inside) return st
+        }
+        return null
+    }
+
+    /**
+     * 그림을 보고 있는 쪽 가운데에 넣고 선택한다 (실행 취소 가능).
+     * 선택을 바로 쓰도록 부르는 쪽에서 도구를 선택 도구로 바꿔 둘 것
+     */
+    fun insertImage(img: InkImage): Boolean {
+        val inkDoc = ink ?: return false
+        if (sizes.isEmpty()) return false
+        val page = currentPage().coerceIn(0, sizes.lastIndex)
+        val pw = sizes[page].width
+        val ph = sizes[page].height
+        // 쪽과 지금 보이는 화면 둘 다의 60% 안에 들어가게 (손잡이·선택 막대 자리가 남도록)
+        val aspect = img.bitmap.height.toFloat() / img.bitmap.width
+        val maxW = min(pw, width / scale) * 0.6f
+        val maxH = min(ph, (height - bottomInset) / scale) * 0.6f
+        var w = maxW
+        var h = w * aspect
+        if (h > maxH) { h = maxH; w = h / aspect }
+        val cx = ((offX + width / 2f) / scale - lefts[page]).coerceIn(w / 2, pw - w / 2)
+        val cy = ((offY + height / 2f) / scale - tops[page]).coerceIn(h / 2, ph - h / 2)
+        val st = Stroke(Tool.PEN, Color.BLACK, 0f).apply {
+            image = img
+            add(cx - w / 2, cy - h / 2, 1f)
+            add(cx + w / 2, cy - h / 2, 1f)
+            add(cx + w / 2, cy + h / 2, 1f)
+            add(cx - w / 2, cy + h / 2, 1f)
+        }
+        clearSelection()
+        inkDoc.addAll(page, listOf(st))
+        select(page, listOf(st))
+        invalidate()
+        return true
     }
 
     private fun inLasso(x: Float, y: Float): Boolean {
@@ -1223,13 +1582,15 @@ class DocumentView @JvmOverloads constructor(
     }
 
     fun clearSelection() {
-        if (selection.isEmpty() && !lassoing && !moving && !resizing) return
+        if (selection.isEmpty() && !lassoing && !moving && !resizing && !rotating) return
         selection = emptyList()
         selSet = emptySet()
         selPage = -1
         lassoing = false
         moving = false
         resizing = false
+        rotating = false
+        rotDeg = 0f
         moveDx = 0f
         moveDy = 0f
         scaleK = 1f
@@ -1240,7 +1601,7 @@ class DocumentView @JvmOverloads constructor(
     fun clearPage(hlOnly: Boolean): Int {
         val inkDoc = ink ?: return 0
         val page = currentPage().takeIf { it >= 0 } ?: return 0
-        val targets = inkDoc.pages[page].filter { !hlOnly || it.tool == Tool.HIGHLIGHTER }
+        val targets = inkDoc.pages[page].filter { it.image == null && (!hlOnly || it.tool == Tool.HIGHLIGHTER) }
         if (targets.isEmpty()) return 0
         clearSelection()
         inkDoc.remove(page, targets)
@@ -1295,7 +1656,8 @@ class DocumentView @JvmOverloads constructor(
         super.onDetachedFromWindow()
         removeCallbacks(detailRunnable)
         removeCallbacks(hideBarRunnable)
-        removeCallbacks(resetAccumRunnable)
+        removeCallbacks(laserFadeRunnable)
+        laserFadeAnim?.cancel()
         barAnimator?.cancel()
         zoomAnimator?.cancel()
         scope.cancel()
@@ -1309,6 +1671,9 @@ class DocumentView @JvmOverloads constructor(
         /** 크기 조절 손잡이 반지름(그리기)과 누르는 범위 */
         private const val HANDLE_DP = 7f
         private const val HANDLE_TOUCH_DP = 24f
+        /** 회전 손잡이 반지름과 상자에서 떨어진 거리 */
+        private const val ROT_HANDLE_DP = 14f
+        private const val ROT_OFFSET_DP = 34f
         private const val SPEN_DOWN = 211
         private const val SPEN_UP = 212
         private const val SPEN_MOVE = 213

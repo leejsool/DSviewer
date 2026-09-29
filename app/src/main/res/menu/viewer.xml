@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- 뷰어 탭 줄의 ⋮ 버튼 메뉴 (실행 취소·다시 실행·저장은 탭 줄 버튼) -->
 <menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@+id/action_go_page" android:title="쪽 이동" />
     <item android:id="@+id/action_insert_page" android:title="이 쪽 뒤에 빈 쪽 넣기">
         <menu>
             <item android:id="@+id/action_insert_plain" android:title="흰 바탕" />

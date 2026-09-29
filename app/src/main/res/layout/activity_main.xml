@@ -91,7 +91,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                android:text="설정 화면에서 DS뷰어의 '모든 파일에 대한 접근 권한'을 켜 주세요. 문서는 기기 안에서만 읽으며 어디로도 보내지 않습니다."
+                android:text="설정 화면에서 DSnote의 '모든 파일에 대한 접근 권한'을 켜 주세요. 문서는 기기 안에서만 읽으며 어디로도 보내지 않습니다."
                 android:textAppearance="?attr/textAppearanceBodyMedium" />
 
             <com.google.android.material.button.MaterialButton

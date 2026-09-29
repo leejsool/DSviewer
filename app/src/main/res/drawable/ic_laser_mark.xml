@@ -1,0 +1,10 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- 레이저 점과 빛살. 색은 ViewerActivity에서 고른 레이저 색으로 칠한다 -->
+    <path android:fillColor="@android:color/white"
+        android:pathData="M4.6,19.4m-2.1,0a2.1,2.1 0,1 1,4.2 0a2.1,2.1 0,1 1,-4.2 0" />
+    <path android:strokeColor="@android:color/white" android:strokeWidth="1.2"
+        android:strokeLineCap="round"
+        android:pathData="M4.6,15.3v-1.2M8.3,21.9h1.2M1.5,16.3l-0.8,-0.8M7.6,16.3l0.8,-0.8" />
+</vector>

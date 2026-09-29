@@ -1,17 +1,25 @@
 package com.dsviewer.app
 
 import android.content.Context
+import android.content.DialogInterface
 import android.content.Intent
 import android.content.res.ColorStateList
+import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.ImageDecoder
 import android.graphics.RectF
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
 import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Bundle
+import android.text.InputType
 import android.text.format.DateFormat
 import android.view.InputDevice
+import android.view.KeyEvent
+import android.view.inputmethod.EditorInfo
+import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.PopupMenu
 import android.view.View
 import android.widget.ImageButton
@@ -25,6 +33,8 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.IntentCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.chip.Chip
 import com.google.android.material.chip.ChipGroup
@@ -38,6 +48,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Date
 import kotlin.math.abs
+import kotlin.math.max
 
 class ViewerActivity : AppCompatActivity() {
 
@@ -57,6 +68,9 @@ class ViewerActivity : AppCompatActivity() {
     private lateinit var undoButton: View
     private lateinit var redoButton: View
     private lateinit var saveButton: View
+    private lateinit var overviewButton: View
+    private lateinit var insertButton: View
+    private lateinit var overview: PageOverview
 
     /** 탭 하나 = 열린 문서 하나. 문서 화면(DocumentView)은 하나를 같이 쓰고 탭을 바꿀 때 갈아 끼운다 */
     private class DocTab(var uri: Uri, var canOverwrite: Boolean, var isNewNote: Boolean) {
@@ -93,6 +107,11 @@ class ViewerActivity : AppCompatActivity() {
         else closeAfterSave = null
     }
 
+    /** 그림 넣기: 갤러리·파일에서 그림 고르기 */
+    private val pickImage = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) insertImageFrom(uri)
+    }
+
     private val backCallback = object : OnBackPressedCallback(true) {
         override fun handleOnBackPressed() = goBack()
     }
@@ -106,10 +125,14 @@ class ViewerActivity : AppCompatActivity() {
         undoButton = findViewById(R.id.actionUndo)
         redoButton = findViewById(R.id.actionRedo)
         saveButton = findViewById(R.id.actionSave)
+        overviewButton = findViewById(R.id.actionOverview)
+        insertButton = findViewById(R.id.actionInsert)
 
         docView = findViewById(R.id.docView)
         progress = findViewById(R.id.progress)
         pageLabel = findViewById(R.id.pageLabel)
+        // 쪽 번호를 누르면 쪽 이동
+        pageLabel.setOnClickListener { showGoToPage() }
         colorRow = findViewById(R.id.colorRow)
         widthRow = findViewById(R.id.widthRow)
         colorSep = findViewById(R.id.colorSep)
@@ -233,6 +256,7 @@ class ViewerActivity : AppCompatActivity() {
     /** 이 탭의 문서를 화면에 띄운다 */
     private fun showTab(t: DocTab) {
         if (current === t) return
+        overview.hide()
         current?.let { it.viewState = docView.viewState() }
         current = t
         val d = t.pdf
@@ -271,6 +295,7 @@ class ViewerActivity : AppCompatActivity() {
         if (index < 0) return
         val wasCurrent = current === t
         if (wasCurrent) {
+            overview.hide()
             current = null
             docView.clearDocument()
         }
@@ -305,6 +330,10 @@ class ViewerActivity : AppCompatActivity() {
 
     /** 뒤로 가기(← 버튼·시스템 뒤로): 지금 보고 있는 탭을 닫는다. 마지막 탭이면 탐색기로 */
     private fun goBack() {
+        if (overview.isShowing) {
+            overview.hide()
+            return
+        }
         val t = current
         if (t == null) finish() else closeTab(t)
     }
@@ -413,6 +442,9 @@ class ViewerActivity : AppCompatActivity() {
         undoButton.setOnClickListener { docView.clearSelection(); ink?.undo() }
         redoButton.setOnClickListener { docView.clearSelection(); ink?.redo() }
         saveButton.setOnClickListener { current?.let { save(it, asNew = false) } }
+        overview = PageOverview(findViewById(R.id.overviewPanel), lifecycleScope) { page -> docView.scrollToPage(page) }
+        overviewButton.setOnClickListener { toggleOverview() }
+        insertButton.setOnClickListener { showInsertMenu(it) }
         findViewById<View>(R.id.actionMore).setOnClickListener { showMoreMenu(it) }
         updateActions()
     }
@@ -423,6 +455,8 @@ class ViewerActivity : AppCompatActivity() {
         undoButton.setEnabledAlpha(inkDoc?.canUndo == true)
         redoButton.setEnabledAlpha(inkDoc?.canRedo == true)
         saveButton.setEnabledAlpha(inkDoc != null)
+        overviewButton.setEnabledAlpha(inkDoc != null)
+        insertButton.setEnabledAlpha(inkDoc != null)
     }
 
     private fun View.setEnabledAlpha(enabled: Boolean) {
@@ -435,11 +469,13 @@ class ViewerActivity : AppCompatActivity() {
         popup.menuInflater.inflate(R.menu.viewer, popup.menu)
         popup.menu.findItem(R.id.action_save_as).isEnabled = ink != null
         popup.menu.findItem(R.id.action_insert_page).isEnabled = ink != null
+        popup.menu.findItem(R.id.action_go_page).isEnabled = (current?.pdf?.pageCount ?: 0) > 1
         popup.menu.findItem(R.id.action_delete_page).isEnabled = (current?.pdf?.pageCount ?: 0) > 1
         popup.menu.findItem(R.id.action_finger).isChecked = docView.fingerDrawing
         popup.setOnMenuItemClickListener { item ->
             when (item.itemId) {
                 R.id.action_save_as -> current?.let { save(it, asNew = true) }
+                R.id.action_go_page -> showGoToPage()
                 R.id.action_insert_plain -> insertBlankPage(Paper.PLAIN)
                 R.id.action_insert_grid -> insertBlankPage(Paper.GRID)
                 R.id.action_insert_lined -> insertBlankPage(Paper.LINED)
@@ -457,6 +493,126 @@ class ViewerActivity : AppCompatActivity() {
             true
         }
         popup.show()
+    }
+
+    // ================= 삽입 =================
+
+    /** 삽입 ▾: 그림 / PDF */
+    private fun showInsertMenu(anchor: View) {
+        val popup = PopupMenu(this, anchor)
+        popup.menu.add(0, 1, 0, "그림").setIcon(R.drawable.ic_image)
+        popup.menu.add(0, 2, 1, "PDF").setIcon(R.drawable.ic_pdf)
+        popup.setForceShowIcon(true)
+        popup.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                1 -> pickImage.launch("image/*")
+                2 -> Toast.makeText(this, "PDF 넣기는 곧 추가됩니다.", Toast.LENGTH_SHORT).show()
+            }
+            true
+        }
+        popup.show()
+    }
+
+    private fun insertImageFrom(uri: Uri) {
+        val t = current ?: return
+        lifecycleScope.launch {
+            val img = try {
+                withContext(Dispatchers.IO) { loadImage(uri) }
+            } catch (e: Exception) {
+                Toast.makeText(this@ViewerActivity, "그림을 읽지 못했습니다.", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            if (current !== t) return@launch
+            // 넣은 그림을 바로 옮기거나 크기를 바꿀 수 있게 선택 도구로
+            selectTool(Tool.LASSO)
+            if (!docView.insertImage(img)) Toast.makeText(this@ViewerActivity, "그림을 넣지 못했습니다.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * 그림 읽기: 사진 방향(EXIF)을 바로잡고, 긴 변이 2048px을 넘으면 줄인다.
+     * 투명한 부분이 있거나 PNG면 무손실로, 아니면 JPEG로 담아 둔다 (PDF 크기를 줄이려고)
+     */
+    private fun loadImage(uri: Uri): InkImage {
+        val src = ImageDecoder.createSource(contentResolver, uri)
+        val bmp = ImageDecoder.decodeBitmap(src) { d, info, _ ->
+            d.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+            val longSide = max(info.size.width, info.size.height)
+            if (longSide > MAX_IMAGE_PX) {
+                val k = MAX_IMAGE_PX.toFloat() / longSide
+                d.setTargetSize((info.size.width * k).toInt().coerceAtLeast(1), (info.size.height * k).toInt().coerceAtLeast(1))
+            }
+        }
+        val lossless = bmp.hasAlpha() || contentResolver.getType(uri) == "image/png"
+        val bytes = if (lossless) null else java.io.ByteArrayOutputStream().use {
+            bmp.compress(Bitmap.CompressFormat.JPEG, 92, it)
+            it.toByteArray()
+        }
+        return InkImage(bmp, bytes)
+    }
+
+    // ================= 쪽 한눈에 보기 =================
+
+    private fun toggleOverview() {
+        if (overview.isShowing) {
+            overview.hide()
+            return
+        }
+        val t = current ?: return
+        val d = t.pdf ?: return
+        val inkDoc = t.ink ?: return
+        hideOptionBar()
+        docView.clearSelection()
+        overview.show(d, inkDoc, docView.currentPage().coerceAtLeast(0), docView.width, docView.height)
+    }
+
+    // ================= 쪽 이동 =================
+
+    /** 쪽 번호를 입력해 그 쪽으로 간다 (쪽 번호 표시나 ⋮ 메뉴에서) */
+    private fun showGoToPage() {
+        val count = current?.pdf?.pageCount ?: return
+        val d = resources.displayMetrics.density
+        val input = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            imeOptions = EditorInfo.IME_ACTION_GO
+            isSingleLine = true
+            hint = "1 ~ $count"
+            setText("${docView.currentPage() + 1}")
+            selectAll()
+        }
+        val box = FrameLayout(this).apply {
+            setPadding((24 * d).toInt(), (4 * d).toInt(), (24 * d).toInt(), 0)
+            addView(input)
+        }
+        val dialog = MaterialAlertDialogBuilder(this)
+            .setTitle("쪽 이동")
+            .setMessage("몇 쪽으로 갈까요? (전체 ${count}쪽)")
+            .setView(box)
+            .setPositiveButton("이동", null)
+            .setNegativeButton("취소", null)
+            .create()
+        fun go() {
+            val n = input.text.toString().toIntOrNull()
+            if (n == null || n !in 1..count) {
+                input.error = "1부터 ${count} 사이로 입력해 주세요"
+                return
+            }
+            docView.scrollToPage(n - 1)
+            dialog.dismiss()
+        }
+        // 화면 키보드의 '이동' 또는 실물 키보드의 Enter
+        input.setOnEditorActionListener { _, id, ev ->
+            val enter = ev?.keyCode == KeyEvent.KEYCODE_ENTER && ev.action == KeyEvent.ACTION_DOWN
+            if (id == EditorInfo.IME_ACTION_GO || enter) { go(); true } else false
+        }
+        dialog.setOnShowListener {
+            // 이동 버튼은 잘못된 번호면 창을 닫지 않는다
+            dialog.getButton(DialogInterface.BUTTON_POSITIVE).setOnClickListener { go() }
+            // 바로 숫자를 칠 수 있게 키보드를 띄운다
+            input.requestFocus()
+            dialog.window?.let { WindowCompat.getInsetsController(it, input).show(WindowInsetsCompat.Type.ime()) }
+        }
+        dialog.show()
     }
 
     // ================= 쪽 넣기 · 지우기 =================
@@ -506,6 +662,7 @@ class ViewerActivity : AppCompatActivity() {
         val inkDoc = t.ink ?: return
         if (t.pagesBusy) return
         t.pagesBusy = true
+        overview.hide()
         docView.clearSelection()
         lifecycleScope.launch {
             progress.visibility = View.VISIBLE
@@ -722,6 +879,19 @@ class ViewerActivity : AppCompatActivity() {
                     confirmClearPage()
                 }
             }
+            Tool.HIGHLIGHTER -> {
+                addOption(R.drawable.ic_highlighter, "자유 형광펜", !docView.hlStraight) { setHlStraight(false) }
+                addOption(R.drawable.ic_ruler, "직선 형광펜", docView.hlStraight) { setHlStraight(true) }
+            }
+            Tool.LASER -> {
+                // 레이저가 사라지는 시간 (색·굵기는 아래 도구막대)
+                for (sec in intArrayOf(1, 2, 3, 5)) {
+                    addOption(R.drawable.ic_timer, "${sec}초 뒤 사라짐", docView.laserFadeMs == sec * 1000L) {
+                        docView.laserFadeMs = sec * 1000L
+                        prefs.edit().putLong("laserFadeMs", sec * 1000L).apply()
+                    }
+                }
+            }
             Tool.LASSO -> {
                 addOption(R.drawable.ic_lasso, "자유 선택", !docView.lassoRect) { setLassoRect(false) }
                 addOption(R.drawable.ic_select_rect, "네모 선택", docView.lassoRect) { setLassoRect(true) }
@@ -748,6 +918,20 @@ class ViewerActivity : AppCompatActivity() {
         docView.eraserMode = m
         prefs.edit().putString("eraserMode", m.name).apply()
         updateEraserIcon()
+    }
+
+    private fun setHlStraight(on: Boolean) {
+        docView.hlStraight = on
+        prefs.edit().putBoolean("hlStraight", on).apply()
+        updateHighlighterIcon()
+    }
+
+    /** 형광펜 버튼: 직선(줄자)이면 오른쪽 아래에 작은 자 */
+    private fun updateHighlighterIcon() {
+        val button = toolButtons.getValue(Tool.HIGHLIGHTER)
+        button.setImageResource(if (docView.hlStraight) R.drawable.ic_highlighter_ruler else R.drawable.ic_highlighter)
+        button.contentDescription = if (docView.hlStraight) "직선 형광펜" else "형광펜"
+        updateToolMarks()
     }
 
     private fun setLassoRect(rect: Boolean) {
@@ -812,7 +996,7 @@ class ViewerActivity : AppCompatActivity() {
         if (page < 0) return
         val hl = docView.eraseHlOnly
         val (subj, obj) = if (hl) "형광펜이" to "형광펜을" else "필기가" to "필기를"
-        if (inkDoc.pages[page].none { !hl || it.tool == Tool.HIGHLIGHTER }) {
+        if (inkDoc.pages[page].none { it.image == null && (!hl || it.tool == Tool.HIGHLIGHTER) }) {
             Toast.makeText(this, "${page + 1}쪽에는 지울 ${subj} 없습니다.", Toast.LENGTH_SHORT).show()
             return
         }
@@ -853,6 +1037,10 @@ class ViewerActivity : AppCompatActivity() {
     private val hlDefaults = intArrayOf(
         0xFFFFEB3B.toInt(), 0xFF9CFF57.toInt(), 0xFFFF8AB8.toInt(), 0xFF7FD8FF.toInt(), 0xFFFFB74D.toInt()
     )
+    /** 레이저: 확 눈에 띄는 빨강이 기본 */
+    private val laserDefaults = intArrayOf(
+        0xFFFF1744.toInt(), 0xFF00E676.toInt(), 0xFF2979FF.toInt(), 0xFFFFEA00.toInt(), 0xFFF500F5.toInt()
+    )
 
     /** 도구막대의 색 칸 (굿노트처럼 칸마다 색을 바꿔 넣을 수 있음). active 칸의 색이 지금 쓰는 색 */
     private class ColorSlots(val key: String, val slots: IntArray, var active: Int) {
@@ -861,8 +1049,13 @@ class ViewerActivity : AppCompatActivity() {
 
     private lateinit var penSlots: ColorSlots
     private lateinit var hlSlots: ColorSlots
+    private lateinit var laserSlots: ColorSlots
 
-    private fun slotsOf(t: Tool) = if (t == Tool.HIGHLIGHTER) hlSlots else penSlots
+    private fun slotsOf(t: Tool) = when (t) {
+        Tool.HIGHLIGHTER -> hlSlots
+        Tool.LASER -> laserSlots
+        else -> penSlots
+    }
 
     private fun loadSlots(key: String, defaults: IntArray): ColorSlots {
         val saved = prefs.getString("${key}Slots", null)?.split(',')?.mapNotNull { it.toIntOrNull() }
@@ -886,7 +1079,11 @@ class ViewerActivity : AppCompatActivity() {
     }
 
     private fun applyToolColor(t: Tool) {
-        if (t == Tool.HIGHLIGHTER) docView.hlColor = hlSlots.color else docView.penColor = penSlots.color
+        when (t) {
+            Tool.HIGHLIGHTER -> docView.hlColor = hlSlots.color
+            Tool.LASER -> docView.laserColor = laserSlots.color
+            else -> docView.penColor = penSlots.color
+        }
     }
 
     private fun recentColors(t: Tool): List<Int> =
@@ -918,12 +1115,17 @@ class ViewerActivity : AppCompatActivity() {
             Tool.HIGHLIGHTER to findViewById(R.id.toolHighlighter),
             Tool.ERASER to findViewById(R.id.toolEraser),
             Tool.LASSO to findViewById(R.id.toolLasso),
+            Tool.LASER to findViewById(R.id.toolLaser),
         )
         penSlots = loadSlots("pen", penDefaults)
         hlSlots = loadSlots("hl", hlDefaults)
+        laserSlots = loadSlots("laser", laserDefaults)
         applyToolColor(Tool.PEN)
         applyToolColor(Tool.HIGHLIGHTER)
-        widthSlots = listOf(Tool.PEN, Tool.HIGHLIGHTER, Tool.ERASER).associateWith { loadWidths(WidthKind.of(it)) }
+        applyToolColor(Tool.LASER)
+        docView.laserFadeMs = prefs.getLong("laserFadeMs", 2000L)
+        docView.hlStraight = prefs.getBoolean("hlStraight", false)
+        widthSlots = listOf(Tool.PEN, Tool.HIGHLIGHTER, Tool.ERASER, Tool.LASER).associateWith { loadWidths(WidthKind.of(it)) }
         widthSlots.keys.forEach(::applyToolWidth)
         docView.fingerDrawing = if (prefs.contains("finger")) prefs.getBoolean("finger", false) else {
             // 처음 한 번만: 펜 입력이 없는 기기면 손가락 쓰기를 켜 두고 알려 준다 (이후엔 사용자가 메뉴에서 바꾼 값)
@@ -939,10 +1141,11 @@ class ViewerActivity : AppCompatActivity() {
         setupShapeBar()
         updateEraserIcon()
         updateLassoIcon()
+        updateHighlighterIcon()
         toolButtons.forEach { (t, b) ->
             b.setOnClickListener {
-                if (t == Tool.ERASER || t == Tool.LASSO) {
-                    // 지우개·선택은 누를 때마다 옵션 줄을 열고, 열려 있으면 닫는다
+                if (t == Tool.ERASER || t == Tool.LASSO || t == Tool.LASER || t == Tool.HIGHLIGHTER) {
+                    // 형광펜·지우개·선택·레이저는 누를 때마다 옵션 줄을 열고, 열려 있으면 닫는다
                     val showing = optionTool == t
                     selectTool(t)
                     if (showing) hideOptionBar() else showOptionBar(t)
@@ -1112,6 +1315,7 @@ class ViewerActivity : AppCompatActivity() {
             Tool.PEN, Tool.SHAPE -> docView.penWidth = v
             Tool.HIGHLIGHTER -> docView.hlWidth = v
             Tool.ERASER -> docView.eraserRadiusDp = v
+            Tool.LASER -> docView.laserWidthDp = v
             Tool.LASSO -> {}
         }
     }
@@ -1119,6 +1323,7 @@ class ViewerActivity : AppCompatActivity() {
     private fun toolColor(t: Tool) = when (t) {
         Tool.PEN, Tool.SHAPE -> docView.penColor
         Tool.HIGHLIGHTER -> docView.hlColor
+        Tool.LASER -> docView.laserColor
         Tool.ERASER, Tool.LASSO -> Color.BLACK
     }
 
@@ -1174,7 +1379,7 @@ class ViewerActivity : AppCompatActivity() {
 
     /** 펜 아래 S자 곡선과 형광펜 아래 줄을 지금 고른 색으로 칠한다 */
     private fun updateToolMarks() {
-        for ((t, color) in listOf(Tool.PEN to docView.penColor, Tool.HIGHLIGHTER to docView.hlColor)) {
+        for ((t, color) in listOf(Tool.PEN to docView.penColor, Tool.HIGHLIGHTER to docView.hlColor, Tool.LASER to docView.laserColor)) {
             val button = toolButtons[t] ?: continue
             val layers = button.drawable?.mutate() as? LayerDrawable ?: continue
             layers.findDrawableByLayerId(R.id.tool_mark)?.mutate()?.setTint(color)
@@ -1254,6 +1459,8 @@ class ViewerActivity : AppCompatActivity() {
         /** 탐색기의 '새 노트'로 만든 빈 문서 (처음 저장할 때 저장 위치를 고른다) */
         const val EXTRA_NEW_NOTE = "newNote"
         private const val MAX_TABS = 6
+        /** 넣는 그림의 긴 변 최대 픽셀 */
+        private const val MAX_IMAGE_PX = 2048
         /** 보조선(점근선·축)을 고를 수 있는 보정 펜 도형 */
         private val GUIDE_KINDS = setOf(ShapeKind.HYPERBOLA, ShapeKind.EXP_LOG, ShapeKind.TANGENT, ShapeKind.SINE)
         private val TAB_ICON_PDF = Color.parseColor("#D93025")

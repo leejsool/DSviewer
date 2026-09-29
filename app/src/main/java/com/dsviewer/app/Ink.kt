@@ -1,13 +1,77 @@
 package com.dsviewer.app
 
+import android.graphics.Bitmap
+import android.graphics.BlendMode
+import android.graphics.Canvas
+import android.graphics.DashPathEffect
+import android.graphics.Matrix
+import android.graphics.Paint
 import android.graphics.Path
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
-/** SHAPE = 보정 펜 (그린 결과는 PEN 획으로 저장) */
-enum class Tool { PEN, SHAPE, HIGHLIGHTER, ERASER, LASSO }
+/**
+ * 쪽에 넣은 그림. [bytes]는 PDF에 그대로 넣을 JPEG (null이면 저장할 때 [bitmap]을 무손실로 넣는다)
+ */
+class InkImage(val bitmap: Bitmap, val bytes: ByteArray?)
+
+private val imageMatrix = Matrix()
+private val imagePaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+private val imageSrc = FloatArray(8)
+private val imageDst = FloatArray(8)
+
+/** 그림: 획의 네 점(왼쪽 위, 오른쪽 위, 오른쪽 아래, 왼쪽 아래)에 맞춰 그린다 (돌리거나 늘여도 따라감) */
+private fun drawInkImage(c: Canvas, st: Stroke, alphaMul: Float) {
+    val img = st.image ?: return
+    if (st.count < 4) return
+    val w = img.bitmap.width.toFloat()
+    val h = img.bitmap.height.toFloat()
+    imageSrc[0] = 0f; imageSrc[1] = 0f; imageSrc[2] = w; imageSrc[3] = 0f
+    imageSrc[4] = w; imageSrc[5] = h; imageSrc[6] = 0f; imageSrc[7] = h
+    for (k in 0 until 4) {
+        imageDst[k * 2] = st.x(k)
+        imageDst[k * 2 + 1] = st.y(k)
+    }
+    imageMatrix.setPolyToPoly(imageSrc, 0, imageDst, 0, 4)
+    imagePaint.alpha = (255 * alphaMul).roundToInt()
+    c.drawBitmap(img.bitmap, imageMatrix, imagePaint)
+}
+
+/** 필기 그리기용 붓 ([drawInkStroke]와 같이 쓴다) */
+fun inkPaint() = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    style = Paint.Style.STROKE
+    strokeCap = Paint.Cap.ROUND
+    strokeJoin = Paint.Join.ROUND
+}
+
+/**
+ * 획 하나를 그린다 (캔버스는 페이지 좌표로 맞춰 둔 상태). 문서 화면과 쪽 미리보기가 같이 쓴다.
+ * 형광펜은 반투명 곱하기, 점선 획은 점선으로. alphaMul < 1이면 흐리게
+ */
+fun drawInkStroke(c: Canvas, paint: Paint, st: Stroke, alphaMul: Float = 1f) {
+    if (st.image != null) {
+        drawInkImage(c, st, alphaMul)
+        return
+    }
+    paint.color = st.color
+    if (st.tool == Tool.HIGHLIGHTER) {
+        paint.alpha = (PdfInk.HL_ALPHA * 255).roundToInt()
+        paint.blendMode = BlendMode.MULTIPLY
+    } else {
+        paint.blendMode = null
+    }
+    if (alphaMul < 1f) paint.alpha = (paint.alpha * alphaMul).roundToInt()
+    paint.pathEffect = if (st.dashed) DashPathEffect(st.dashIntervals(), 0f) else null
+    for ((w, path) in st.paths()) {
+        paint.strokeWidth = w
+        c.drawPath(path, paint)
+    }
+}
+
+/** SHAPE = 보정 펜 (그린 결과는 PEN 획으로 저장), LASER = 잠깐 보였다 사라지는 레이저 (저장하지 않음) */
+enum class Tool { PEN, SHAPE, HIGHLIGHTER, ERASER, LASSO, LASER }
 
 /** STROKE = 닿은 획을 통째로, AREA = 지우개가 지나간 부분만 */
 enum class EraserMode { STROKE, AREA }
@@ -28,6 +92,8 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
         private set
     var version = 0
         private set
+    /** 그림이면 그 그림 (점 네 개가 그림의 네 모서리). 지우개로는 지우지 않는다 */
+    var image: InkImage? = null
 
     private var cachedPaths: List<Pair<Float, Path>>? = null
     private var cachedVersion = -1
@@ -38,6 +104,12 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
         data[count * 3 + 1] = y
         data[count * 3 + 2] = p
         count++
+        version++
+    }
+
+    /** 첫 점만 남긴다 (직선 형광펜: 끝점을 새로 정할 때) */
+    fun keepFirst() {
+        if (count > 1) count = 1
         version++
     }
 
@@ -60,6 +132,20 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
         version++
     }
 
+    /** (cx, cy)를 중심으로 deg도 돌린다 (화면 기준 시계 방향이 +) */
+    fun rotate(deg: Float, cx: Float, cy: Float) {
+        val r = Math.toRadians(deg.toDouble())
+        val c = kotlin.math.cos(r).toFloat()
+        val s = kotlin.math.sin(r).toFloat()
+        for (i in 0 until count) {
+            val dx = data[i * 3] - cx
+            val dy = data[i * 3 + 1] - cy
+            data[i * 3] = cx + dx * c - dy * s
+            data[i * 3 + 1] = cy + dx * s + dy * c
+        }
+        version++
+    }
+
     fun recolor(c: Int) {
         color = c
         version++
@@ -67,6 +153,7 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
 
     fun copy(): Stroke {
         val s = Stroke(tool, color, width, dashed)
+        s.image = image
         s.data = data.copyOf(count * 3)
         s.count = count
         return s
