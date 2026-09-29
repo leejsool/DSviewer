@@ -90,7 +90,7 @@ class ToolbarDock(
         for (i in 0 until content.childCount) orient(content.getChildAt(i), v)
 
         // 손잡이: 가로 툴바는 왼쪽 끝, 세로 툴바는 위쪽 끝
-        handle.layoutParams = if (v) LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(28f))
+        handle.layoutParams = if (v) LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(24f))
         else LinearLayout.LayoutParams(dp(28f), thickness)
         handle.setImageResource(if (v) R.drawable.ic_drag_handle_v else R.drawable.ic_drag_handle)
 

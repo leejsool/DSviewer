@@ -59,6 +59,8 @@ class DocumentView @JvmOverloads constructor(
         fun onShapeFailed(kind: ShapeKind) {}
         /** 펜(또는 손가락 필기)이 문서에 닿음 */
         fun onPenDown() {}
+        /** 글 도구로 쪽의 (x, y)를 톡 누름. 이미 있는 글 위면 [existing]이 그 글 */
+        fun onTextTap(page: Int, x: Float, y: Float, existing: Stroke?) {}
     }
 
     var listener: Listener? = null
@@ -94,6 +96,11 @@ class DocumentView @JvmOverloads constructor(
     /** 보정 펜: 보조선(지수·로그·탄젠트·쌍곡선의 점근선, 사인·코사인의 축)을 그리는 방식 */
     var shapeGuide = GuideStyle.NONE
     private var lastShapeFit = 0L
+    /** 글 도구: 누른 자리 (쪽, x, y). 떼기 전에 많이 움직이면 취소 */
+    private var textTap: Triple<Int, Float, Float>? = null
+    private var textPressing = false
+    private var textTapSx = 0f
+    private var textTapSy = 0f
 
     private val density = resources.displayMetrics.density
 
@@ -865,6 +872,12 @@ class DocumentView @JvmOverloads constructor(
             animateZoom(target, e.x, e.y)
             return true
         }
+
+        override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+            // 글 도구: 손가락으로 톡 눌러도 글을 넣거나 고친다 (손가락 필기를 꺼 두었을 때)
+            if (tool == Tool.TEXT) hitPage(e.x, e.y)?.let { tapText(it.first, it.second, it.third) }
+            return true
+        }
     })
 
     private fun animateZoom(target: Float, fx: Float, fy: Float) {
@@ -1203,6 +1216,13 @@ class DocumentView @JvmOverloads constructor(
             startLasso(sx, sy)
             return
         }
+        if (tool == Tool.TEXT && !penErasing) {
+            textPressing = true
+            textTap = hitPage(sx, sy)
+            textTapSx = sx
+            textTapSy = sy
+            return
+        }
         if (penErasing) clearSelection()
         val hit = hitPage(sx, sy) ?: run { invalidate(); return }
         if (penErasing) {
@@ -1229,6 +1249,10 @@ class DocumentView @JvmOverloads constructor(
     }
 
     private fun movePen(sx: Float, sy: Float, p: Float) {
+        if (textPressing) {
+            if (hypot(sx - textTapSx, sy - textTapSy) > TAP_SLOP_DP * density) textTap = null
+            return
+        }
         if (rotating) {
             var d = angleAt(sx, sy) - rotStart
             while (d > 180f) d -= 360f
@@ -1348,7 +1372,7 @@ class DocumentView @JvmOverloads constructor(
         var removed = false
         for (k in list.indices.reversed()) {
             val st = list[k]
-            if (st.image != null) continue  // 그림은 선택해서 삭제
+            if (st.isBox) continue  // 그림·글은 선택해서 삭제
             if (eraseHlOnly && st.tool != Tool.HIGHLIGHTER) continue
             val rest = if (eraserMode == EraserMode.AREA) st.cut(px, py, r) ?: continue
             else if (st.hitTest(px, py, r)) emptyList() else continue
@@ -1364,6 +1388,15 @@ class DocumentView @JvmOverloads constructor(
 
     private fun endPen(commit: Boolean) {
         val inkDoc = ink
+        if (textPressing) {
+            textPressing = false
+            val hit = textTap
+            textTap = null
+            penPointerId = -1
+            penErasing = false
+            if (commit && hit != null) tapText(hit.first, hit.second, hit.third)
+            return
+        }
         if (rotating) {
             if (commit && inkDoc != null && rotDeg != 0f) {
                 val deg = rotDeg
@@ -1494,7 +1527,7 @@ class DocumentView @JvmOverloads constructor(
             minY = min(minY, lasso[k * 2 + 1]); maxY = max(maxY, lasso[k * 2 + 1])
         }
         if (max(maxX - minX, maxY - minY) * scale < 10 * density) {
-            imageAt(lassoPage, lasso[0], lasso[1])?.let { select(lassoPage, listOf(it)) }
+            boxAt(lassoPage, lasso[0], lasso[1])?.let { select(lassoPage, listOf(it)) }
             return
         }
         if (lassoRect) {
@@ -1532,12 +1565,12 @@ class DocumentView @JvmOverloads constructor(
         if (l <= r) selBounds.set(l, t, r, b) else selBounds.setEmpty()
     }
 
-    /** 쪽 좌표 (x, y)를 덮고 있는 맨 위 그림 */
-    private fun imageAt(page: Int, x: Float, y: Float): Stroke? {
+    /** 쪽 좌표 (x, y)를 덮고 있는 맨 위 그림·글 ([textOnly]면 글만) */
+    private fun boxAt(page: Int, x: Float, y: Float, textOnly: Boolean = false): Stroke? {
         val list = ink?.pages?.getOrNull(page) ?: return null
         for (k in list.indices.reversed()) {
             val st = list[k]
-            if (st.image == null || st.count < 4) continue
+            if (!st.isBox || st.count < 4 || (textOnly && st.text == null)) continue
             var inside = false
             var j = 3
             for (i in 0 until 4) {
@@ -1583,6 +1616,68 @@ class DocumentView @JvmOverloads constructor(
         return true
     }
 
+    // ================= 글 =================
+
+    private fun tapText(page: Int, x: Float, y: Float) {
+        listener?.onTextTap(page, x, y, boxAt(page, x, y, textOnly = true))
+    }
+
+    /** 쪽 (x, y)에 글을 넣는다 (첫 줄이 누른 높이에 오게, 쪽 밖으로 나가지 않게). 실행 취소 가능 */
+    fun addText(page: Int, x: Float, y: Float, text: InkText, color: Int) {
+        val inkDoc = ink ?: return
+        val size = sizes.getOrNull(page) ?: return
+        val w = text.boxW.toFloat()
+        val h = text.boxH.toFloat()
+        val left = x.coerceIn(0f, max(0f, size.width - w))
+        val top = (y - text.size * 0.7f).coerceIn(0f, max(0f, size.height - h))
+        val st = Stroke(Tool.PEN, color, 0f).apply {
+            this.text = text
+            add(left, top, 1f)
+            add(left + w, top, 1f)
+            add(left + w, top + h, 1f)
+            add(left, top + h, 1f)
+        }
+        clearSelection()
+        inkDoc.add(page, st)
+        invalidate()
+    }
+
+    /**
+     * 글을 고친다: 왼쪽 위 모서리와 지금 배율·기울기는 그대로 두고 새 글 크기에 맞춰 상자를 다시 잡는다.
+     * [text]가 null이면 그 글을 지운다. 실행 취소 가능
+     */
+    fun replaceText(page: Int, old: Stroke, text: InkText?, color: Int) {
+        val inkDoc = ink ?: return
+        clearSelection()
+        if (text == null) {
+            inkDoc.remove(page, listOf(old))
+            invalidate()
+            return
+        }
+        val oldText = old.text ?: return
+        val x0 = old.x(0); val y0 = old.y(0)
+        // 가로 방향(0→1), 세로 방향(0→3) 단위 벡터와 배율
+        val ax = old.x(1) - x0; val ay = old.y(1) - y0
+        val bx = old.x(3) - x0; val by = old.y(3) - y0
+        val aLen = max(hypot(ax, ay), 0.01f)
+        val bLen = max(hypot(bx, by), 0.01f)
+        val kx = aLen / oldText.boxW
+        val ky = bLen / oldText.boxH
+        val w = text.boxW * kx
+        val h = text.boxH * ky
+        val ux = ax / aLen * w; val uy = ay / aLen * w
+        val vx = bx / bLen * h; val vy = by / bLen * h
+        val st = Stroke(Tool.PEN, color, 0f).apply {
+            this.text = text
+            add(x0, y0, 1f)
+            add(x0 + ux, y0 + uy, 1f)
+            add(x0 + ux + vx, y0 + uy + vy, 1f)
+            add(x0 + vx, y0 + vy, 1f)
+        }
+        inkDoc.replace(page, old, st)
+        invalidate()
+    }
+
     private fun inLasso(x: Float, y: Float): Boolean {
         var inside = false
         var j = lassoCount - 1
@@ -1615,7 +1710,7 @@ class DocumentView @JvmOverloads constructor(
     fun clearPage(hlOnly: Boolean): Int {
         val inkDoc = ink ?: return 0
         val page = currentPage().takeIf { it >= 0 } ?: return 0
-        val targets = inkDoc.pages[page].filter { it.image == null && (!hlOnly || it.tool == Tool.HIGHLIGHTER) }
+        val targets = inkDoc.pages[page].filter { !it.isBox && (!hlOnly || it.tool == Tool.HIGHLIGHTER) }
         if (targets.isEmpty()) return 0
         clearSelection()
         inkDoc.remove(page, targets)
@@ -1686,6 +1781,8 @@ class DocumentView @JvmOverloads constructor(
         /** 크기 조절 손잡이 반지름(그리기)과 누르는 범위 */
         private const val HANDLE_DP = 7f
         private const val HANDLE_TOUCH_DP = 24f
+        /** 글 도구: 이보다 많이 움직이면 톡 누르기가 아니다 (dp) */
+        private const val TAP_SLOP_DP = 12f
         /** 회전 손잡이 반지름과 상자에서 떨어진 거리 */
         private const val ROT_HANDLE_DP = 14f
         private const val ROT_OFFSET_DP = 34f

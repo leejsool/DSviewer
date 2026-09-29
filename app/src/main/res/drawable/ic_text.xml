@@ -1,0 +1,10 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- 글 도구: T와 글자 커서 -->
+    <path android:fillColor="?attr/colorControlNormal"
+        android:pathData="M4,4h12v3h-1.5l-0.5,-1.5h-3v12.5h2v1.5h-6v-1.5h2V5.5h-3L5.5,7H4z" />
+    <path android:strokeColor="?attr/colorControlNormal" android:strokeWidth="1.6"
+        android:strokeLineCap="round"
+        android:pathData="M19,9v11M17.5,9h3M17.5,20h3" />
+</vector>

@@ -42,6 +42,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.button.MaterialButton
+import com.google.android.material.button.MaterialButtonToggleGroup
 import com.google.android.material.chip.Chip
 import com.google.android.material.chip.ChipGroup
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -174,6 +175,8 @@ class ViewerActivity : AppCompatActivity() {
             override fun onSelectionChanged(rect: RectF?, count: Int) = placeSelectionBar(rect, count)
 
             override fun onPenDown() = hideOptionBar()
+
+            override fun onTextTap(page: Int, x: Float, y: Float, existing: Stroke?) = showTextDialog(page, x, y, existing)
 
             override fun onShapeFailed(kind: ShapeKind) {
                 Toast.makeText(this@ViewerActivity, "${withRo(kind.label)} 맞추지 못했어요. 조금 더 크게 그려 보세요.", Toast.LENGTH_SHORT).show()
@@ -1133,6 +1136,76 @@ class ViewerActivity : AppCompatActivity() {
         docView.lassoRect = prefs.getBoolean("lassoRect", false)
     }
 
+    // ================= 글 넣기 =================
+
+    /** 글 크기 (pt): 작게 · 보통 · 크게 · 아주 크게 */
+    private val textSizes = floatArrayOf(14f, 20f, 28f, 40f)
+    private val textSizeLabels = arrayOf("작게", "보통", "크게", "아주 크게")
+
+    /**
+     * 글 넣기·고치기 창. 새 글은 펜 색으로 누른 자리에 넣고, 고칠 때는 그 글의 색·자리를 그대로 둔다.
+     * 글을 모두 지우고 '고치기'를 누르거나 '지우기'를 누르면 그 글을 지운다
+     */
+    private fun showTextDialog(page: Int, x: Float, y: Float, existing: Stroke?) {
+        val old = existing?.text
+        val d = resources.displayMetrics.density
+        val input = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            isSingleLine = false
+            minLines = 2
+            maxLines = 8
+            gravity = android.view.Gravity.TOP or android.view.Gravity.START
+            hint = "넣을 글 (Enter로 줄 바꿈)"
+            setText(old?.text ?: "")
+            setSelection(text.length)
+        }
+        val sizeGroup = MaterialButtonToggleGroup(this).apply {
+            isSingleSelection = true
+            isSelectionRequired = true
+        }
+        val sizeIds = textSizeLabels.map { label ->
+            val b = MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle)
+            b.id = View.generateViewId()
+            b.text = label
+            sizeGroup.addView(b)
+            b.id
+        }
+        // 고칠 때는 그 글의 크기, 새 글은 지난번에 고른 크기
+        val startIdx = if (old != null) textSizes.indices.minBy { kotlin.math.abs(textSizes[it] - old.size) }
+        else prefs.getInt("textSizeIdx", 1).coerceIn(textSizes.indices)
+        sizeGroup.check(sizeIds[startIdx])
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding((24 * d).toInt(), (8 * d).toInt(), (24 * d).toInt(), 0)
+            addView(input)
+            addView(sizeGroup, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = (12 * d).toInt() })
+        }
+        val builder = MaterialAlertDialogBuilder(this)
+            .setTitle(if (old == null) "글 넣기" else "글 고치기")
+            .setView(box)
+            .setPositiveButton(if (old == null) "넣기" else "고치기") { _, _ ->
+                val idx = sizeIds.indexOf(sizeGroup.checkedButtonId).coerceAtLeast(0)
+                prefs.edit().putInt("textSizeIdx", idx).apply()
+                val txt = input.text.toString().trimEnd()
+                val t = if (txt.isBlank()) null else InkText(txt, textSizes[idx])
+                when {
+                    existing != null -> docView.replaceText(page, existing, t, existing.color)
+                    t != null -> docView.addText(page, x, y, t, docView.penColor)
+                }
+            }
+            .setNegativeButton("취소", null)
+        if (existing != null) builder.setNeutralButton("지우기") { _, _ -> docView.replaceText(page, existing, null, 0) }
+        val dialog = builder.create()
+        dialog.setOnShowListener {
+            // 바로 칠 수 있게 키보드를 띄운다
+            input.requestFocus()
+            dialog.window?.let { WindowCompat.getInsetsController(it, input).show(WindowInsetsCompat.Type.ime()) }
+        }
+        dialog.show()
+    }
+
     // ================= 툴바 자리 =================
     // 툴바 맨 앞 손잡이를 끌어 위·아래·왼쪽·오른쪽에 붙인다 (ToolbarDock). 자리는 기억해 둔다.
 
@@ -1486,6 +1559,7 @@ class ViewerActivity : AppCompatActivity() {
             Tool.ERASER to findViewById(R.id.toolEraser),
             Tool.LASSO to findViewById(R.id.toolLasso),
             Tool.LASER to findViewById(R.id.toolLaser),
+            Tool.TEXT to findViewById(R.id.toolText),
         )
         penSlots = loadSlots("pen", penDefaults)
         hlSlots = loadSlots("hl", hlDefaults)
@@ -1519,7 +1593,12 @@ class ViewerActivity : AppCompatActivity() {
                     val showing = optionTool == t
                     selectTool(t)
                     if (showing) hideOptionBar() else showOptionBar(t)
-                } else selectTool(t)
+                } else {
+                    if (t == Tool.TEXT && docView.tool != Tool.TEXT) {
+                        Toast.makeText(this, "글을 넣을 자리를 누르세요. 넣은 글을 누르면 고칠 수 있습니다.", Toast.LENGTH_SHORT).show()
+                    }
+                    selectTool(t)
+                }
             }
         }
         selectTool(Tool.PEN)
@@ -1686,12 +1765,12 @@ class ViewerActivity : AppCompatActivity() {
             Tool.HIGHLIGHTER -> docView.hlWidth = v
             Tool.ERASER -> docView.eraserRadiusDp = v
             Tool.LASER -> docView.laserWidthDp = v
-            Tool.LASSO -> {}
+            Tool.LASSO, Tool.TEXT -> {}
         }
     }
 
     private fun toolColor(t: Tool) = when (t) {
-        Tool.PEN, Tool.SHAPE -> docView.penColor
+        Tool.PEN, Tool.SHAPE, Tool.TEXT -> docView.penColor
         Tool.HIGHLIGHTER -> docView.hlColor
         Tool.LASER -> docView.laserColor
         Tool.ERASER, Tool.LASSO -> Color.BLACK

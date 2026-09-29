@@ -347,7 +347,7 @@
 
             <ImageButton
                 android:id="@+id/toolPen"
-                android:layout_width="48dp"
+                android:layout_width="44dp"
                 android:layout_height="44dp"
                 android:background="@drawable/bg_tool"
                 android:contentDescription="펜"
@@ -356,44 +356,53 @@
             <!-- 보정 펜 (아이콘은 코드에서 ShapePenDrawable) -->
             <ImageButton
                 android:id="@+id/toolShape"
-                android:layout_width="48dp"
+                android:layout_width="44dp"
                 android:layout_height="44dp"
-                android:layout_marginStart="4dp"
+                android:layout_marginStart="2dp"
                 android:background="@drawable/bg_tool"
                 android:contentDescription="보정 펜" />
 
             <ImageButton
                 android:id="@+id/toolHighlighter"
-                android:layout_width="48dp"
+                android:layout_width="44dp"
                 android:layout_height="44dp"
-                android:layout_marginStart="4dp"
+                android:layout_marginStart="2dp"
                 android:background="@drawable/bg_tool"
                 android:contentDescription="형광펜"
                 android:src="@drawable/ic_highlighter" />
 
             <ImageButton
-                android:id="@+id/toolEraser"
-                android:layout_width="48dp"
+                android:id="@+id/toolText"
+                android:layout_width="44dp"
                 android:layout_height="44dp"
-                android:layout_marginStart="4dp"
+                android:layout_marginStart="2dp"
+                android:background="@drawable/bg_tool"
+                android:contentDescription="글 넣기"
+                android:src="@drawable/ic_text" />
+
+            <ImageButton
+                android:id="@+id/toolEraser"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:layout_marginStart="2dp"
                 android:background="@drawable/bg_tool"
                 android:contentDescription="지우개"
                 android:src="@drawable/ic_eraser_stroke" />
 
             <ImageButton
                 android:id="@+id/toolLasso"
-                android:layout_width="48dp"
+                android:layout_width="44dp"
                 android:layout_height="44dp"
-                android:layout_marginStart="4dp"
+                android:layout_marginStart="2dp"
                 android:background="@drawable/bg_tool"
                 android:contentDescription="선택"
                 android:src="@drawable/ic_lasso" />
 
             <ImageButton
                 android:id="@+id/toolLaser"
-                android:layout_width="48dp"
+                android:layout_width="44dp"
                 android:layout_height="44dp"
-                android:layout_marginStart="4dp"
+                android:layout_marginStart="2dp"
                 android:background="@drawable/bg_tool"
                 android:contentDescription="레이저 포인터"
                 android:src="@drawable/ic_laser" />

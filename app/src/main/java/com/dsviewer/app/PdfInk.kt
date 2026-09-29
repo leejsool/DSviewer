@@ -1,10 +1,13 @@
 package com.dsviewer.app
 
 import android.graphics.Color
+import android.graphics.pdf.PdfDocument
+import android.util.Base64
 import com.tom_roush.pdfbox.cos.COSArray
 import com.tom_roush.pdfbox.cos.COSDictionary
 import com.tom_roush.pdfbox.cos.COSFloat
 import com.tom_roush.pdfbox.cos.COSName
+import com.tom_roush.pdfbox.multipdf.LayerUtility
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.PDPage
 import com.tom_roush.pdfbox.pdmodel.PDPageContentStream
@@ -21,6 +24,7 @@ import com.tom_roush.pdfbox.pdmodel.interactive.annotation.PDAnnotation
 import com.tom_roush.pdfbox.pdmodel.interactive.annotation.PDAppearanceDictionary
 import com.tom_roush.pdfbox.pdmodel.interactive.annotation.PDAppearanceStream
 import com.tom_roush.pdfbox.util.Matrix
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.Calendar
 import java.util.UUID
@@ -86,21 +90,33 @@ object PdfInk {
 
     /** 원본 [src]에 필기를 주석으로 넣어 [out]에 저장 */
     fun save(src: File, out: File, pages: List<List<Stroke>>) {
-        PDDocument.load(src).use { doc ->
-            if (doc.isEncrypted) doc.isAllSecurityToBeRemoved = true
-            for ((i, page) in doc.pages.withIndex()) {
-                val list: MutableList<PDAnnotation> =
-                    page.annotations.filterTo(ArrayList()) { !it.cosObject.containsKey(KEY_NAME) }
-                if (i < pages.size) {
-                    // 그림을 먼저 (다른 앱에서도 필기가 그림 위에 보이게)
-                    for (s in pages[i].sortedBy { if (it.image != null) 0 else 1 }) {
-                        if (s.count == 0) continue
-                        list.add(if (s.image != null) makeImageAnnotation(doc, page, s) else makeAnnotation(doc, page, s))
+        // 글 외형을 가져온 임시 PDF들 (다 저장한 뒤에 닫는다)
+        val temps = ArrayList<PDDocument>()
+        try {
+            PDDocument.load(src).use { doc ->
+                if (doc.isEncrypted) doc.isAllSecurityToBeRemoved = true
+                for ((i, page) in doc.pages.withIndex()) {
+                    val list: MutableList<PDAnnotation> =
+                        page.annotations.filterTo(ArrayList()) { !it.cosObject.containsKey(KEY_NAME) }
+                    if (i < pages.size) {
+                        // 그림을 먼저 (다른 앱에서도 필기가 그림 위에 보이게)
+                        for (s in pages[i].sortedBy { if (it.image != null) 0 else 1 }) {
+                            if (s.count == 0) continue
+                            list.add(
+                                when {
+                                    s.image != null -> makeImageAnnotation(doc, page, s)
+                                    s.text != null -> makeTextAnnotation(doc, page, s, temps)
+                                    else -> makeAnnotation(doc, page, s)
+                                }
+                            )
+                        }
                     }
+                    page.annotations = list
                 }
-                page.annotations = list
+                doc.save(out)
             }
-            doc.save(out)
+        } finally {
+            temps.forEach { it.close() }
         }
     }
 
@@ -220,6 +236,63 @@ object PdfInk {
         return annot
     }
 
+    /**
+     * 글 주석(Stamp). 글을 안드로이드 PDF 한 쪽(상자 크기)으로 그려 글꼴째 담고,
+     * 그 쪽을 폼으로 가져와 네 모서리에 맞춰 외형에 넣는다 (다른 앱에서도 글자가 그대로, 벡터로 보인다)
+     */
+    private fun makeTextAnnotation(doc: PDDocument, page: PDPage, s: Stroke, temps: MutableList<PDDocument>): PDAnnotation {
+        val t = s.text!!
+        val box = page.cropBox
+        val rot = ((page.rotation % 360) + 360) % 360
+        val ux = FloatArray(4)
+        val uy = FloatArray(4)
+        for (i in 0 until 4) toUser(s.x(i), s.y(i), box, rot, ux, uy, i)
+        val rect = PDRectangle(ux.min(), uy.min(), ux.max() - ux.min(), uy.max() - uy.min())
+
+        val bytes = ByteArrayOutputStream().use { out ->
+            val pd = PdfDocument()
+            try {
+                val pg = pd.startPage(PdfDocument.PageInfo.Builder(t.boxW, t.boxH, 1).create())
+                t.draw(pg.canvas, s.color)
+                pd.finishPage(pg)
+                pd.writeTo(out)
+            } finally {
+                pd.close()
+            }
+            out.toByteArray()
+        }
+        val tmp = PDDocument.load(bytes)
+        temps.add(tmp)
+        val form = LayerUtility(doc).importPageAsForm(tmp, 0)
+
+        val ap = PDAppearanceStream(doc)
+        ap.bBox = rect
+        ap.resources = PDResources()
+        val w = t.boxW.toFloat()
+        val h = t.boxH.toFloat()
+        PDPageContentStream(doc, ap).use { cs ->
+            // 폼 공간: 원점은 왼쪽 아래 모서리(3), 가로는 오른쪽 아래(2) 쪽, 세로는 왼쪽 위(0) 쪽
+            cs.saveGraphicsState()
+            cs.transform(Matrix((ux[2] - ux[3]) / w, (uy[2] - uy[3]) / w, (ux[0] - ux[3]) / h, (uy[0] - uy[3]) / h, ux[3], uy[3]))
+            cs.drawForm(form)
+            cs.restoreGraphicsState()
+        }
+        val dict = COSDictionary()
+        dict.setItem(COSName.TYPE, COSName.ANNOT)
+        dict.setItem(COSName.SUBTYPE, COSName.getPDFName("Stamp"))
+        val annot = PDAnnotation.createAnnotation(dict)
+        annot.rectangle = rect
+        annot.isPrinted = true
+        annot.annotationName = UUID.randomUUID().toString()
+        annot.setModifiedDate(Calendar.getInstance())
+        annot.page = page
+        dict.setString(KEY_NAME, encode(s))
+        val apd = PDAppearanceDictionary()
+        apd.setNormalAppearance(ap)
+        annot.appearance = apd
+        return annot
+    }
+
     /** 이 앱이 넣은 그림 주석에서 그림을 꺼낸다. JPEG면 원래 바이트도 같이 (다시 저장할 때 화질 그대로) */
     private fun readImage(a: PDAnnotation): InkImage? = try {
         val res = a.normalAppearanceStream?.resources
@@ -247,21 +320,24 @@ object PdfInk {
         }
     }
 
-    // 형식: 1|P|ff000000|1.2|x,y,p;x,y,p;...  (도구: P 펜, H 형광펜, D 점선 펜, I 그림 — 그림은 네 모서리)
+    // 형식: 1|P|ff000000|1.2|x,y,p;x,y,p;...  (도구: P 펜, H 형광펜, D 점선 펜, I 그림, T 글 — 그림·글은 네 모서리)
+    // 글은 굵기 자리에 글자 크기, 끝에 |글(UTF-8 Base64)을 붙인다
     private fun encode(s: Stroke): String {
         val sb = StringBuilder(s.count * 16 + 32)
         val kind = when {
             s.image != null -> 'I'
+            s.text != null -> 'T'
             s.tool == Tool.HIGHLIGHTER -> 'H'
             s.dashed -> 'D'
             else -> 'P'
         }
         sb.append("1|").append(kind).append('|')
-        sb.append(Integer.toHexString(s.color)).append('|').append(r2(s.width)).append('|')
+        sb.append(Integer.toHexString(s.color)).append('|').append(r2(s.text?.size ?: s.width)).append('|')
         for (i in 0 until s.count) {
             if (i > 0) sb.append(';')
             sb.append(r2(s.x(i))).append(',').append(r2(s.y(i))).append(',').append(r2(s.p(i)))
         }
+        s.text?.let { sb.append('|').append(Base64.encodeToString(it.text.toByteArray(), Base64.NO_WRAP)) }
         return sb.toString()
     }
 
@@ -271,12 +347,14 @@ object PdfInk {
         else {
             val tool = if (parts[1] == "H") Tool.HIGHLIGHTER else Tool.PEN
             val color = parts[2].toLong(16).toInt()
-            val s = Stroke(tool, color, parts[3].toFloat(), dashed = parts[1] == "D")
+            val isText = parts[1] == "T"
+            val s = Stroke(tool, color, if (isText) 0f else parts[3].toFloat(), dashed = parts[1] == "D")
             for (pt in parts[4].split(';')) {
                 val v = pt.split(',')
                 if (v.size == 3) s.add(v[0].toFloat(), v[1].toFloat(), v[2].toFloat())
             }
-            if (s.count > 0) s else null
+            if (isText) s.text = InkText(String(Base64.decode(parts[5], Base64.NO_WRAP)), parts[3].toFloat())
+            if (s.count > 0 && (!isText || s.count >= 4)) s else null
         }
     } catch (e: Exception) {
         null

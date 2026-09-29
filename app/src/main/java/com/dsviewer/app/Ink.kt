@@ -7,6 +7,10 @@ import android.graphics.DashPathEffect
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.Typeface
+import android.text.StaticLayout
+import android.text.TextPaint
+import kotlin.math.ceil
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -39,6 +43,58 @@ private fun drawInkImage(c: Canvas, st: Stroke, alphaMul: Float) {
     c.drawBitmap(img.bitmap, imageMatrix, imagePaint)
 }
 
+/**
+ * 쪽에 넣은 글. [size]는 글자 크기(pt). 줄바꿈은 입력한 대로만 한다.
+ * 그림처럼 획의 네 점(상자 모서리)에 맞춰 그리므로 옮기고 키우고 돌려도 따라간다.
+ */
+class InkText(val text: String, val size: Float) {
+    private val paint = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.LINEAR_TEXT_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
+        textSize = size
+        typeface = Typeface.DEFAULT
+    }
+    private val layout: StaticLayout =
+        StaticLayout.Builder.obtain(text, 0, text.length, paint, MAX_LINE).setIncludePad(false).build()
+
+    /** 상자 크기 (pt). 저장할 때 PDF 한 쪽 크기로도 쓰므로 정수로 올린다 */
+    val boxW: Int = ceil((0 until layout.lineCount).maxOf { layout.getLineWidth(it) } + PAD * 2).toInt().coerceAtLeast(1)
+    val boxH: Int = ceil(layout.height + PAD * 2f).toInt().coerceAtLeast(1)
+
+    /** (0, 0) ~ (boxW, boxH) 상자에 글을 그린다. 쪽 미리보기가 다른 스레드에서 같이 그릴 수 있어 잠근다 */
+    fun draw(c: Canvas, color: Int) = synchronized(this) {
+        paint.color = color
+        c.save()
+        c.translate(PAD, PAD)
+        layout.draw(c)
+        c.restore()
+    }
+
+    private companion object {
+        const val MAX_LINE = 100_000
+        /** 글자가 상자 끝에서 잘리지 않게 두르는 여백 (pt) */
+        const val PAD = 2f
+    }
+}
+
+/** 글: 상자 (0, 0, boxW, boxH)를 획의 네 점에 맞춰 그린다 */
+private fun drawInkText(c: Canvas, st: Stroke, alphaMul: Float) {
+    val t = st.text ?: return
+    if (st.count < 4) return
+    val w = t.boxW.toFloat()
+    val h = t.boxH.toFloat()
+    imageSrc[0] = 0f; imageSrc[1] = 0f; imageSrc[2] = w; imageSrc[3] = 0f
+    imageSrc[4] = w; imageSrc[5] = h; imageSrc[6] = 0f; imageSrc[7] = h
+    for (k in 0 until 4) {
+        imageDst[k * 2] = st.x(k)
+        imageDst[k * 2 + 1] = st.y(k)
+    }
+    imageMatrix.setPolyToPoly(imageSrc, 0, imageDst, 0, 4)
+    c.save()
+    c.concat(imageMatrix)
+    val a = (android.graphics.Color.alpha(st.color) * alphaMul).roundToInt()
+    t.draw(c, (st.color and 0x00FFFFFF) or (a shl 24))
+    c.restore()
+}
+
 /** 필기 그리기용 붓 ([drawInkStroke]와 같이 쓴다) */
 fun inkPaint() = Paint(Paint.ANTI_ALIAS_FLAG).apply {
     style = Paint.Style.STROKE
@@ -53,6 +109,10 @@ fun inkPaint() = Paint(Paint.ANTI_ALIAS_FLAG).apply {
 fun drawInkStroke(c: Canvas, paint: Paint, st: Stroke, alphaMul: Float = 1f) {
     if (st.image != null) {
         drawInkImage(c, st, alphaMul)
+        return
+    }
+    if (st.text != null) {
+        drawInkText(c, st, alphaMul)
         return
     }
     paint.color = st.color
@@ -70,8 +130,11 @@ fun drawInkStroke(c: Canvas, paint: Paint, st: Stroke, alphaMul: Float = 1f) {
     }
 }
 
-/** SHAPE = 보정 펜 (그린 결과는 PEN 획으로 저장), LASER = 잠깐 보였다 사라지는 레이저 (저장하지 않음) */
-enum class Tool { PEN, SHAPE, HIGHLIGHTER, ERASER, LASSO, LASER }
+/**
+ * SHAPE = 보정 펜 (그린 결과는 PEN 획으로 저장), LASER = 잠깐 보였다 사라지는 레이저 (저장하지 않음),
+ * TEXT = 누른 자리에 글 넣기 (글은 [Stroke.text]가 있는 PEN 획으로 저장)
+ */
+enum class Tool { PEN, SHAPE, HIGHLIGHTER, ERASER, LASSO, LASER, TEXT }
 
 /** STROKE = 닿은 획을 통째로, AREA = 지우개가 지나간 부분만 */
 enum class EraserMode { STROKE, AREA }
@@ -94,6 +157,11 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
         private set
     /** 그림이면 그 그림 (점 네 개가 그림의 네 모서리). 지우개로는 지우지 않는다 */
     var image: InkImage? = null
+    /** 글이면 그 글 (점 네 개가 글 상자의 네 모서리). 지우개로는 지우지 않는다 */
+    var text: InkText? = null
+
+    /** 그림이나 글처럼 네 모서리로 된 상자인지 (지우개가 자르지 않고, 톡 눌러 고를 수 있다) */
+    val isBox get() = image != null || text != null
 
     private var cachedPaths: List<Pair<Float, Path>>? = null
     private var cachedVersion = -1
@@ -154,6 +222,7 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
     fun copy(): Stroke {
         val s = Stroke(tool, color, width, dashed)
         s.image = image
+        s.text = text
         s.data = data.copyOf(count * 3)
         s.count = count
         return s
@@ -373,6 +442,15 @@ class InkDocument(pageCount: Int) {
         val set = strokes.toSet()
         pages[page].removeAll { it in set }
         erased(strokes.map { page to it })
+    }
+
+    /** 획 하나를 새 획으로 바꾼다 (글 고치기). 같은 자리(겹친 순서)에 넣는다 */
+    fun replace(page: Int, old: Stroke, new: Stroke) {
+        val list = pages[page]
+        val i = list.indexOf(old)
+        if (i < 0) return
+        list[i] = new
+        erased(listOf(page to old), listOf(page to new))
     }
 
     /** 선택한 획들을 (dx, dy)만큼 옮긴다 */
