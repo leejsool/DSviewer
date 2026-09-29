@@ -50,22 +50,38 @@ object ColorPalette {
 internal fun View.dp(v: Float) = v * resources.displayMetrics.density
 
 /**
- * 도구막대 위쪽, 누른 버튼 근처에 뜨는 창의 위치 (x, y, 너비).
+ * 툴바의 누른 버튼 옆, 문서 쪽으로 뜨는 창의 위치 (x, y, 너비).
+ * 툴바가 아래면 버튼 위, 위면 버튼 아래, 왼쪽이면 버튼 오른쪽, 오른쪽이면 버튼 왼쪽.
  * content는 이 너비로 미리 재 둔다.
  */
-internal fun placeAbove(activity: Activity, content: View, anchor: View, maxWidthDp: Float): Triple<Int, Int, Int> {
+internal fun placeNear(
+    activity: Activity, content: View, anchor: View, maxWidthDp: Float, side: ToolbarSide = ToolbarSide.BOTTOM,
+): Triple<Int, Int, Int> {
     val margin = content.dp(8f).toInt()
-    val screenW = activity.resources.displayMetrics.widthPixels
-    val w = min(screenW - 2 * margin, content.dp(maxWidthDp).toInt())
+    val screenW = activity.window.decorView.width.takeIf { it > 0 } ?: activity.resources.displayMetrics.widthPixels
+    val screenH = activity.window.decorView.height.takeIf { it > 0 } ?: activity.resources.displayMetrics.heightPixels
+    val loc = IntArray(2)
+    anchor.getLocationOnScreen(loc)
+    // 옆에 뜰 때는 버튼 옆 남은 폭 안에 들어가게
+    val room = when (side) {
+        ToolbarSide.LEFT -> screenW - (loc[0] + anchor.width) - 2 * margin
+        ToolbarSide.RIGHT -> loc[0] - 2 * margin
+        else -> screenW - 2 * margin
+    }
+    val w = min(room, content.dp(maxWidthDp).toInt()).coerceAtLeast(content.dp(200f).toInt())
     content.measure(
         View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
         View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
     )
-    val loc = IntArray(2)
-    anchor.getLocationOnScreen(loc)
-    val x = (loc[0] + anchor.width / 2 - w / 2).coerceIn(margin, max(margin, screenW - w - margin))
-    val y = max(margin, loc[1] - content.measuredHeight)
-    return Triple(x, y, w)
+    val h = content.measuredHeight
+    val centerX = (loc[0] + anchor.width / 2 - w / 2).coerceIn(margin, max(margin, screenW - w - margin))
+    val centerY = (loc[1] + anchor.height / 2 - h / 2).coerceIn(margin, max(margin, screenH - h - margin))
+    return when (side) {
+        ToolbarSide.BOTTOM -> Triple(centerX, max(margin, loc[1] - h), w)
+        ToolbarSide.TOP -> Triple(centerX, min(loc[1] + anchor.height, max(margin, screenH - h - margin)), w)
+        ToolbarSide.LEFT -> Triple(min(loc[0] + anchor.width + margin, max(margin, screenW - w - margin)), centerY, w)
+        ToolbarSide.RIGHT -> Triple(max(margin, loc[0] - w - margin), centerY, w)
+    }
 }
 
 /** 동그란 색 견본을 격자로 늘어놓은 뷰 */
@@ -313,8 +329,11 @@ class ColorPickerPopup(
         return s.toIntOrNull(16)?.let { it or 0xFF000000.toInt() }
     }
 
-    fun show(anchor: View) {
+    private var side = ToolbarSide.BOTTOM
+
+    fun show(anchor: View, side: ToolbarSide = ToolbarSide.BOTTOM) {
         this.anchor = anchor
+        this.side = side
         val (x, y, w) = place(anchor)
         popup.width = w
         popup.showAtLocation(anchor, Gravity.NO_GRAVITY, x, y)
@@ -327,7 +346,7 @@ class ColorPickerPopup(
         popup.update(x, y, w, -1)
     }
 
-    private fun place(anchor: View) = placeAbove(activity, view, anchor, 520f)
+    private fun place(anchor: View) = placeNear(activity, view, anchor, 520f, side)
 
     companion object {
         /** 마지막으로 쓴 탭(팔레트/직접 선택)을 기억 */

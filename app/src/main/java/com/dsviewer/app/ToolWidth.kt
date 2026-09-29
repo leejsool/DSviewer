@@ -79,12 +79,15 @@ class WidthSwatchView @JvmOverloads constructor(ctx: Context, attrs: AttributeSe
         paint.strokeWidth = dp(if (kind == WidthKind.PEN) 1.5f + t * 8f else 3f + t * 11f)
         paint.color = if (kind == WidthKind.HIGHLIGHTER) ColorUtils.setAlphaComponent(color, 170) else color
         paint.strokeCap = if (kind == WidthKind.HIGHLIGHTER) Paint.Cap.SQUARE else Paint.Cap.ROUND
+        // 칸이 세로로 길면(가로 툴바) 세로선, 가로로 길면(세로 툴바) 가로선
+        val upright = height > width
         val half = dp(9f)
-        canvas.drawLine(cx - half, cy, cx + half, cy, paint)
+        val (hx, hy) = if (upright) 0f to half else half to 0f
+        canvas.drawLine(cx - hx, cy - hy, cx + hx, cy + hy, paint)
         // 흰색 계열은 배경에 묻히지 않게 테두리
         if (Color.luminance(color) > 0.85f) {
             val r = paint.strokeWidth / 2
-            canvas.drawRoundRect(cx - half - r, cy - r, cx + half + r, cy + r, r, r, outline)
+            canvas.drawRoundRect(cx - hx - r, cy - hy - r, cx + hx + r, cy + hy + r, r, r, outline)
         }
     }
 }
@@ -179,8 +182,8 @@ class WidthPopup(
         preview.value = v
     }
 
-    fun show(anchor: View) {
-        val (x, y, w) = placeAbove(act, view, anchor, 400f)
+    fun show(anchor: View, side: ToolbarSide = ToolbarSide.BOTTOM) {
+        val (x, y, w) = placeNear(act, view, anchor, 400f, side)
         popup.width = w
         popup.showAtLocation(anchor, Gravity.NO_GRAVITY, x, y)
     }

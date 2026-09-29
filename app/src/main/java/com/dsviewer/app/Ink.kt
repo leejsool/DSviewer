@@ -322,7 +322,7 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
 
 /** 문서 전체의 필기와 실행 취소/다시 실행 기록 */
 class InkDocument(pageCount: Int) {
-    /** 쪽마다 획 목록. 빈 쪽을 넣거나 쪽을 지우면 순서가 바뀐다 */
+    /** 쪽마다 획 목록. 쪽을 넣거나 지우면 순서가 바뀐다 */
     val pages: MutableList<MutableList<Stroke>> = MutableList(pageCount) { mutableListOf() }
 
     // 기록은 쪽 번호 대신 그 쪽의 획 목록을 가리킨다 (쪽을 넣고 빼도 기록이 어긋나지 않게)
@@ -336,6 +336,10 @@ class InkDocument(pageCount: Int) {
         class Move(val strokes: List<Stroke>, val dx: Float, val dy: Float) : Action()
         class AddAll(val page: MutableList<Stroke>, val strokes: List<Stroke>) : Action()
         class Edit(val strokes: List<Stroke>, val before: List<Stroke.State>, val after: List<Stroke.State>) : Action()
+        class Pages(
+            val before: List<MutableList<Stroke>>, val after: List<MutableList<Stroke>>,
+            val beforeFiles: Any, val afterFiles: Any,
+        ) : Action()
     }
 
     private val undoStack = ArrayDeque<Action>()
@@ -393,43 +397,46 @@ class InkDocument(pageCount: Int) {
         push(Action.Edit(strokes, before, strokes.map { it.state() }))
     }
 
-    /** [index] 자리에 빈 쪽을 넣는다 (실행 취소 기록에는 남기지 않음) */
-    fun insertPage(index: Int) {
-        pages.add(index, mutableListOf())
-        changed()
+    /**
+     * 쪽 구성 바꾸기 (빈 쪽·PDF 넣기, 쪽 지우기). [edit]가 쪽 목록을 고친다.
+     * [before]/[after]는 바뀌기 전·후의 PDF 파일 묶음으로, 실행 취소·다시 실행할 때
+     * [swapPages]에 넘겨 화면의 PDF도 같이 되돌리게 한다.
+     * 지운 쪽의 획 목록도 기록에 남아 있으므로 그 쪽의 필기 기록은 버리지 않는다
+     * (기록은 차례대로만 되돌려지니, 쪽이 돌아온 뒤에야 그 쪽의 기록에 닿는다).
+     */
+    fun changePages(before: Any, after: Any, edit: (MutableList<MutableList<Stroke>>) -> Unit) {
+        val old = pages.toList()
+        edit(pages)
+        push(Action.Pages(old, pages.toList(), before, after))
     }
 
-    /** [index] 자리에 쪽들을 넣는다 (다른 PDF를 넣을 때, 그 PDF에 있던 필기와 함께) */
-    fun insertPages(index: Int, strokes: List<List<Stroke>>) {
-        pages.addAll(index, strokes.map { it.toMutableList() })
-        changed()
-    }
+    /**
+     * 쪽 구성을 실행 취소·다시 실행할 때 부른다. 그 상태의 PDF 파일 묶음을 받아 PDF를 연 뒤
+     * apply를 부르면 그제야 필기 쪽 목록과 기록이 바뀐다 (PDF를 못 열면 부르지 않는다).
+     * 여는 사이 기록이 바뀌었으면 apply는 아무것도 하지 않고 false를 돌려준다
+     */
+    var swapPages: ((files: Any, apply: () -> Boolean) -> Unit)? = null
 
-    /** [index]번째 쪽을 지운다. 그 쪽의 필기에 대한 실행 취소 기록도 함께 버린다 */
-    fun removePage(index: Int) {
-        val gone = pages.removeAt(index)
-        val goneStrokes = gone.toHashSet()
-        fun keep(a: Action): Action? = when (a) {
-            is Action.Add -> a.takeIf { a.page !== gone }
-            is Action.AddAll -> a.takeIf { a.page !== gone }
-            is Action.Erase -> {
-                val items = a.items.filter { it.first !== gone }
-                val pieces = a.pieces.filter { it.first !== gone }
-                if (items.isEmpty() && pieces.isEmpty()) null else Action.Erase(items, pieces)
-            }
-            is Action.Move -> a.takeIf { a.strokes.none { it in goneStrokes } }
-            is Action.Edit -> a.takeIf { a.strokes.none { it in goneStrokes } }
+    /** 쪽 구성 기록이면 [swapPages]로 PDF를 먼저 바꾸게 하고 true */
+    private fun swapIfPages(a: Action, undo: Boolean): Boolean {
+        if (a !is Action.Pages) return false
+        val (from, to) = if (undo) undoStack to redoStack else redoStack to undoStack
+        val apply = apply@{
+            if (from.lastOrNull() !== a) return@apply false
+            from.removeLast()
+            pages.clear()
+            pages.addAll(if (undo) a.before else a.after)
+            to.addLast(a)
+            changed()
+            true
         }
-        for (stack in listOf(undoStack, redoStack)) {
-            val kept = stack.mapNotNull(::keep)
-            stack.clear()
-            stack.addAll(kept)
-        }
-        changed()
+        swapPages?.invoke(if (undo) a.beforeFiles else a.afterFiles, apply) ?: apply()
+        return true
     }
 
     fun undo() {
-        val a = undoStack.removeLastOrNull() ?: return
+        if (swapIfPages(undoStack.lastOrNull() ?: return, undo = true)) return
+        val a = undoStack.removeLast()
         when (a) {
             is Action.Add -> a.page.remove(a.stroke)
             is Action.Erase -> {
@@ -439,13 +446,15 @@ class InkDocument(pageCount: Int) {
             is Action.Move -> a.strokes.forEach { it.translate(-a.dx, -a.dy) }
             is Action.AddAll -> { val set = a.strokes.toSet(); a.page.removeAll { it in set } }
             is Action.Edit -> a.strokes.forEachIndexed { i, s -> s.restore(a.before[i]) }
+            is Action.Pages -> {}  // swapIfPages
         }
         redoStack.addLast(a)
         changed()
     }
 
     fun redo() {
-        val a = redoStack.removeLastOrNull() ?: return
+        if (swapIfPages(redoStack.lastOrNull() ?: return, undo = false)) return
+        val a = redoStack.removeLast()
         when (a) {
             is Action.Add -> a.page.add(a.stroke)
             is Action.Erase -> {
@@ -455,6 +464,7 @@ class InkDocument(pageCount: Int) {
             is Action.Move -> a.strokes.forEach { it.translate(a.dx, a.dy) }
             is Action.AddAll -> a.page.addAll(a.strokes)
             is Action.Edit -> a.strokes.forEachIndexed { i, s -> s.restore(a.after[i]) }
+            is Action.Pages -> {}  // swapIfPages
         }
         undoStack.addLast(a)
         changed()

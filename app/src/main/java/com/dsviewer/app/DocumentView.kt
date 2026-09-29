@@ -326,14 +326,28 @@ class DocumentView @JvmOverloads constructor(
             }
         }
 
+    /**
+     * 화면 위쪽을 가리는 줄의 높이(px). 툴바를 위에 붙이면 도형 줄·옵션 줄이 위에 뜬다.
+     * 그만큼 문서를 위로 더 내려 볼 수 있게 한다 (offY가 -topInset까지)
+     */
+    var topInset = 0f
+        set(v) {
+            if (field == v) return
+            field = v
+            if (doc != null) {
+                clamp()
+                invalidate()
+            }
+        }
+
     /** 스크롤할 수 있는 전체 높이 (화면 px) */
-    private fun contentH() = docH * scale + bottomInset
+    private fun contentH() = docH * scale + bottomInset + topInset
 
     private fun clamp() {
         val cw = docW * scale
         val ch = contentH()
         offX = if (cw <= width) -(width - cw) / 2f else offX.coerceIn(0f, cw - width)
-        offY = if (ch <= height) -(height - ch) / 2f else offY.coerceIn(0f, ch - height)
+        offY = if (ch <= height) -(height - ch) / 2f - topInset else offY.coerceIn(-topInset, ch - height - topInset)
     }
 
     private fun pageRect(i: Int, out: RectF): RectF {
@@ -392,7 +406,7 @@ class DocumentView @JvmOverloads constructor(
         if (page !in sizes.indices || width == 0) return
         scroller.forceFinished(true)
         zoomAnimator?.cancel()
-        offY = (tops[page] - gap / 2) * scale
+        offY = (tops[page] - gap / 2) * scale - topInset
         clamp()
         scheduleDetail()
         invalidate()
@@ -834,9 +848,9 @@ class DocumentView @JvmOverloads constructor(
             val cw = docW * scale
             val ch = contentH()
             val maxX = max(0f, cw - width).toInt()
-            val maxY = max(0f, ch - height).toInt()
+            val maxY = (max(0f, ch - height) - topInset).toInt()
             val minX = if (cw <= width) offX.toInt() else 0
-            val minY = if (ch <= height) offY.toInt() else 0
+            val minY = if (ch <= height) offY.toInt() else -topInset.toInt()
             scroller.fling(
                 offX.toInt(), offY.toInt(), -velocityX.toInt(), -velocityY.toInt(),
                 minX, max(minX, if (cw <= width) minX else maxX),
@@ -955,15 +969,15 @@ class DocumentView @JvmOverloads constructor(
 
     /**
      * (손잡이가 오가는 범위의 위, 길이, 손잡이 위, 손잡이 높이). 문서가 화면보다 짧으면 null.
-     * 아래쪽에 겹쳐 뜬 줄(bottomInset)에 가리지 않도록 그 위까지만
+     * 위·아래에 겹쳐 뜬 줄(topInset, bottomInset)에 가리지 않도록 그 사이에서만
      */
     private fun barGeometry(): FloatArray? {
         val ch = contentH()
         if (ch <= height * 1.05f) return null
-        val trackTop = barMargin
-        val trackLen = height - bottomInset - barMargin * 2
+        val trackTop = barMargin + topInset
+        val trackLen = height - bottomInset - topInset - barMargin * 2
         if (trackLen < handleH * 1.5f) return null
-        val frac = (offY / (ch - height)).coerceIn(0f, 1f)
+        val frac = ((offY + topInset) / (ch - height)).coerceIn(0f, 1f)
         return floatArrayOf(trackTop, trackLen, trackTop + frac * (trackLen - handleH), handleH)
     }
 
@@ -1057,7 +1071,7 @@ class DocumentView @JvmOverloads constructor(
         val movable = g[1] - g[3]
         if (movable <= 0f) return
         val frac = ((y - barGrabOffset - g[0]) / movable).coerceIn(0f, 1f)
-        offY = frac * (ch - height)
+        offY = frac * (ch - height) - topInset
         clamp()
         invalidate()
     }
@@ -1549,7 +1563,7 @@ class DocumentView @JvmOverloads constructor(
         // 쪽과 지금 보이는 화면 둘 다의 60% 안에 들어가게 (손잡이·선택 막대 자리가 남도록)
         val aspect = img.bitmap.height.toFloat() / img.bitmap.width
         val maxW = min(pw, width / scale) * 0.6f
-        val maxH = min(ph, (height - bottomInset) / scale) * 0.6f
+        val maxH = min(ph, (height - bottomInset - topInset) / scale) * 0.6f
         var w = maxW
         var h = w * aspect
         if (h > maxH) { h = maxH; w = h / aspect }
@@ -1616,13 +1630,14 @@ class DocumentView @JvmOverloads constructor(
         clearSelection()
     }
 
-    /** 선택한 획의 대표 색 (색 고르기 창의 처음 값) */
-    val selectionColor: Int? get() = selection.firstOrNull()?.color
+    /** 선택한 획의 대표 색 (색 고르기 창의 처음 값). 그림만 골랐으면 null (색 버튼을 숨긴다) */
+    val selectionColor: Int? get() = selection.firstOrNull { it.image == null }?.color
 
-    /** 선택한 획의 색 바꾸기 (실행 취소 가능) */
+    /** 선택한 획의 색 바꾸기 (실행 취소 가능). 그림은 그대로 둔다 */
     fun recolorSelection(c: Int) {
         val inkDoc = ink ?: return
-        inkDoc.edit(selection) { selection.forEach { it.recolor(c) } }
+        val strokes = selection.filter { it.image == null }
+        inkDoc.edit(strokes) { strokes.forEach { it.recolor(c) } }
         invalidate()
     }
 

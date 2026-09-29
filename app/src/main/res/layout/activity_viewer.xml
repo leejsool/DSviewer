@@ -68,9 +68,19 @@
             android:tooltipText="더 보기" />
     </LinearLayout>
 
-    <FrameLayout
+    <!-- 문서 화면 줄. 툴바를 왼쪽·오른쪽에 붙이면 이 줄의 앞·뒤에 들어온다
+         (위·아래는 바깥 세로 줄의 탭 줄 다음·맨 끝). ViewerActivity.dockToolbar -->
+    <LinearLayout
+        android:id="@+id/docRow"
         android:layout_width="match_parent"
         android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="horizontal">
+
+    <FrameLayout
+        android:id="@+id/docFrame"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
         android:layout_weight="1">
 
         <com.dsviewer.app.DocumentView
@@ -150,6 +160,14 @@
                     android:paddingBottom="2dp" />
             </HorizontalScrollView>
         </LinearLayout>
+
+        <!-- 툴바가 위에 있을 때 도형 줄·옵션 줄은 여기로 옮겨 온다 (툴바 가까이 뜨게) -->
+        <LinearLayout
+            android:id="@+id/topOverlay"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top"
+            android:orientation="vertical" />
 
         <!-- 올가미로 고른 부분 위에 뜨는 막대 (위치는 ViewerActivity에서) -->
         <com.google.android.material.card.MaterialCardView
@@ -291,21 +309,41 @@
             </FrameLayout>
         </LinearLayout>
     </FrameLayout>
+    </LinearLayout>
 
-
-
-    <HorizontalScrollView
+    <!-- 툴바: 펜·색·굵기. 맨 앞 손잡이를 끌어 위·아래·왼쪽·오른쪽에 붙일 수 있다.
+         세로로 세우면 가로 스크롤 대신 세로 스크롤(코드에서 만듦)에 toolContent를 옮겨 담는다 -->
+    <LinearLayout
+        android:id="@+id/toolbar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:background="?attr/colorSurfaceContainer"
+        android:orientation="horizontal">
+
+        <ImageView
+            android:id="@+id/toolbarHandle"
+            android:layout_width="28dp"
+            android:layout_height="56dp"
+            android:contentDescription="툴바 옮기기 (끌어서 위·아래·왼쪽·오른쪽에 붙이기)"
+            android:scaleType="center"
+            android:src="@drawable/ic_drag_handle"
+            android:tooltipText="끌어서 툴바 옮기기" />
+
+    <HorizontalScrollView
+        android:id="@+id/toolScrollH"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
         android:scrollbars="none">
 
         <LinearLayout
+            android:id="@+id/toolContent"
             android:layout_width="wrap_content"
             android:layout_height="56dp"
             android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:paddingHorizontal="8dp">
+            android:paddingStart="0dp"
+            android:paddingEnd="8dp">
 
             <ImageButton
                 android:id="@+id/toolPen"
@@ -408,4 +446,5 @@
                 android:orientation="horizontal" />
         </LinearLayout>
     </HorizontalScrollView>
+    </LinearLayout>
 </LinearLayout>

@@ -9,7 +9,7 @@
             <item android:id="@+id/action_insert_lined" android:title="줄" />
         </menu>
     </item>
-    <item android:id="@+id/action_delete_page" android:title="이 쪽 지우기" />
+    <item android:id="@+id/action_delete_page" android:title="쪽 지우기" />
     <item android:id="@+id/action_finger" android:title="손가락으로 쓰기"
         android:checkable="true" />
 </menu>

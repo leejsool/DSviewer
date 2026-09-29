@@ -69,11 +69,11 @@ object PdfPages {
     /** [file]의 쪽 수 (암호가 걸려 열 수 없으면 예외) */
     fun pageCount(file: File): Int = PDDocument.load(file).use { it.numberOfPages }
 
-    /** [src]에서 [index]번째 쪽을 빼고 [out]에 저장 */
-    fun remove(src: File, out: File, index: Int) {
+    /** [src]에서 [from]~[to]번째 쪽(0부터, 끝 포함)을 빼고 [out]에 저장 */
+    fun remove(src: File, out: File, from: Int, to: Int = from) {
         PDDocument.load(src).use { doc ->
             if (doc.isEncrypted) doc.isAllSecurityToBeRemoved = true
-            doc.removePage(index)
+            for (i in to downTo from) doc.removePage(i)
             doc.save(out)
         }
     }

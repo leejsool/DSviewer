@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 툴바를 세로로 세울 때 이미 가로·세로를 바꾼 뷰인지 (ViewerActivity.orient) -->
+    <item name="tag_vertical" type="id" />
+</resources>

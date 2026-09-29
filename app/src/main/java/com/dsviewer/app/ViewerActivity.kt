@@ -26,6 +26,7 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.PopupMenu
 import android.view.View
+import android.view.ViewGroup
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -40,6 +41,7 @@ import androidx.core.content.IntentCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
+import com.google.android.material.button.MaterialButton
 import com.google.android.material.chip.Chip
 import com.google.android.material.chip.ChipGroup
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -68,6 +70,9 @@ class ViewerActivity : AppCompatActivity() {
     private lateinit var pasteButton: View
     private lateinit var selectionBar: View
     private lateinit var toolButtons: Map<Tool, ImageButton>
+    private lateinit var dock: ToolbarDock
+    private lateinit var topOverlay: LinearLayout
+    private lateinit var bottomOverlay: LinearLayout
 
     private lateinit var docTabs: ChromeTabBar
     private lateinit var undoButton: View
@@ -92,6 +97,9 @@ class ViewerActivity : AppCompatActivity() {
         /** 다른 탭에 가 있는 동안 기억해 둔 스크롤·확대 위치 */
         var viewState: DocumentView.ViewState? = null
     }
+
+    /** 쪽을 넣고 빼기 전·후의 PDF 파일과 그때 보던 쪽 (실행 취소하면 이 상태로 돌아간다) */
+    private class PageFiles(val source: File, val render: File, var page: Int)
 
     private val docs = ArrayList<DocTab>()
     private var current: DocTab? = null
@@ -155,6 +163,7 @@ class ViewerActivity : AppCompatActivity() {
         selectionBar = findViewById(R.id.selectionBar)
         setupSelectionTools()
         setupEraserTools()
+        setupToolbarDock()
 
         docView.listener = object : DocumentView.Listener {
             override fun onPageChanged(page: Int, count: Int) {
@@ -173,10 +182,7 @@ class ViewerActivity : AppCompatActivity() {
 
         setupTools()
         // 문서 위에 겹쳐 뜬 줄들의 높이만큼 문서를 더 스크롤할 수 있게 한다
-        findViewById<View>(R.id.bottomOverlay).addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-            docView.bottomInset = listOf(shapeBar, optionBar)
-                .sumOf { if (it.visibility == View.VISIBLE) it.height else 0 }.toFloat()
-        }
+        for (o in listOf(topOverlay, bottomOverlay)) o.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateOverlayInsets() }
         setupTabs()
         setupActions()
         onBackPressedDispatcher.addCallback(this, backCallback)
@@ -429,6 +435,7 @@ class ViewerActivity : AppCompatActivity() {
             }
             updateTabTitle(t)
         }
+        inkDoc.swapPages = { files, apply -> restorePageFiles(t, files as PageFiles, apply) }
         t.pdf = d
         t.ink = inkDoc
         if (current === t) {
@@ -452,8 +459,9 @@ class ViewerActivity : AppCompatActivity() {
     // 탭 줄 오른쪽의 실행 취소 · 다시 실행 · 저장 · ⋮ 버튼
 
     private fun setupActions() {
-        undoButton.setOnClickListener { docView.clearSelection(); ink?.undo() }
-        redoButton.setOnClickListener { docView.clearSelection(); ink?.redo() }
+        // 쪽을 넣고 빼는 중에는 기다린다 (PDF를 다 만든 뒤에야 기록이 생기므로)
+        undoButton.setOnClickListener { if (current?.pagesBusy == false) { docView.clearSelection(); ink?.undo() } }
+        redoButton.setOnClickListener { if (current?.pagesBusy == false) { docView.clearSelection(); ink?.redo() } }
         saveButton.setOnClickListener { showSaveMenu(it) }
         overview = PageOverview(findViewById(R.id.overviewPanel), lifecycleScope) { page -> docView.scrollToPage(page) }
         overviewButton.setOnClickListener { toggleOverview() }
@@ -490,7 +498,7 @@ class ViewerActivity : AppCompatActivity() {
                 R.id.action_insert_plain -> insertBlankPage(Paper.PLAIN)
                 R.id.action_insert_grid -> insertBlankPage(Paper.GRID)
                 R.id.action_insert_lined -> insertBlankPage(Paper.LINED)
-                R.id.action_delete_page -> confirmDeletePage()
+                R.id.action_delete_page -> askDeletePages()
                 R.id.action_finger -> {
                     docView.fingerDrawing = !docView.fingerDrawing
                     prefs.edit().putBoolean("finger", docView.fingerDrawing).apply()
@@ -577,8 +585,8 @@ class ViewerActivity : AppCompatActivity() {
             val done = {
                 Toast.makeText(this@ViewerActivity, "${strokes.size}쪽을 ${index + 1}쪽부터 넣었습니다.", Toast.LENGTH_SHORT).show()
             }
-            editPages(t, { src, out -> PdfPages.insertPdf(src, out, index, file) }, done) { inkDoc ->
-                inkDoc.insertPages(index, strokes)
+            editPages(t, { src, out -> PdfPages.insertPdf(src, out, index, file) }, done) { pages ->
+                pages.addAll(index, strokes.map { it.toMutableList() })
                 index
             }
         }
@@ -695,40 +703,52 @@ class ViewerActivity : AppCompatActivity() {
         val page = docView.currentPage().coerceIn(0, d.pageCount - 1)
         val size = d.sizes[page]
         val at = page + 1
-        editPages(t, { src, out -> PdfPages.insert(src, out, at, paper, size.width, size.height) }) { inkDoc ->
-            inkDoc.insertPage(at)
+        editPages(t, { src, out -> PdfPages.insert(src, out, at, paper, size.width, size.height) }) { pages ->
+            pages.add(at, mutableListOf())
             at
         }
     }
 
-    private fun confirmDeletePage() {
+    /** 쪽 지우기: 지금 쪽만 / n쪽부터 m쪽까지 (실행 취소로 되돌릴 수 있다) */
+    private fun askDeletePages() {
         val t = current ?: return
         val d = t.pdf ?: return
         if (d.pageCount <= 1) return
         val page = docView.currentPage().coerceIn(0, d.pageCount - 1)
-        val hasInk = t.ink?.pages?.getOrNull(page)?.isNotEmpty() == true
+        val choices = arrayOf("지금 보는 ${page + 1}쪽만", "쪽 범위 지정 (n쪽부터 m쪽까지)")
         MaterialAlertDialogBuilder(this)
-            .setTitle("${page + 1}쪽을 지울까요?")
-            .setMessage(
-                (if (hasInk) "이 쪽의 필기도 함께 지워집니다. " else "") +
-                    "쪽 지우기는 실행 취소할 수 없습니다.\n(저장하기 전까지 원본 파일은 그대로입니다)"
-            )
-            .setPositiveButton("지우기") { _, _ ->
-                editPages(t, { src, out -> PdfPages.remove(src, out, page) }) { inkDoc ->
-                    inkDoc.removePage(page)
-                    page.coerceAtMost(inkDoc.pages.size - 1)
-                }
+            .setTitle("쪽 지우기")
+            .setItems(choices) { _, which ->
+                if (which == 0) deletePages(t, page, page)
+                else askPageRange(
+                    t, page, page, "지울 쪽", "지우기",
+                    check = { n, m -> if (m - n + 1 >= d.pageCount) "모든 쪽을 지울 수는 없습니다" else null },
+                ) { n, m -> deletePages(t, n - 1, m - 1) }
             }
             .setNegativeButton("취소", null)
             .show()
     }
 
+    /** [from]~[to]번째 쪽(0부터)을 필기와 함께 지운다 */
+    private fun deletePages(t: DocTab, from: Int, to: Int) {
+        val done = {
+            val what = if (from == to) "${from + 1}쪽을" else "${from + 1}~${to + 1}쪽을"
+            Toast.makeText(this, "$what 지웠습니다. 실행 취소로 되돌릴 수 있습니다.", Toast.LENGTH_SHORT).show()
+        }
+        editPages(t, { src, out -> PdfPages.remove(src, out, from, to) }, done) { pages ->
+            repeat(to - from + 1) { pages.removeAt(from) }
+            from.coerceAtMost(pages.size - 1)
+        }
+    }
+
     /**
      * 탭의 PDF 쪽 구성을 바꾼다. [pdfOp]로 원본·화면용 PDF를 새로 만들고,
      * 다 되면 [applyInk]로 필기 쪽 목록을 같이 맞춘 뒤 돌려준 쪽으로 옮긴다.
+     * 바꾸기 전 파일은 지우지 않고 실행 취소 기록에 남겨 둔다.
      */
     private fun editPages(
-        t: DocTab, pdfOp: (File, File) -> Unit, onDone: (() -> Unit)? = null, applyInk: (InkDocument) -> Int,
+        t: DocTab, pdfOp: (File, File) -> Unit, onDone: (() -> Unit)? = null,
+        applyInk: (MutableList<MutableList<Stroke>>) -> Int,
     ) {
         val src = t.sourcePdf ?: return
         val render = t.renderPdf ?: return
@@ -737,6 +757,7 @@ class ViewerActivity : AppCompatActivity() {
         t.pagesBusy = true
         overview.hide()
         docView.clearSelection()
+        val before = PageFiles(src, render, docView.currentPage().coerceAtLeast(0))
         lifecycleScope.launch {
             progress.visibility = View.VISIBLE
             try {
@@ -756,7 +777,9 @@ class ViewerActivity : AppCompatActivity() {
                 t.pdf = nd
                 t.sourcePdf = newSrc
                 t.renderPdf = newRender
-                val target = applyInk(inkDoc)
+                val after = PageFiles(newSrc, newRender, 0)
+                inkDoc.changePages(before, after) { pages -> after.page = applyInk(pages) }
+                val target = after.page
                 if (current === t) {
                     docView.setDocument(nd, inkDoc, docView.viewState())
                     docView.post { docView.scrollToPage(target) }
@@ -767,6 +790,43 @@ class ViewerActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 MaterialAlertDialogBuilder(this@ViewerActivity)
                     .setMessage("쪽을 바꾸지 못했습니다.\n${e.message ?: e.javaClass.simpleName}")
+                    .setPositiveButton("확인", null)
+                    .show()
+            } finally {
+                t.pagesBusy = false
+                if (current === t) progress.visibility = View.GONE
+            }
+        }
+    }
+
+    /** 쪽 넣기·지우기를 실행 취소·다시 실행하면, 그때의 PDF를 연 뒤 [apply]로 필기 쪽 목록도 맞춘다 */
+    private fun restorePageFiles(t: DocTab, f: PageFiles, apply: () -> Boolean) {
+        val inkDoc = t.ink ?: return
+        if (t.pagesBusy) return
+        t.pagesBusy = true
+        overview.hide()
+        lifecycleScope.launch {
+            progress.visibility = View.VISIBLE
+            try {
+                val nd = PdfDoc.open(f.render)
+                // 탭이 닫혔거나, 여는 사이 새 필기로 기록이 바뀌었으면 그만둔다
+                if (t !in docs || !apply()) {
+                    nd.close()
+                    return@launch
+                }
+                val old = t.pdf
+                t.pdf = nd
+                t.sourcePdf = f.source
+                t.renderPdf = f.render
+                if (current === t) {
+                    docView.setDocument(nd, inkDoc, docView.viewState())
+                    docView.post { docView.scrollToPage(f.page.coerceIn(0, nd.pageCount - 1)) }
+                } else t.viewState = null
+                old?.close()
+                updateTabTitle(t)
+            } catch (e: Exception) {
+                MaterialAlertDialogBuilder(this@ViewerActivity)
+                    .setMessage("쪽을 되돌리지 못했습니다.\n${e.message ?: e.javaClass.simpleName}")
                     .setPositiveButton("확인", null)
                     .show()
             } finally {
@@ -809,15 +869,23 @@ class ViewerActivity : AppCompatActivity() {
                 when (which) {
                     0 -> exportImages(t, listOf(page))
                     1 -> exportImages(t, (0 until d.pageCount).toList())
-                    else -> askExportRange(t, page)
+                    else -> askPageRange(t, page, d.pageCount - 1, "이미지로 저장할 쪽", "저장") { n, m ->
+                        exportImages(t, (n - 1 until m).toList())
+                    }
                 }
             }
             .setNegativeButton("취소", null)
             .show()
     }
 
-    /** 이미지로 저장할 쪽 범위 입력: [ n ] 쪽부터 [ m ] 쪽까지 (처음 값은 지금 쪽 ~ 마지막 쪽) */
-    private fun askExportRange(t: DocTab, page: Int) {
+    /**
+     * 쪽 범위 입력: [ n ] 쪽부터 [ m ] 쪽까지 (처음 값은 [first]~[last], 0부터 센 쪽).
+     * [check]가 문구를 돌려주면 그 문구를 띄우고 창을 닫지 않는다. [onOk]는 1부터 센 n, m을 받는다
+     */
+    private fun askPageRange(
+        t: DocTab, first: Int, last: Int, title: String, okLabel: String,
+        check: ((Int, Int) -> String?)? = null, onOk: (Int, Int) -> Unit,
+    ) {
         val count = t.pdf?.pageCount ?: return
         val d = resources.displayMetrics.density
         fun numberField(value: Int, action: Int) = EditText(this).apply {
@@ -833,8 +901,8 @@ class ViewerActivity : AppCompatActivity() {
             this.text = text
             setPadding((6 * d).toInt(), 0, (14 * d).toInt(), 0)
         }
-        val from = numberField(page + 1, EditorInfo.IME_ACTION_NEXT)
-        val to = numberField(count, EditorInfo.IME_ACTION_DONE)
+        val from = numberField(first + 1, EditorInfo.IME_ACTION_NEXT)
+        val to = numberField(last + 1, EditorInfo.IME_ACTION_DONE)
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = android.view.Gravity.CENTER_VERTICAL
@@ -845,10 +913,10 @@ class ViewerActivity : AppCompatActivity() {
             addView(label("쪽까지"))
         }
         val dialog = MaterialAlertDialogBuilder(this)
-            .setTitle("이미지로 저장할 쪽")
+            .setTitle(title)
             .setMessage("전체 ${count}쪽")
             .setView(row)
-            .setPositiveButton("저장", null)
+            .setPositiveButton(okLabel, null)
             .setNegativeButton("취소", null)
             .create()
         fun go() {
@@ -859,12 +927,17 @@ class ViewerActivity : AppCompatActivity() {
                 m == null || m !in 1..count -> to.error = "1부터 ${count} 사이로 입력해 주세요"
                 n > m -> to.error = "시작 쪽(${n}쪽)보다 작을 수 없습니다"
                 else -> {
+                    val problem = check?.invoke(n, m)
+                    if (problem != null) {
+                        to.error = problem
+                        return
+                    }
                     dialog.dismiss()
-                    exportImages(t, (n - 1 until m).toList())
+                    onOk(n, m)
                 }
             }
         }
-        // 실물 키보드 Enter나 화면 키보드 '완료'로 바로 저장
+        // 실물 키보드 Enter나 화면 키보드 '완료'로 바로 실행
         to.setOnEditorActionListener { _, id, ev ->
             val enter = ev?.keyCode == KeyEvent.KEYCODE_ENTER && ev.action == KeyEvent.ACTION_DOWN
             if (id == EditorInfo.IME_ACTION_DONE || enter) { go(); true } else false
@@ -1060,6 +1133,63 @@ class ViewerActivity : AppCompatActivity() {
         docView.lassoRect = prefs.getBoolean("lassoRect", false)
     }
 
+    // ================= 툴바 자리 =================
+    // 툴바 맨 앞 손잡이를 끌어 위·아래·왼쪽·오른쪽에 붙인다 (ToolbarDock). 자리는 기억해 둔다.
+
+    private fun setupToolbarDock() {
+        topOverlay = findViewById(R.id.topOverlay)
+        bottomOverlay = findViewById(R.id.bottomOverlay)
+        dock = ToolbarDock(
+            root = findViewById(R.id.root),
+            docRow = findViewById(R.id.docRow),
+            toolbar = findViewById(R.id.toolbar),
+            handle = findViewById(R.id.toolbarHandle),
+            scrollH = findViewById(R.id.toolScrollH),
+            content = findViewById(R.id.toolContent),
+        ) { side ->
+            placeOverlays(side)
+            prefs.edit().putString("toolbarSide", side.name).apply()
+        }
+        val saved = prefs.getString("toolbarSide", null)
+        dock.dock(ToolbarSide.entries.firstOrNull { it.name == saved } ?: ToolbarSide.BOTTOM)
+    }
+
+    /**
+     * 도형 줄·옵션 줄은 툴바가 위면 문서 위쪽에, 아니면 아래쪽에 겹쳐 띄운다 (옵션 줄이 툴바에 가깝게).
+     * 세로 툴바에서는 '붙여넣기'를 아이콘만 보인다
+     */
+    private fun placeOverlays(side: ToolbarSide) {
+        hideOptionBar()
+        val top = side == ToolbarSide.TOP
+        val target = if (top) topOverlay else bottomOverlay
+        for (v in if (top) listOf(optionBar, shapeBar) else listOf(shapeBar, optionBar)) {
+            (v.parent as? ViewGroup)?.removeView(v)
+            target.addView(v)
+        }
+        val d = resources.displayMetrics.density
+        // 툴바에서 먼 쪽에 여백을 둔다
+        findViewById<View>(R.id.shapeChips).let {
+            it.setPadding(it.paddingLeft, if (top) 0 else (6 * d).toInt(), it.paddingRight, if (top) (6 * d).toInt() else 0)
+        }
+        findViewById<View>(R.id.toolOptions).let {
+            it.setPadding(it.paddingLeft, ((if (top) 2 else 6) * d).toInt(), it.paddingRight, ((if (top) 6 else 2) * d).toInt())
+        }
+        (pasteButton as MaterialButton).apply {
+            text = if (side.vertical) "" else "붙여넣기"
+            iconPadding = if (side.vertical) 0 else (8 * d).toInt()
+            tooltipText = "붙여넣기"
+        }
+        updateOverlayInsets()
+    }
+
+    private fun updateOverlayInsets() {
+        fun barsHeight(o: ViewGroup) = (0 until o.childCount).map { o.getChildAt(it) }
+            .filter { it === shapeBar || it === optionBar }
+            .sumOf { if (it.visibility == View.VISIBLE) it.height else 0 }.toFloat()
+        docView.topInset = barsHeight(topOverlay)
+        docView.bottomInset = barsHeight(bottomOverlay)
+    }
+
     // ================= 지우개 · 선택 옵션 줄 =================
     // 지우개나 선택 도구를 누르면 도구막대 위로 옵션 줄이 올라오고, 하나 고르면 사라진다.
     // 도구 버튼 아이콘은 지금 고른 방식을 보여 준다.
@@ -1137,10 +1267,10 @@ class ViewerActivity : AppCompatActivity() {
         }
         optionTool = t
         optionBar.visibility = View.VISIBLE
-        // 도구막대 쪽에서 살짝 올라오며 나타난다
+        // 툴바 쪽에서 살짝 밀려 나오며 나타난다 (툴바가 위면 위에서 내려온다)
         optionBar.animate().cancel()
         optionBar.alpha = 0f
-        optionBar.translationY = 12 * resources.displayMetrics.density
+        optionBar.translationY = (if (dock.side == ToolbarSide.TOP) -12 else 12) * resources.displayMetrics.density
         optionBar.animate().alpha(1f).translationY(0f).setDuration(150).start()
     }
 
@@ -1253,6 +1383,9 @@ class ViewerActivity : AppCompatActivity() {
             return
         }
         selectionBar.findViewById<TextView>(R.id.selectionCount).text = "${count}개 선택"
+        // 그림만 골랐으면 색 버튼을 뺀다 (그림에는 색을 입힐 수 없음)
+        selectionBar.findViewById<View>(R.id.selectionColor).visibility =
+            if (docView.selectionColor != null) View.VISIBLE else View.GONE
         selectionBar.visibility = View.VISIBLE
         selectionBar.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
         val w = selectionBar.measuredWidth
@@ -1342,7 +1475,7 @@ class ViewerActivity : AppCompatActivity() {
                 saveSlots(s)
                 addRecent(t, c)
             }
-        }.show(anchor)
+        }.show(anchor, dock.side)
     }
 
     private fun setupTools() {
@@ -1572,9 +1705,10 @@ class ViewerActivity : AppCompatActivity() {
         if (s == null) return
         val d = resources.displayMetrics.density
         s.slots.forEachIndexed { i, w ->
+            // 툴바 방향으로 좁은 칸 (가로 툴바 기준 너비 28dp × 높이 40dp, 세로 툴바면 dock.fit이 맞바꾼다)
             val v = WidthSwatchView(this).apply {
-                layoutParams = LinearLayout.LayoutParams((44 * d).toInt(), (44 * d).toInt()).apply {
-                    marginStart = (if (i == 0) 0 else 4 * d).toInt()
+                layoutParams = LinearLayout.LayoutParams((28 * d).toInt(), (40 * d).toInt()).apply {
+                    marginStart = (if (i == 0) 0 else 2 * d).toInt()
                 }
                 setBackgroundResource(R.drawable.bg_tool)
                 kind = s.kind
@@ -1602,6 +1736,7 @@ class ViewerActivity : AppCompatActivity() {
             }
             widthRow.addView(v)
         }
+        dock.fit(widthRow)
     }
 
     private fun openWidthPopup(t: Tool, anchor: View) {
@@ -1611,7 +1746,7 @@ class ViewerActivity : AppCompatActivity() {
             applyToolWidth(t)
             (widthRow.getChildAt(s.active) as? WidthSwatchView)?.value = w
             if (done) saveWidths(s)
-        }.show(anchor)
+        }.show(anchor, dock.side)
     }
 
     /** 펜 아래 S자 곡선과 형광펜 아래 줄을 지금 고른 색으로 칠한다 */
@@ -1641,17 +1776,18 @@ class ViewerActivity : AppCompatActivity() {
         colorRow.visibility = View.VISIBLE
         val s = slotsOf(t)
         val d = resources.displayMetrics.density
-        val size = (30 * d).toInt()
         s.slots.forEachIndexed { i, c ->
+            // 모서리가 둥근 막대. 툴바 방향으로 좁게 (가로 툴바 기준 20dp × 36dp, 세로 툴바면 dock.fit이 맞바꾼다)
             val v = View(this)
-            val lp = LinearLayout.LayoutParams(size, size)
-            lp.marginStart = (5 * d).toInt()
-            lp.marginEnd = (5 * d).toInt()
+            val lp = LinearLayout.LayoutParams((20 * d).toInt(), (36 * d).toInt())
+            lp.marginStart = (3 * d).toInt()
+            lp.marginEnd = (3 * d).toInt()
             v.layoutParams = lp
             v.background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 6 * d
                 setColor(c)
-                if (i == s.active) setStroke((3 * d).toInt(), ColorStateList.valueOf(0xFF1E5AA8.toInt()))
+                if (i == s.active) setStroke((2.5f * d).toInt(), ColorStateList.valueOf(0xFF1E5AA8.toInt()))
                 else setStroke((1 * d).toInt(), ColorStateList.valueOf(Color.argb(60, 0, 0, 0)))
             }
             v.contentDescription = if (i == s.active) "색상 (선택됨, 다시 누르면 색 바꾸기)" else "색상"
@@ -1676,8 +1812,8 @@ class ViewerActivity : AppCompatActivity() {
             colorRow.addView(v)
         }
         val palette = ImageButton(this).apply {
-            layoutParams = LinearLayout.LayoutParams((40 * d).toInt(), (40 * d).toInt()).apply {
-                marginStart = (4 * d).toInt()
+            layoutParams = LinearLayout.LayoutParams((36 * d).toInt(), (36 * d).toInt()).apply {
+                marginStart = (3 * d).toInt()
             }
             setImageResource(R.drawable.ic_palette)
             val tv = android.util.TypedValue()
@@ -1687,6 +1823,7 @@ class ViewerActivity : AppCompatActivity() {
             setOnClickListener { openColorPicker(t, this) }
         }
         colorRow.addView(palette)
+        dock.fit(colorRow)
     }
 
     companion object {
