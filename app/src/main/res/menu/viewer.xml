@@ -10,7 +10,6 @@
         </menu>
     </item>
     <item android:id="@+id/action_delete_page" android:title="이 쪽 지우기" />
-    <item android:id="@+id/action_save_as" android:title="다른 이름으로 저장" />
     <item android:id="@+id/action_finger" android:title="손가락으로 쓰기"
         android:checkable="true" />
 </menu>

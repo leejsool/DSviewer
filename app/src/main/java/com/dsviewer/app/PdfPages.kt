@@ -1,5 +1,6 @@
 package com.dsviewer.app
 
+import com.tom_roush.pdfbox.multipdf.PDFMergerUtility
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.PDPage
 import com.tom_roush.pdfbox.pdmodel.PDPageContentStream
@@ -10,10 +11,10 @@ import java.io.File
 enum class Paper(val label: String) { PLAIN("흰 바탕"), GRID("모눈"), LINED("줄") }
 
 /**
- * 필기용 빈 쪽 만들기 · 문서에 끼워 넣기 · 쪽 지우기.
+ * 쪽 다루기: 필기용 빈 쪽 만들기 · 문서에 끼워 넣기 · 다른 PDF의 쪽 넣기 · 쪽 지우기.
  * 모눈·줄은 PDF 내용으로 그려 넣으므로 저장한 파일을 다른 앱에서 열어도 그대로 보인다.
  */
-object BlankPages {
+object PdfPages {
     /** A4 (포인트) */
     const val A4_SHORT = 595.28f
     const val A4_LONG = 841.89f
@@ -42,6 +43,31 @@ object BlankPages {
             doc.save(out)
         }
     }
+
+    /** [src]의 [index]번째 자리에 [add] PDF의 모든 쪽을 넣어 [out]에 저장 (index = 쪽 수면 맨 뒤) */
+    fun insertPdf(src: File, out: File, index: Int, add: File) {
+        PDDocument.load(src).use { doc ->
+            if (doc.isEncrypted) doc.isAllSecurityToBeRemoved = true
+            PDDocument.load(add).use { other ->
+                if (other.isEncrypted) other.isAllSecurityToBeRemoved = true
+                val before = doc.numberOfPages
+                // 맨 뒤에 붙인 다음, 넣을 자리 앞으로 차례대로 옮긴다
+                PDFMergerUtility().appendDocument(doc, other)
+                if (index < before) {
+                    val added = (before until doc.numberOfPages).map { doc.getPage(it) }
+                    val anchor = doc.getPage(index)
+                    for (p in added) {
+                        doc.pages.remove(p)
+                        doc.pages.insertBefore(p, anchor)
+                    }
+                }
+                doc.save(out)
+            }
+        }
+    }
+
+    /** [file]의 쪽 수 (암호가 걸려 열 수 없으면 예외) */
+    fun pageCount(file: File): Int = PDDocument.load(file).use { it.numberOfPages }
 
     /** [src]에서 [index]번째 쪽을 빼고 [out]에 저장 */
     fun remove(src: File, out: File, index: Int) {

@@ -1,10 +1,12 @@
 package com.dsviewer.app
 
+import android.content.ContentValues
 import android.content.Context
 import android.content.DialogInterface
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ImageDecoder
 import android.graphics.RectF
@@ -13,6 +15,8 @@ import android.graphics.drawable.LayerDrawable
 import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Bundle
+import android.os.Environment
+import android.provider.MediaStore
 import android.text.InputType
 import android.text.format.DateFormat
 import android.view.InputDevice
@@ -49,6 +53,7 @@ import java.io.File
 import java.util.Date
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.roundToInt
 
 class ViewerActivity : AppCompatActivity() {
 
@@ -105,6 +110,14 @@ class ViewerActivity : AppCompatActivity() {
         saveTarget = null
         if (uri != null && t != null && t in docs) saveTo(t, uri, overwrite = false)
         else closeAfterSave = null
+    }
+
+    /** PDF 넣기: 넣을 자리를 고른 뒤 파일 고르기 */
+    private var pdfInsertAt: PdfInsertAt? = null
+    private val pickPdf = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val at = pdfInsertAt
+        pdfInsertAt = null
+        if (uri != null && at != null) insertPdfFrom(uri, at)
     }
 
     /** 그림 넣기: 갤러리·파일에서 그림 고르기 */
@@ -441,7 +454,7 @@ class ViewerActivity : AppCompatActivity() {
     private fun setupActions() {
         undoButton.setOnClickListener { docView.clearSelection(); ink?.undo() }
         redoButton.setOnClickListener { docView.clearSelection(); ink?.redo() }
-        saveButton.setOnClickListener { current?.let { save(it, asNew = false) } }
+        saveButton.setOnClickListener { showSaveMenu(it) }
         overview = PageOverview(findViewById(R.id.overviewPanel), lifecycleScope) { page -> docView.scrollToPage(page) }
         overviewButton.setOnClickListener { toggleOverview() }
         insertButton.setOnClickListener { showInsertMenu(it) }
@@ -467,14 +480,12 @@ class ViewerActivity : AppCompatActivity() {
     private fun showMoreMenu(anchor: View) {
         val popup = PopupMenu(this, anchor)
         popup.menuInflater.inflate(R.menu.viewer, popup.menu)
-        popup.menu.findItem(R.id.action_save_as).isEnabled = ink != null
         popup.menu.findItem(R.id.action_insert_page).isEnabled = ink != null
         popup.menu.findItem(R.id.action_go_page).isEnabled = (current?.pdf?.pageCount ?: 0) > 1
         popup.menu.findItem(R.id.action_delete_page).isEnabled = (current?.pdf?.pageCount ?: 0) > 1
         popup.menu.findItem(R.id.action_finger).isChecked = docView.fingerDrawing
         popup.setOnMenuItemClickListener { item ->
             when (item.itemId) {
-                R.id.action_save_as -> current?.let { save(it, asNew = true) }
                 R.id.action_go_page -> showGoToPage()
                 R.id.action_insert_plain -> insertBlankPage(Paper.PLAIN)
                 R.id.action_insert_grid -> insertBlankPage(Paper.GRID)
@@ -501,16 +512,76 @@ class ViewerActivity : AppCompatActivity() {
     private fun showInsertMenu(anchor: View) {
         val popup = PopupMenu(this, anchor)
         popup.menu.add(0, 1, 0, "그림").setIcon(R.drawable.ic_image)
-        popup.menu.add(0, 2, 1, "PDF").setIcon(R.drawable.ic_pdf)
+        // PDF ▸ 넣을 자리
+        val page = docView.currentPage().coerceAtLeast(0) + 1
+        val pdf = popup.menu.addSubMenu(0, 2, 1, "PDF")
+        pdf.item.setIcon(R.drawable.ic_pdf)
+        pdf.add(0, 21, 0, "맨 앞에 넣기")
+        pdf.add(0, 22, 1, "지금 보는 ${page}쪽 다음에 넣기")
+        pdf.add(0, 23, 2, "맨 뒤에 넣기")
         popup.setForceShowIcon(true)
         popup.setOnMenuItemClickListener { item ->
-            when (item.itemId) {
-                1 -> pickImage.launch("image/*")
-                2 -> Toast.makeText(this, "PDF 넣기는 곧 추가됩니다.", Toast.LENGTH_SHORT).show()
+            val at = when (item.itemId) {
+                21 -> PdfInsertAt.FIRST
+                22 -> PdfInsertAt.AFTER_CURRENT
+                23 -> PdfInsertAt.LAST
+                else -> null
+            }
+            when {
+                item.itemId == 1 -> pickImage.launch("image/*")
+                at != null -> {
+                    pdfInsertAt = at
+                    pickPdf.launch(arrayOf("application/pdf"))
+                }
             }
             true
         }
         popup.show()
+    }
+
+    private enum class PdfInsertAt { FIRST, AFTER_CURRENT, LAST }
+
+    /** 다른 PDF의 쪽을 넣는다. 그 PDF에 이 앱으로 쓴 필기가 있으면 필기도 함께 (계속 고칠 수 있게) */
+    private fun insertPdfFrom(uri: Uri, at: PdfInsertAt) {
+        val t = current ?: return
+        val d = t.pdf ?: return
+        if (t.pagesBusy) return
+        val index = when (at) {
+            PdfInsertAt.FIRST -> 0
+            PdfInsertAt.AFTER_CURRENT -> docView.currentPage().coerceIn(0, d.pageCount - 1) + 1
+            PdfInsertAt.LAST -> d.pageCount
+        }
+        lifecycleScope.launch {
+            progress.visibility = View.VISIBLE
+            val (file, strokes) = try {
+                withContext(Dispatchers.IO) {
+                    val name = FileUtil.displayName(this@ViewerActivity, uri)
+                    val f = FileUtil.copyToCache(this@ViewerActivity, uri, name)
+                    if (FileUtil.detect(name, contentResolver.getType(uri), f) != DocType.PDF) error("PDF 파일이 아닙니다.")
+                    if (PdfInk.containsInk(f)) {
+                        val clean = FileUtil.tempFile(this@ViewerActivity, "ins_clean", "pdf")
+                        clean to PdfInk.extract(f, clean)
+                    } else f to List(PdfPages.pageCount(f)) { emptyList<Stroke>() }
+                }
+            } catch (e: Exception) {
+                progress.visibility = View.GONE
+                val msg = if (e is SecurityException || e.javaClass.simpleName.contains("Password")) "암호가 걸린 PDF는 넣을 수 없습니다."
+                else "PDF를 넣지 못했습니다.\n${e.message ?: e.javaClass.simpleName}"
+                MaterialAlertDialogBuilder(this@ViewerActivity).setMessage(msg).setPositiveButton("확인", null).show()
+                return@launch
+            }
+            if (current !== t) {
+                progress.visibility = View.GONE
+                return@launch
+            }
+            val done = {
+                Toast.makeText(this@ViewerActivity, "${strokes.size}쪽을 ${index + 1}쪽부터 넣었습니다.", Toast.LENGTH_SHORT).show()
+            }
+            editPages(t, { src, out -> PdfPages.insertPdf(src, out, index, file) }, done) { inkDoc ->
+                inkDoc.insertPages(index, strokes)
+                index
+            }
+        }
     }
 
     private fun insertImageFrom(uri: Uri) {
@@ -624,7 +695,7 @@ class ViewerActivity : AppCompatActivity() {
         val page = docView.currentPage().coerceIn(0, d.pageCount - 1)
         val size = d.sizes[page]
         val at = page + 1
-        editPages(t, { src, out -> BlankPages.insert(src, out, at, paper, size.width, size.height) }) { inkDoc ->
+        editPages(t, { src, out -> PdfPages.insert(src, out, at, paper, size.width, size.height) }) { inkDoc ->
             inkDoc.insertPage(at)
             at
         }
@@ -643,7 +714,7 @@ class ViewerActivity : AppCompatActivity() {
                     "쪽 지우기는 실행 취소할 수 없습니다.\n(저장하기 전까지 원본 파일은 그대로입니다)"
             )
             .setPositiveButton("지우기") { _, _ ->
-                editPages(t, { src, out -> BlankPages.remove(src, out, page) }) { inkDoc ->
+                editPages(t, { src, out -> PdfPages.remove(src, out, page) }) { inkDoc ->
                     inkDoc.removePage(page)
                     page.coerceAtMost(inkDoc.pages.size - 1)
                 }
@@ -656,7 +727,9 @@ class ViewerActivity : AppCompatActivity() {
      * 탭의 PDF 쪽 구성을 바꾼다. [pdfOp]로 원본·화면용 PDF를 새로 만들고,
      * 다 되면 [applyInk]로 필기 쪽 목록을 같이 맞춘 뒤 돌려준 쪽으로 옮긴다.
      */
-    private fun editPages(t: DocTab, pdfOp: (File, File) -> Unit, applyInk: (InkDocument) -> Int) {
+    private fun editPages(
+        t: DocTab, pdfOp: (File, File) -> Unit, onDone: (() -> Unit)? = null, applyInk: (InkDocument) -> Int,
+    ) {
         val src = t.sourcePdf ?: return
         val render = t.renderPdf ?: return
         val inkDoc = t.ink ?: return
@@ -690,6 +763,7 @@ class ViewerActivity : AppCompatActivity() {
                 } else t.viewState = null
                 old?.close()
                 updateTabTitle(t)
+                onDone?.invoke()
             } catch (e: Exception) {
                 MaterialAlertDialogBuilder(this@ViewerActivity)
                     .setMessage("쪽을 바꾸지 못했습니다.\n${e.message ?: e.javaClass.simpleName}")
@@ -703,6 +777,165 @@ class ViewerActivity : AppCompatActivity() {
     }
 
     // ================= 저장 =================
+
+    /** 저장 ▾: 저장 / 다른 이름으로 저장 / 이미지로 저장 */
+    private fun showSaveMenu(anchor: View) {
+        val t = current ?: return
+        if (t.ink == null) return
+        val popup = PopupMenu(this, anchor)
+        popup.menu.add(0, 1, 0, "저장").setIcon(R.drawable.ic_save)
+        popup.menu.add(0, 2, 1, "다른 이름으로 저장").setIcon(R.drawable.ic_save_as)
+        popup.menu.add(0, 3, 2, "이미지로 저장").setIcon(R.drawable.ic_image)
+        popup.setForceShowIcon(true)
+        popup.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                1 -> save(t, asNew = false)
+                2 -> save(t, asNew = true)
+                3 -> askExportImages(t)
+            }
+            true
+        }
+        popup.show()
+    }
+
+    /** 이미지로 저장할 쪽 고르기: 지금 쪽만 / 모든 쪽 / n쪽부터 m쪽까지 */
+    private fun askExportImages(t: DocTab) {
+        val d = t.pdf ?: return
+        val page = docView.currentPage().coerceIn(0, d.pageCount - 1)
+        val choices = arrayOf("지금 보는 ${page + 1}쪽만", "모든 쪽 (${d.pageCount}쪽)", "쪽 범위 지정 (n쪽부터 m쪽까지)")
+        MaterialAlertDialogBuilder(this)
+            .setTitle("이미지로 저장")
+            .setItems(choices) { _, which ->
+                when (which) {
+                    0 -> exportImages(t, listOf(page))
+                    1 -> exportImages(t, (0 until d.pageCount).toList())
+                    else -> askExportRange(t, page)
+                }
+            }
+            .setNegativeButton("취소", null)
+            .show()
+    }
+
+    /** 이미지로 저장할 쪽 범위 입력: [ n ] 쪽부터 [ m ] 쪽까지 (처음 값은 지금 쪽 ~ 마지막 쪽) */
+    private fun askExportRange(t: DocTab, page: Int) {
+        val count = t.pdf?.pageCount ?: return
+        val d = resources.displayMetrics.density
+        fun numberField(value: Int, action: Int) = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER
+            imeOptions = action
+            isSingleLine = true
+            gravity = android.view.Gravity.CENTER
+            minEms = 3
+            setText("$value")
+            setSelectAllOnFocus(true)
+        }
+        fun label(text: String) = TextView(this).apply {
+            this.text = text
+            setPadding((6 * d).toInt(), 0, (14 * d).toInt(), 0)
+        }
+        val from = numberField(page + 1, EditorInfo.IME_ACTION_NEXT)
+        val to = numberField(count, EditorInfo.IME_ACTION_DONE)
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding((24 * d).toInt(), (4 * d).toInt(), (24 * d).toInt(), 0)
+            addView(from)
+            addView(label("쪽부터"))
+            addView(to)
+            addView(label("쪽까지"))
+        }
+        val dialog = MaterialAlertDialogBuilder(this)
+            .setTitle("이미지로 저장할 쪽")
+            .setMessage("전체 ${count}쪽")
+            .setView(row)
+            .setPositiveButton("저장", null)
+            .setNegativeButton("취소", null)
+            .create()
+        fun go() {
+            val n = from.text.toString().toIntOrNull()
+            val m = to.text.toString().toIntOrNull()
+            when {
+                n == null || n !in 1..count -> from.error = "1부터 ${count} 사이로 입력해 주세요"
+                m == null || m !in 1..count -> to.error = "1부터 ${count} 사이로 입력해 주세요"
+                n > m -> to.error = "시작 쪽(${n}쪽)보다 작을 수 없습니다"
+                else -> {
+                    dialog.dismiss()
+                    exportImages(t, (n - 1 until m).toList())
+                }
+            }
+        }
+        // 실물 키보드 Enter나 화면 키보드 '완료'로 바로 저장
+        to.setOnEditorActionListener { _, id, ev ->
+            val enter = ev?.keyCode == KeyEvent.KEYCODE_ENTER && ev.action == KeyEvent.ACTION_DOWN
+            if (id == EditorInfo.IME_ACTION_DONE || enter) { go(); true } else false
+        }
+        dialog.setOnShowListener {
+            // 잘못된 번호면 창을 닫지 않는다
+            dialog.getButton(DialogInterface.BUTTON_POSITIVE).setOnClickListener { go() }
+            from.requestFocus()
+            dialog.window?.let { WindowCompat.getInsetsController(it, from).show(WindowInsetsCompat.Type.ime()) }
+        }
+        dialog.show()
+    }
+
+    /**
+     * 쪽을 필기·그림과 함께 PNG로 그려 사진첩(Pictures/DSnote)에 넣는다. 150dpi (A4 한 쪽 약 1240×1754)
+     */
+    private fun exportImages(t: DocTab, pages: List<Int>) {
+        val d = t.pdf ?: return
+        val inkDoc = t.ink ?: return
+        val base = FileUtil.baseName(t.name).replace(Regex("[\\\\/:*?\"<>|]"), "_")
+        lifecycleScope.launch {
+            progress.visibility = View.VISIBLE
+            try {
+                val paint = inkPaint()
+                val scale = EXPORT_DPI / 72f
+                for (p in pages) {
+                    val size = d.sizes[p]
+                    val w = (size.width * scale).roundToInt().coerceAtLeast(1)
+                    val h = (size.height * scale).roundToInt().coerceAtLeast(1)
+                    val bmp = withContext(d.dispatcher) { d.render(p, scale, 0f, 0f, w, h) }
+                    // 필기 얹기 (획의 경로 캐시를 문서 화면과 같이 쓰므로 메인 스레드에서). 그림을 먼저
+                    val c = Canvas(bmp)
+                    c.scale(scale, scale)
+                    inkDoc.pages.getOrNull(p)?.sortedBy { if (it.image != null) 0 else 1 }?.forEach { drawInkStroke(c, paint, it) }
+                    withContext(Dispatchers.IO) { saveToGallery(bmp, "${base}_${p + 1}쪽.png") }
+                    bmp.recycle()
+                }
+                Toast.makeText(
+                    this@ViewerActivity, "${pages.size}장을 사진첩(Pictures/DSnote)에 저장했습니다.", Toast.LENGTH_LONG
+                ).show()
+            } catch (e: Exception) {
+                MaterialAlertDialogBuilder(this@ViewerActivity)
+                    .setMessage("이미지로 저장하지 못했습니다.\n${e.message ?: e.javaClass.simpleName}")
+                    .setPositiveButton("확인", null)
+                    .show()
+            } finally {
+                progress.visibility = View.GONE
+            }
+        }
+    }
+
+    private fun saveToGallery(bmp: Bitmap, name: String) {
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+            put(MediaStore.MediaColumns.MIME_TYPE, "image/png")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/DSnote")
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
+        }
+        val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+            ?: error("사진첩에 저장할 곳을 만들지 못했습니다.")
+        try {
+            contentResolver.openOutputStream(uri)?.use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                ?: error("사진첩에 쓸 수 없습니다.")
+            values.clear()
+            values.put(MediaStore.MediaColumns.IS_PENDING, 0)
+            contentResolver.update(uri, values, null, null)
+        } catch (e: Exception) {
+            contentResolver.delete(uri, null, null)
+            throw e
+        }
+    }
 
     private fun suggestedName(t: DocTab): String {
         if (t.isNewNote) return "노트 ${DateFormat.format("yyyy-MM-dd", Date())}.pdf"
@@ -746,7 +979,7 @@ class ViewerActivity : AppCompatActivity() {
                 if (target.scheme == "file") target.path?.let {
                     MediaScannerConnection.scanFile(this@ViewerActivity, arrayOf(it), null, null)
                 }
-                if (t.isNewNote && !overwrite) adoptSavedNote(t, target)
+                if (!overwrite) adoptSavedFile(t, target)
                 inkDoc.markSaved()
                 Toast.makeText(this@ViewerActivity, "'${t.name}' 저장했습니다.", Toast.LENGTH_SHORT).show()
                 if (closeAfterSave === t) {
@@ -771,8 +1004,11 @@ class ViewerActivity : AppCompatActivity() {
         }
     }
 
-    /** 새 노트를 처음 저장하면 그 파일을 이 탭의 문서로 삼는다 (다음부터는 저장 버튼이 그 파일에 덮어쓴다) */
-    private fun adoptSavedNote(t: DocTab, target: Uri) {
+    /**
+     * 다른 이름으로 저장(새 노트·한글 문서의 첫 저장 포함)하면 그 파일을 이 탭의 문서로 삼는다
+     * (다음부터는 '저장'이 그 파일에 덮어쓴다)
+     */
+    private fun adoptSavedFile(t: DocTab, target: Uri) {
         runCatching {
             contentResolver.takePersistableUriPermission(
                 target, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
@@ -781,6 +1017,7 @@ class ViewerActivity : AppCompatActivity() {
         t.uri = target
         t.isNewNote = false
         t.canOverwrite = true
+        t.type = DocType.PDF  // 한글 문서도 PDF로 저장되므로
         t.name = FileUtil.displayName(this, target)
         Recents.add(this, target.toString(), t.name)
         updateTabTitle(t)
@@ -1459,6 +1696,8 @@ class ViewerActivity : AppCompatActivity() {
         /** 탐색기의 '새 노트'로 만든 빈 문서 (처음 저장할 때 저장 위치를 고른다) */
         const val EXTRA_NEW_NOTE = "newNote"
         private const val MAX_TABS = 6
+        /** 이미지로 저장할 때 해상도 */
+        private const val EXPORT_DPI = 150f
         /** 넣는 그림의 긴 변 최대 픽셀 */
         private const val MAX_IMAGE_PX = 2048
         /** 보조선(점근선·축)을 고를 수 있는 보정 펜 도형 */

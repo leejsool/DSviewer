@@ -399,6 +399,12 @@ class InkDocument(pageCount: Int) {
         changed()
     }
 
+    /** [index] 자리에 쪽들을 넣는다 (다른 PDF를 넣을 때, 그 PDF에 있던 필기와 함께) */
+    fun insertPages(index: Int, strokes: List<List<Stroke>>) {
+        pages.addAll(index, strokes.map { it.toMutableList() })
+        changed()
+    }
+
     /** [index]번째 쪽을 지운다. 그 쪽의 필기에 대한 실행 취소 기록도 함께 버린다 */
     fun removePage(index: Int) {
         val gone = pages.removeAt(index)

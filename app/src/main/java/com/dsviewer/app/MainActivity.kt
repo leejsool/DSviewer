@@ -414,9 +414,9 @@ class MainActivity : AppCompatActivity() {
                     notes.listFiles()?.forEach { if (it.lastModified() < limit) it.deleteRecursively() }
                     val dir = File(notes, "${System.currentTimeMillis()}").apply { mkdirs() }
                     val f = File(dir, "새 노트.pdf")
-                    val (w, h) = if (portrait) BlankPages.A4_SHORT to BlankPages.A4_LONG
-                    else BlankPages.A4_LONG to BlankPages.A4_SHORT
-                    BlankPages.create(f, paper, w, h)
+                    val (w, h) = if (portrait) PdfPages.A4_SHORT to PdfPages.A4_LONG
+                    else PdfPages.A4_LONG to PdfPages.A4_SHORT
+                    PdfPages.create(f, paper, w, h)
                     f
                 }
             } catch (e: Exception) {
