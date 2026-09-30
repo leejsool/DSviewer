@@ -44,9 +44,7 @@ import androidx.lifecycle.lifecycleScope
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.color.MaterialColors
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
-import com.dsviewer.app.hwp.HRenderer
-import com.dsviewer.app.hwp.HwpReader
-import com.dsviewer.app.hwp.HwpxReader
+import com.dsviewer.app.conv.DocConvert
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -291,11 +289,7 @@ class ViewerActivity : AppCompatActivity() {
         if (i < 0) return
         // 저장하지 않은 필기가 있으면 앞에 점
         docTabs.setTitle(i, if (t.ink?.dirty == true) "● ${t.name}" else t.name)
-        val color = when (t.type) {
-            DocType.PDF -> TAB_ICON_PDF
-            DocType.HWP, DocType.HWPX -> TAB_ICON_HWP
-            DocType.UNKNOWN -> TAB_ICON_GRAY
-        }
+        val color = if (t.type == DocType.UNKNOWN) TAB_ICON_GRAY else DocColors.of(t.type)
         docTabs.setIcon(i, R.drawable.ic_doc, color)
     }
 
@@ -412,11 +406,11 @@ class ViewerActivity : AppCompatActivity() {
                     FileUtil.copyToCache(this@ViewerActivity, uri, name)
                 }
                 t.type = withContext(Dispatchers.IO) { FileUtil.detect(name, contentResolver.getType(uri), file) }
-                updateTabTitle(t)  // 탭 아이콘 색 (PDF 빨강, 한글 파랑)
+                updateTabTitle(t)  // 탭 아이콘 색 (PDF 빨강, 한글 파랑 …)
                 when (t.type) {
                     DocType.PDF -> openPdf(t, file)
-                    DocType.HWPX, DocType.HWP -> openPdf(t, convertHwp(file, t.type))
-                    DocType.UNKNOWN -> fail(t, "지원하지 않는 파일 형식입니다.\n(PDF, HWP, HWPX 파일만 열 수 있습니다)")
+                    DocType.UNKNOWN -> fail(t, "지원하지 않는 파일 형식입니다.\n(PDF, 한글, 워드, 파워포인트, 글(txt), 그림 파일을 열 수 있습니다)")
+                    else -> openPdf(t, convert(file, t.type, name))
                 }
             } catch (e: SecurityException) {
                 fail(t, "파일을 열 권한이 없거나, 암호가 걸린 PDF입니다.")
@@ -426,16 +420,9 @@ class ViewerActivity : AppCompatActivity() {
         }
     }
 
-    /** HWP/HWPX → PDF (기기 안에서 변환) */
-    private suspend fun convertHwp(file: File, type: DocType): File = withContext(Dispatchers.Default) {
-        val doc = when (type) {
-            DocType.HWPX -> HwpxReader.read(file)
-            DocType.HWP -> HwpReader.read(file)
-            else -> error("지원하지 않는 형식")
-        }
-        val out = FileUtil.tempFile(this@ViewerActivity, "conv", "pdf")
-        HRenderer(doc).render(out)
-        out
+    /** 한글·워드·파워포인트·글·그림 → PDF (기기 안에서 변환) */
+    private suspend fun convert(file: File, type: DocType, name: String): File = withContext(Dispatchers.Default) {
+        DocConvert.toPdf(this@ViewerActivity, file, type, name)
     }
 
     private suspend fun openPdf(t: DocTab, file: File) {
@@ -2543,8 +2530,6 @@ class ViewerActivity : AppCompatActivity() {
         private const val MAX_IMAGE_PX = 2048
         /** 보조선(점근선·축)을 고를 수 있는 보정 펜 도형 */
         private val GUIDE_KINDS = setOf(ShapeKind.HYPERBOLA, ShapeKind.EXP_LOG, ShapeKind.TANGENT, ShapeKind.SINE)
-        private val TAB_ICON_PDF = Color.parseColor("#D93025")
-        private val TAB_ICON_HWP = Color.parseColor("#2F6FC4")
         private val TAB_ICON_GRAY = Color.parseColor("#9E9E9E")
         /** 열려 있는 탭 수 (탐색기의 '열린 문서' 버튼용) */
         var openTabs = 0

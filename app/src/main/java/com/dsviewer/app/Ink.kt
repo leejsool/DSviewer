@@ -82,13 +82,7 @@ class InkText(val rich: RichDoc, val size: Float, val wrap: Float = NO_WRAP) {
         boxH = ceil(l.height / Q + PAD * 2f).toInt().coerceAtLeast(1)
     }
 
-    private fun build(width: Int): StaticLayout =
-        StaticLayout.Builder.obtain(content, 0, content.length, paint, width)
-            .setIncludePad(false)
-            .setUseLineSpacingFromFallbacks(true)
-            .setBreakStrategy(android.text.Layout.BREAK_STRATEGY_SIMPLE)
-            .setHyphenationFrequency(android.text.Layout.HYPHENATION_FREQUENCY_NONE)
-            .build()
+    private fun build(width: Int): StaticLayout = layoutOf(content, paint, width)
 
     /** (0, 0) ~ (boxW, boxH) 상자에 글을 그린다. 쪽 미리보기가 다른 스레드에서 같이 그릴 수 있어 잠근다 */
     fun draw(c: Canvas, color: Int) = synchronized(this) {
@@ -107,6 +101,38 @@ class InkText(val rich: RichDoc, val size: Float, val wrap: Float = NO_WRAP) {
         const val PAD = 2f
         /** 배치 배율 */
         private const val Q = 8f
+
+        private fun layoutOf(content: CharSequence, paint: TextPaint, width: Int): StaticLayout =
+            StaticLayout.Builder.obtain(content, 0, content.length, paint, width)
+                .setIncludePad(false)
+                .setUseLineSpacingFromFallbacks(true)
+                .setBreakStrategy(android.text.Layout.BREAK_STRATEGY_SIMPLE)
+                .setHyphenationFrequency(android.text.Layout.HYPHENATION_FREQUENCY_NONE)
+                .build()
+
+        /**
+         * 긴 글을 쪽마다 나눈다: 조각마다 [InkText]로 만들면 상자 높이가 [maxH](pt, 여백 포함)를 넘지 않는다.
+         * 줄이 바뀌는 자리에서 자르므로 문단이 두 쪽에 걸칠 수 있다. 반환값은 글 안의 자르는 자리들 (첫 조각은 0부터)
+         */
+        fun paginate(text: String, size: Float, wrap: Float, maxH: Float): List<IntRange> {
+            if (text.isEmpty()) return listOf(0 until 0)
+            val paint = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.LINEAR_TEXT_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
+                textSize = size * Q
+                typeface = Typeface.DEFAULT
+            }
+            val l = layoutOf(RichDoc.plain(text).toSpannable(size * Q), paint, ceil(min(wrap, NO_WRAP) * Q).toInt().coerceAtLeast(1))
+            val room = (maxH - PAD * 2f) * Q
+            val out = ArrayList<IntRange>()
+            var first = 0
+            for (line in 0 until l.lineCount) {
+                if (line > first && l.getLineBottom(line) - l.getLineTop(first) > room) {
+                    out.add(l.getLineStart(first) until l.getLineStart(line))
+                    first = line
+                }
+            }
+            out.add(l.getLineStart(first) until text.length)
+            return out
+        }
     }
 }
 

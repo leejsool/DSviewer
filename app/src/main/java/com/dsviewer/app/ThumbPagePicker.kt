@@ -17,18 +17,16 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.dsviewer.app.hwp.HRenderer
-import com.dsviewer.app.hwp.HwpReader
-import com.dsviewer.app.hwp.HwpxReader
+import com.dsviewer.app.conv.DocConvert
 import com.google.android.material.color.MaterialColors
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.progressindicator.CircularProgressIndicator
+import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 
 /** 썸네일로 쓸 쪽 고르기: 문서의 쪽들을 (필기와 함께) 작게 늘어놓고, 누른 쪽을 [onPick]으로 알린다 */
 class ThumbPagePicker(
@@ -106,13 +104,15 @@ class ThumbPagePicker(
                     val clean = FileUtil.tempFile(activity, "pick", "pdf").also { temps += it }
                     clean to PdfInk.extract(file, clean)
                 } else file to null
-                DocType.HWP, DocType.HWPX -> {
-                    val hdoc = if (type == DocType.HWP) HwpReader.read(file) else HwpxReader.read(file)
-                    val out = FileUtil.tempFile(activity, "pick", "pdf").also { temps += it }
-                    HRenderer(hdoc).render(out)
-                    out to null
-                }
                 DocType.UNKNOWN -> error("지원하지 않는 형식")
+                else -> {
+                    val out = DocConvert.toPdf(activity, file, type, name, prefix = "pick").also { temps += it }
+                    // 글 파일은 글 상자(이 앱의 필기)로 들어 있다
+                    if (type == DocType.TXT) {
+                        val clean = FileUtil.tempFile(activity, "pick", "pdf").also { temps += it }
+                        clean to PdfInk.extract(out, clean)
+                    } else out to null
+                }
             }
         }
         strokes = ink

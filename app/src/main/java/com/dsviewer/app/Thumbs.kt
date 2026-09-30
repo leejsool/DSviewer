@@ -22,9 +22,7 @@ import android.util.LruCache
 import android.view.View
 import androidx.core.graphics.ColorUtils
 import com.dsviewer.app.hwp.Cfb
-import com.dsviewer.app.hwp.HRenderer
-import com.dsviewer.app.hwp.HwpReader
-import com.dsviewer.app.hwp.HwpxReader
+import com.dsviewer.app.conv.DocConvert
 import com.google.android.material.color.MaterialColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -135,25 +133,36 @@ object Thumbs {
             val type = FileUtil.detect(name, null, file)
             return when (type) {
                 DocType.PDF -> renderPdf(file, page, withInk = true)
-                DocType.HWP, DocType.HWPX -> heavy.withLock { renderHwp(ctx, file, type, page) }
+                DocType.IMAGE -> renderImage(file)
                 DocType.UNKNOWN -> null
+                else -> heavy.withLock { renderConverted(ctx, file, type, name, page) }
             }
         } finally {
             if (!local) file.delete()
         }
     }
 
-    private fun renderHwp(ctx: Context, file: File, type: DocType, page: Int): Bitmap? {
-        val out = FileUtil.tempFile(ctx, "thumb", "pdf")
+    /** 한글·워드·파워포인트·글: 앞쪽만 PDF로 바꿔 그린다 */
+    private fun renderConverted(ctx: Context, file: File, type: DocType, name: String, page: Int): Bitmap? {
+        var out: File? = null
         try {
-            val doc = if (type == DocType.HWP) HwpReader.read(file) else HwpxReader.read(file)
-            HRenderer(doc).render(out, maxPages = page + 1)
-            return renderPdf(out, page, withInk = false)
+            out = DocConvert.toPdf(ctx, file, type, name, maxPages = page + 1, prefix = "thumb")
+            return renderPdf(out, page, withInk = type == DocType.TXT)
         } catch (e: Exception) {
             // 한글이 저장해 둔 미리보기 그림이라도
-            return runCatching { hwpPreview(file, type) }.getOrNull()
+            return if (type.isHangul) runCatching { hwpPreview(file, type) }.getOrNull() else null
         } finally {
-            out.delete()
+            out?.delete()
+        }
+    }
+
+    /** 그림: 긴 변을 썸네일 크기로 줄여 읽는다 */
+    private fun renderImage(file: File): Bitmap? {
+        val src = android.graphics.ImageDecoder.createSource(file)
+        return android.graphics.ImageDecoder.decodeBitmap(src) { d, info, _ ->
+            d.allocator = android.graphics.ImageDecoder.ALLOCATOR_SOFTWARE
+            val k = SIZE.toFloat() / maxOf(info.size.width, info.size.height)
+            if (k < 1f) d.setTargetSize((info.size.width * k).roundToInt().coerceAtLeast(1), (info.size.height * k).roundToInt().coerceAtLeast(1))
         }
     }
 

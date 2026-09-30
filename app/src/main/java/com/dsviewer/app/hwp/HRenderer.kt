@@ -53,6 +53,8 @@ class HRenderer(private val doc: HDoc) {
     private var lastVertSize = 0
     private var lastBottomVert = 0
     private var pageHasContent = false
+    /** 방금 그린 표가 여러 쪽에 나뉘었으면 마지막 쪽에서 표가 끝난 위치 (본문 위부터, HWPUNIT). 아니면 -1 */
+    private var splitTableBottom = -1
 
     // ---- 머리말/꼬리말/쪽 번호 ----
     private var headers = HashMap<String, HCtrl.Header>()
@@ -360,7 +362,9 @@ class HRenderer(private val doc: HDoc) {
         for ((i, seg) in segs.withIndex()) {
             var vp = seg.vertPos + shift
             if (fallback) {
-                if (pageHasContent && vp + seg.vertSize > bodyH) {
+                // 쪽을 넘는 긴 표는 이 쪽에서 시작해 행 단위로 나눈다 (남은 자리가 조금이라도 있으면)
+                val longTable = seg.vertSize > bodyH / 3 && bodyH - vp > bodyH / 6 && isTableLine(para, segs, i)
+                if (pageHasContent && vp + seg.vertSize > bodyH && !longTable) {
                     newPage()
                     shift = -seg.vertPos
                     vp = 0
@@ -376,12 +380,27 @@ class HRenderer(private val doc: HDoc) {
                 anchorTop = top
                 drawFloating(para, top, bodyLeft, bodyWidth, behind = true)
             }
+            splitTableBottom = -1
             drawSegment(para, ps, segs, i, bodyLeft, top, if (i == 0) prefix else null, allowSplit = true)
             pageHasContent = true
-            lastBottomVert = max(lastBottomVert, vp + seg.vertSize + seg.spacing)
+            if (fallback && splitTableBottom >= 0) {
+                // (직접 나눈 줄) 표가 여러 쪽에 나뉘었다: 다음 줄은 마지막 쪽의 표 아래에서
+                lastBottomVert = splitTableBottom + seg.spacing
+                shift = splitTableBottom - (seg.vertPos + seg.vertSize)
+                lastVert = splitTableBottom
+                splitTableBottom = -1
+            } else lastBottomVert = max(lastBottomVert, vp + seg.vertSize + seg.spacing)
         }
         if (fallback) lastBottomVert += ps.next
         if (!anchorTop.isNaN()) drawFloating(para, anchorTop, bodyLeft, bodyWidth, behind = false)
+    }
+
+    /** 이 줄이 글자처럼 놓인 표 하나뿐인지 */
+    private fun isTableLine(para: HPara, segs: List<LineSeg>, i: Int): Boolean {
+        val from = segs[i].textPos
+        val to = if (i + 1 < segs.size) segs[i + 1].textPos else Int.MAX_VALUE
+        val objs = para.items.filter { it.pos in from until to && (it is PItem.Obj || it is PItem.Text && it.text.isNotBlank()) }
+        return objs.size == 1 && (objs[0] as? PItem.Obj)?.obj.let { it is HTable && it.treatAsChar }
     }
 
     /** 저장된 줄 정보가 이 문단의 글자 위치와 맞는지 */
@@ -413,6 +432,8 @@ class HRenderer(private val doc: HDoc) {
         }
         var contentH = 0
         for (segs in segLists) for (s in segs) contentH = max(contentH, s.vertPos + s.vertSize)
+        // 워드는 칸 높이에 마지막 문단의 '문단 뒤' 간격까지 넣는다
+        paras.lastOrNull()?.let { p -> paraShape(p.paraShapeId).let { ps -> if (ps.leadAbove > 0f) contentH += max(0, ps.next) } }
         val contentPt = u(contentH)
         if (measureOnly) return contentPt
         val dy = when (vertAlign) {
@@ -486,7 +507,13 @@ class HRenderer(private val doc: HDoc) {
                         ' ' -> " "
                         else -> text.substring(i, i + n)
                     }
-                    out.add(Piece(pos, Piece.CHAR, s, paint, csId, lang, width = paint.measureText(s), space = isSpace))
+                    val cs = fonts.charShape(csId)
+                    val w = when {
+                        isSpace && cs.spaceEm > 0f -> paint.textSize * cs.spaceEm
+                        cs.eaExtraEm != 0f && (lang == Lang.HANGUL || lang == Lang.HANJA) -> paint.measureText(s) + paint.textSize * cs.eaExtraEm
+                        else -> paint.measureText(s)
+                    }
+                    out.add(Piece(pos, Piece.CHAR, s, paint, csId, lang, width = w, space = isSpace))
                 }
             }
             i += n
@@ -509,6 +536,10 @@ class HRenderer(private val doc: HDoc) {
                 is PItem.Tab -> out.add(Piece(start, Piece.TAB, width = u(item.width), leader = item.leader, csId = item.charShapeId))
                 is PItem.Obj -> if (item.obj.treatAsChar) {
                     val o = item.obj
+                    if (o is HTable && o.measureHeight) {
+                        o.height = tableBounds(o)?.let { (_, rb) -> rb[rb.size - 1] } ?: o.height
+                        o.measureHeight = false
+                    }
                     if (o is HEquation && (o.width <= 0 || o.height <= 0)) {
                         // 크기 정보가 없는 수식은 직접 잰 크기를 쓴다
                         val (w, hh) = EqRenderer.measure(o)
@@ -572,6 +603,12 @@ class HRenderer(private val doc: HDoc) {
         if (prefix != null) {
             val pre = ArrayList<Piece>()
             charPieces(prefix, firstCharShape(para), -1, pre)
+            if (ps.prefixTab && ps.indent < 0) {
+                // 번호 뒤를 내어쓰기 자리까지 띄운다 (자리가 모자라면 빈칸 하나)
+                val used = pre.sumOf { it.width.toDouble() }.toFloat()
+                val room = u(-ps.indent) - used
+                if (room > 0f) pre.add(Piece(-1, Piece.TAB, width = room, csId = firstCharShape(para)))
+            }
             pieces.addAll(0, pre)
         }
         if (pieces.isEmpty()) return
@@ -709,29 +746,47 @@ class HRenderer(private val doc: HDoc) {
         var vert = startVert
         val defaultH = fonts.charShape(firstCharShape(para)).height
 
-        fun lineHeight(from: Int, until: Int): Int {
-            var mh = 0
+        /** 줄의 (글자 높이, 개체 높이). 글자가 없으면 글자 높이 0 */
+        fun lineHeights(from: Int, until: Int): Pair<Int, Int> {
+            var th = 0
+            var oh = 0
             for (k in from until until) {
                 val pc = pieces[k]
-                val hh = when (pc.kind) {
-                    Piece.CHAR -> h(pc.paint!!.textSize)
-                    Piece.OBJ -> pc.obj!!.height + pc.obj.outTop + pc.obj.outBottom
-                    else -> 0
+                when (pc.kind) {
+                    Piece.CHAR -> th = max(th, h(pc.paint!!.textSize))
+                    Piece.OBJ -> oh = max(oh, pc.obj!!.height + pc.obj.outTop + pc.obj.outBottom)
                 }
-                mh = max(mh, hh)
             }
-            return if (mh == 0) defaultH else mh
+            return th to oh
         }
 
         fun addLine(from: Int, until: Int) {
-            val hh = lineHeight(from, until)
+            val (th, oh) = lineHeights(from, until)
+            val textPos = if (from < pieces.size) max(0, pieces[from].pos) else para.textLength
+            if (ps.leadAbove > 0f) {
+                // 워드·파워포인트 방식: 줄 간격은 글자 높이로 정하고(그림·표·수식은 그 높이 그대로), 여유는 글자 위아래에 나눈다.
+                // 줄 상자에 여유를 모두 넣는다 (표 칸 높이에 줄 전체가 들어가도록)
+                val text = if (th > 0) th else if (oh > 0) 0 else defaultH
+                val hh = max(max(th, oh), if (text == 0) 0 else text)
+                val natural = when (ps.lineSpacingType) {
+                    "FIXED" -> ps.lineSpacing
+                    "BETWEEN_LINES" -> text + ps.lineSpacing
+                    "AT_LEAST" -> max(ps.lineSpacing, text * 6 / 5)
+                    else -> text * ps.lineSpacing / 100
+                }
+                val box = if (ps.lineSpacingType == "FIXED") natural else max(oh, natural)
+                val above = ((box - hh) * ps.leadAbove).roundToInt()
+                result.add(LineSeg(textPos, vert, box, hh, (hh * 0.85f).roundToInt() + above, 0, ps.left, widthHwp - ps.left - ps.right, 0))
+                vert += box
+                return
+            }
+            val hh = max(th, oh).let { if (it == 0) defaultH else it }
             val spacing = when (ps.lineSpacingType) {
                 "FIXED" -> max(0, ps.lineSpacing - hh)
                 "BETWEEN_LINES" -> ps.lineSpacing
                 "AT_LEAST" -> max(0, ps.lineSpacing - hh)
                 else -> hh * (ps.lineSpacing - 100) / 100
             }
-            val textPos = if (from < pieces.size) max(0, pieces[from].pos) else para.textLength
             result.add(LineSeg(textPos, vert, hh, hh, (hh * 0.85f).roundToInt(), spacing, ps.left, widthHwp - ps.left - ps.right, 0))
             vert += hh + spacing
         }
@@ -744,9 +799,11 @@ class HRenderer(private val doc: HDoc) {
         var w = 0f
         var lastBreak = -1
         var k = 0
+        // 번호를 내어쓰기 자리까지 띄우는 문단은 첫 줄 글도 둘째 줄과 같은 자리에서 시작한다
+        val tabbed = ps.prefixTab && ps.headingType != "NONE"
         while (k < pieces.size) {
             val pc = pieces[k]
-            val indent = if (result.isEmpty()) max(ps.indent, 0) else max(-ps.indent, 0)
+            val indent = if (result.isEmpty() && !tabbed) max(ps.indent, 0) else max(-ps.indent, 0)
             val avail = u(widthHwp - ps.left - ps.right - indent)
             if (pc.kind == Piece.BREAK) {
                 addLine(lineStart, k + 1)
@@ -766,6 +823,8 @@ class HRenderer(private val doc: HDoc) {
             k++
         }
         if (lineStart < pieces.size || result.isEmpty()) addLine(lineStart, pieces.size)
+        // 문단이 줄바꿈으로 끝나면 빈 줄이 하나 더 있다 (워드·파워포인트와 같게)
+        else if (ps.leadAbove > 0f && pieces.last().kind == Piece.BREAK) addLine(pieces.size, pieces.size)
         return result
     }
 
@@ -842,6 +901,20 @@ class HRenderer(private val doc: HDoc) {
     }
 
     private fun drawObject(o: HObject, x: Float, y: Float, allowSplit: Boolean) {
+        val c = canvas
+        if (c != null && o is HShapeObj && (o.rotation != 0f || o.flipH || o.flipV)) {
+            // 회전·뒤집기는 개체 가운데를 중심으로
+            val cx = x + u(o.width) / 2f
+            val cy = y + u(o.height) / 2f
+            c.save()
+            if (o.rotation != 0f) c.rotate(o.rotation, cx, cy)
+            if (o.flipH || o.flipV) c.scale(if (o.flipH) -1f else 1f, if (o.flipV) -1f else 1f, cx, cy)
+            drawObjectPlain(o, x, y, allowSplit)
+            c.restore()
+        } else drawObjectPlain(o, x, y, allowSplit)
+    }
+
+    private fun drawObjectPlain(o: HObject, x: Float, y: Float, allowSplit: Boolean) {
         when (o) {
             is HTable -> drawTable(o, x, y, allowSplit)
             is HPicture -> drawPicture(o, RectF(x, y, x + u(o.width), y + u(o.height)))
@@ -878,8 +951,9 @@ class HRenderer(private val doc: HDoc) {
         return b
     }
 
-    private fun drawTable(t: HTable, x: Float, y: Float, allowSplit: Boolean) {
-        if (t.cells.isEmpty()) return
+    /** 표의 열·행 경계 (HWPUNIT). 행은 내용에 맞게 늘린 뒤 */
+    private fun tableBounds(t: HTable): Pair<IntArray, IntArray>? {
+        if (t.cells.isEmpty()) return null
         val cols = max(t.colCnt, t.cells.maxOf { it.col + it.colSpan })
         val rows = max(t.rowCnt, t.cells.maxOf { it.row + it.rowSpan })
         val cb = boundaries(cols, t.cells.map { Triple(it.col, it.colSpan, it.width) })
@@ -898,6 +972,12 @@ class HRenderer(private val doc: HDoc) {
                 for (k in re..rows) rb[k] += diff
             }
         }
+        return cb to rb
+    }
+
+    private fun drawTable(t: HTable, x: Float, y: Float, allowSplit: Boolean) {
+        val (cb, rb) = tableBounds(t) ?: return
+        val rows = rb.size - 1
         val totalH = u(rb[rows])
         val bottom = bodyTop + bodyHeight
 
@@ -932,6 +1012,7 @@ class HRenderer(private val doc: HDoc) {
             } else {
                 // 표가 끝난 쪽에서, 다음 문단이 표 아래에 이어지도록 기준 위치를 조정
                 lastVert = h(usedBottom - bodyTop) - 3000
+                splitTableBottom = h(usedBottom - bodyTop)
                 pageHasContent = true
             }
         }
@@ -1073,7 +1154,7 @@ class HRenderer(private val doc: HDoc) {
         val sx = if (s.orgWidth > 0) r.width() / u(s.orgWidth) else 1f
         val sy = if (s.orgHeight > 0) r.height() / u(s.orgHeight) else 1f
         when (s.kind) {
-            "rect", "ellipse", "polygon" -> if (c != null) {
+            "rect", "ellipse", "polygon", "path" -> if (c != null) {
                 s.fillColor?.let { fc ->
                     fillPaint.color = fc
                     drawShapePath(c, s, r, sx, sy, fillPaint)
@@ -1091,8 +1172,14 @@ class HRenderer(private val doc: HDoc) {
                     linePaint.color = ls.color
                     linePaint.strokeWidth = max(0.25f, u(ls.width))
                     linePaint.pathEffect = if (ls.style.contains("DASH") || ls.style.contains("DOT")) DashPathEffect(floatArrayOf(3f, 2f), 0f) else null
-                    c.drawLine(r.left + u(s.x0) * sx, r.top + u(s.y0) * sy, r.left + u(s.x1) * sx, r.top + u(s.y1) * sy, linePaint)
+                    val ax = r.left + u(s.x0) * sx
+                    val ay = r.top + u(s.y0) * sy
+                    val bx = r.left + u(s.x1) * sx
+                    val by = r.top + u(s.y1) * sy
+                    c.drawLine(ax, ay, bx, by, linePaint)
                     linePaint.pathEffect = null
+                    if (s.headArrow) drawArrowHead(c, bx, by, ax, ay, linePaint.strokeWidth, ls.color)
+                    if (s.tailArrow) drawArrowHead(c, ax, ay, bx, by, linePaint.strokeWidth, ls.color)
                 }
             }
             "curve" -> if (c != null && s.points.size >= 2) {
@@ -1134,8 +1221,37 @@ class HRenderer(private val doc: HDoc) {
         }
     }
 
+    /** (fx, fy) → (tx, ty) 선의 끝 (tx, ty)에 채운 화살촉 */
+    private fun drawArrowHead(c: Canvas, fx: Float, fy: Float, tx: Float, ty: Float, lineW: Float, color: Int) {
+        val len = kotlin.math.hypot(tx - fx, ty - fy)
+        if (len < 0.01f) return
+        val ux = (tx - fx) / len
+        val uy = (ty - fy) / len
+        val size = max(4f, lineW * 3.5f)
+        val half = size * 0.5f
+        val bx = tx - ux * size
+        val by = ty - uy * size
+        val path = android.graphics.Path().apply {
+            moveTo(tx, ty)
+            lineTo(bx - uy * half, by + ux * half)
+            lineTo(bx + uy * half, by - ux * half)
+            close()
+        }
+        fillPaint.color = color
+        c.drawPath(path, fillPaint)
+    }
+
     private fun drawShapePath(c: Canvas, s: HShape, r: RectF, sx: Float, sy: Float, paint: Paint) {
         when (s.kind) {
+            "path" -> s.path?.let { src ->
+                val m = android.graphics.Matrix().apply {
+                    setScale(sx / 100f, sy / 100f)
+                    postTranslate(r.left, r.top)
+                }
+                val path = android.graphics.Path(src)
+                path.transform(m)
+                c.drawPath(path, paint)
+            }
             "ellipse" -> c.drawOval(r, paint)
             "polygon" -> if (s.points.size >= 2) {
                 val path = android.graphics.Path()

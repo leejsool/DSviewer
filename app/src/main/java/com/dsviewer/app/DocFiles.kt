@@ -25,7 +25,12 @@ data class Entry(
 /** 기기 저장소에서 문서 찾기 ('모든 파일 접근' 권한 필요) */
 object DocFiles {
 
-    private val EXTS = listOf("pdf", "hwp", "hwpx")
+    /** 폴더에서 보이는 파일: 이 앱으로 열 수 있는 모든 형식 */
+    private val EXTS = DocType.BY_EXT.keys
+
+    /** '모든 문서'에서 찾는 파일: 그림은 빼고 (기기 사진이 모두 섞이지 않게) */
+    private val SCAN_EXTS = DocType.BY_EXT.filterValues { it != DocType.IMAGE && it != DocType.UNKNOWN }.keys
+        .filter { it != "log" && it != "csv" }
 
     fun isDoc(name: String) = name.substringAfterLast('.', "").lowercase() in EXTS
 
@@ -59,13 +64,13 @@ object DocFiles {
             .toList()
     }
 
-    /** 기기 전체의 PDF/HWP/HWPX (최근 수정순). MediaStore 색인을 쓰므로 빠르다. */
+    /** 기기 전체의 문서 (최근 수정순, 그림 제외). MediaStore 색인을 쓰므로 빠르다. */
     fun scanAll(ctx: Context): List<Entry> {
         val nameCol = MediaStore.MediaColumns.DISPLAY_NAME
         @Suppress("DEPRECATION") val dataCol = MediaStore.MediaColumns.DATA
         val proj = arrayOf(dataCol, nameCol, MediaStore.MediaColumns.DATE_MODIFIED, MediaStore.MediaColumns.SIZE)
-        val sel = EXTS.joinToString(" OR ") { "$nameCol LIKE ?" }
-        val args = EXTS.map { "%.$it" }.toTypedArray()
+        val sel = SCAN_EXTS.joinToString(" OR ") { "$nameCol LIKE ?" }
+        val args = SCAN_EXTS.map { "%.$it" }.toTypedArray()
         val out = ArrayList<Entry>()
         val seen = HashSet<String>()
         ctx.contentResolver.query(
@@ -76,7 +81,7 @@ object DocFiles {
                 val path = c.getString(0) ?: continue
                 if (!seen.add(path) || path.contains("/.")) continue
                 val name = c.getString(1) ?: path.substringAfterLast('/')
-                if (!isDoc(name)) continue
+                if (name.substringAfterLast('.', "").lowercase() !in SCAN_EXTS) continue
                 val f = File(path)
                 if (!f.isFile) continue
                 out += Entry(f, name, isDir = false, time = c.getLong(2) * 1000, size = c.getLong(3))

@@ -51,6 +51,10 @@ class CharShape(
     var supscript = false
     var subscript = false
     var outline = false
+    /** 빈칸 폭 (글자 크기에 대한 비율). 0이면 글꼴 그대로 (워드 문서를 워드와 같은 폭으로 나누려고) */
+    var spaceEm = 0f
+    /** 한글·한자 글자마다 더할 폭 (글자 크기 비율). 기기 글꼴 한글(0.92)을 문서 글꼴 폭(1.0)에 맞출 때 */
+    var eaExtraEm = 0f
 }
 
 enum class Align { JUSTIFY, LEFT, RIGHT, CENTER, DISTRIBUTE, DISTRIBUTE_SPACE }
@@ -74,6 +78,10 @@ class ParaShape {
     var headingType = "NONE"
     var headingIdRef = 0
     var headingLevel = 0
+    /** (직접 나누는 줄) 줄 간격으로 생기는 여유 중 글자 위에 둘 몫 (0 = 모두 아래, 한글 방식). 워드·파워포인트는 위에도 둔다 */
+    var leadAbove = 0f
+    /** 번호·글머리표 뒤를 내어쓰기 자리까지 띄운다 (워드·파워포인트처럼 둘째 줄과 글 시작을 맞춤) */
+    var prefixTab = false
 }
 
 class BorderLine(val type: String, val width: Float /* pt */, val color: Int) {
@@ -242,6 +250,8 @@ class HTable : HObject() {
     var inTop = 0
     var inBottom = 0
     val cells = ArrayList<HCell>()
+    /** 높이를 내용으로 잰다 (워드처럼 저장된 높이가 최소 높이일 뿐인 표). 글자처럼 놓인 표의 줄 높이에 쓴다 */
+    var measureHeight = false
 }
 
 class LineStyle(val color: Int, val width: Int /* HWPUNIT */, val style: String)
@@ -259,6 +269,10 @@ open class HShapeObj : HObject() {
     var matrix: FloatArray? = null
     var line: LineStyle? = null
     var fillColor: Int? = null
+    /** 시계 방향 회전 (도), 좌우·상하 뒤집기 — 개체 가운데를 중심으로 (PPTX 등) */
+    var rotation = 0f
+    var flipH = false
+    var flipV = false
 }
 
 class HPicture : HShapeObj() {
@@ -286,6 +300,11 @@ class HShape(val kind: String) : HShapeObj() {
     var x1 = 0
     var y1 = 0
     val points = ArrayList<Pair<Int, Int>>()
+    /** kind == "path": orgSz 좌표(HWPUNIT)의 자유 도형 (PPTX 도형 모양) */
+    var path: android.graphics.Path? = null
+    /** 선 끝 화살표: 시작점(head)·끝점(tail) */
+    var headArrow = false
+    var tailArrow = false
 }
 
 /** 수식 (한글 수식 스크립트) */

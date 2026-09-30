@@ -61,7 +61,7 @@ class MainActivity : AppCompatActivity() {
         ALL("모든 문서", R.drawable.ic_doc),
         FOLDER("폴더", R.drawable.ic_folder),
     }
-    private enum class Kind { FOLDER, DRIVE, PDF, HWP }
+    private enum class Kind { FOLDER, DRIVE, DOC }
 
     /** 정렬 기준. [descFirst]면 처음 고를 때 큰 것(최근 것)부터 */
     private enum class SortKey(val label: String, val descFirst: Boolean) {
@@ -72,7 +72,7 @@ class MainActivity : AppCompatActivity() {
             OPENED, MODIFIED -> "오래된 것 먼저" to "최근 것 먼저"
             NAME -> "가나다순" to "가나다 거꾸로"
             SIZE -> "작은 것 먼저" to "큰 것 먼저"
-            TYPE -> "PDF 먼저" to "한글 먼저"
+            TYPE -> "PDF 먼저" to "그림 먼저"
         }
     }
 
@@ -270,6 +270,17 @@ class MainActivity : AppCompatActivity() {
         updateOpenTabs()
     }
 
+    /** '종류' 정렬 순서: PDF · 한글 · 워드 · 파워포인트 · 글 · 그림 */
+    private fun typeRank(t: DocType) = when {
+        t == DocType.PDF -> 0
+        t.isHangul -> 1
+        t.isWord -> 2
+        t.isPowerPoint -> 3
+        t == DocType.TXT -> 4
+        t == DocType.IMAGE -> 5
+        else -> 6
+    }
+
     private fun setupMenu() {
         toolbar.inflateMenu(R.menu.main)
         searchItem = toolbar.menu.findItem(R.id.action_search)
@@ -348,7 +359,7 @@ class MainActivity : AppCompatActivity() {
             Tab.ALL -> {
                 barLabel = { n -> if (n == 0) "기기의 문서" else "기기의 문서 ${n}개" }
                 val key = sortKey()
-                load("기기에서 PDF · HWP · HWPX 문서를 찾지 못했습니다.") {
+                load("기기에서 문서(PDF·한글·워드·파워포인트·글)를 찾지 못했습니다.") {
                     val rec = Recents.list(this).associateBy { it.uri }
                     val locked = Locks.locked(this)
                     DocFiles.scanAll(this).map { fileRow(it, showPath = true, rec, key, locked) }
@@ -368,7 +379,7 @@ class MainActivity : AppCompatActivity() {
                     val rec = Recents.list(this).associateBy { it.uri }
                     val locked = Locks.locked(this)
                     if (d == null) roots.map { r ->
-                        Row(r.name, r.file.path, Kind.DRIVE, { openDir(r.file) }, folder = FolderDrawable(HWP_COLOR, TapePattern.SOLID), short = "")
+                        Row(r.name, r.file.path, Kind.DRIVE, { openDir(r.file) }, folder = FolderDrawable(DocColors.HWP, TapePattern.SOLID), short = "")
                     }
                     else DocFiles.list(d).map { fileRow(it, showPath = false, rec, key, locked) }
                 }
@@ -451,7 +462,7 @@ class MainActivity : AppCompatActivity() {
         val shownTime = if (key == SortKey.MODIFIED && file != null) modified else item.time
         val sub = listOfNotNull(date(shownTime), file?.parentFile?.let(::shortPath)).joinToString(" · ")
         return Row(
-            item.name, sub, kindOf(item.name), {
+            item.name, sub, Kind.DOC, {
                 unlockThen(item.uri) {
                     Recents.add(this, item.uri, item.name)
                     openViewer(uri)
@@ -474,7 +485,7 @@ class MainActivity : AppCompatActivity() {
         val item = rec[uri.toString()]
         // 즐겨찾기한 문서는 별 표시만 (누르는 별은 최근 파일·즐겨찾기 탭에)
         return Row(
-            e.name, sub, kindOf(e.name), { unlockThen(uri.toString()) { openFile(e.file) } },
+            e.name, sub, Kind.DOC, { unlockThen(uri.toString()) { openFile(e.file) } },
             star = if (item?.star == true) true else null,
             docUri = uri.toString(), locked = uri.toString() in locked,
             thumb = Thumbs.Source(uri, e.name, item?.thumbPage ?: 0, item?.thumbFile),
@@ -482,7 +493,6 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    private fun kindOf(name: String) = if (name.lowercase().endsWith(".pdf")) Kind.PDF else Kind.HWP
 
     private fun date(t: Long) = DateFormat.format("yyyy.MM.dd HH:mm", Date(t)).toString()
 
@@ -563,7 +573,7 @@ class MainActivity : AppCompatActivity() {
             SortKey.OPENED -> compareBy { it.opened }
             SortKey.MODIFIED -> compareBy { it.modified }
             SortKey.SIZE -> compareBy { it.size }
-            SortKey.TYPE -> compareBy { it.title.substringAfterLast('.', "").lowercase().let { e -> if (e == "pdf") 0 else 1 } }
+            SortKey.TYPE -> compareBy { typeRank(DocType.ofName(it.title)) }
         }
         fun ordered(k: SortKey) = (if (desc) primary(k).reversed() else primary(k)).then(byName)
         val (folders, docs) = rows.partition { it.isFolder }
@@ -1214,7 +1224,7 @@ class MainActivity : AppCompatActivity() {
                 finishAction("이 위치의 파일은 공유할 수 없습니다")
                 return@unlockThen
             }
-            val types = docs.map { if (it.kind == Kind.PDF) "application/pdf" else if (it.title.lowercase().endsWith(".hwpx")) "application/hwp+zip" else "application/x-hwp" }.distinct()
+            val types = docs.map { FileUtil.mimeOf(it.title) }.distinct()
             val type = types.singleOrNull() ?: "*/*"
             val send = if (uris.size == 1) Intent(Intent.ACTION_SEND).putExtra(Intent.EXTRA_STREAM, uris[0])
             else Intent(Intent.ACTION_SEND_MULTIPLE).putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
@@ -1432,7 +1442,7 @@ class MainActivity : AppCompatActivity() {
             val s = if (isGrid) r.short else r.sub
             sub.text = s
             sub.isVisible = s.isNotEmpty()
-            val color = if (r.kind == Kind.PDF) PDF_COLOR else HWP_COLOR
+            val color = DocColors.of(r.title)
             val ext = r.title.substringAfterLast('.', "").uppercase()
             badge.isVisible = !r.isFolder && ext.isNotEmpty() && ext.length <= 4
             badge.text = ext
@@ -1516,8 +1526,6 @@ class MainActivity : AppCompatActivity() {
     companion object {
         /** 뷰어의 ＋ 버튼으로 띄웠을 때: 고른 문서를 새 탭으로 열고, 뒤로 가면 뷰어로 돌아간다 */
         const val EXTRA_PICK = "pick"
-        private val PDF_COLOR = Color.parseColor("#D93025")
-        private val HWP_COLOR = Color.parseColor("#2F6FC4")
         private val FOLDER_COLOR = Color.parseColor("#E8A317")
         /** 선택 표시만 다시 그리라는 알림 */
         private val SELECTION = Any()
