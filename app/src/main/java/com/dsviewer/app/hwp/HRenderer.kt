@@ -36,6 +36,8 @@ class HRenderer(private val doc: HDoc) {
     private var pageCount = 0
     private var totalPages = 0
     private var pageNumber = 1
+    private var pageLimit = 0
+    private class PageLimit : RuntimeException()
 
     // ---- 쪽 설정 ----
     private var pd = PageDef()
@@ -76,8 +78,10 @@ class HRenderer(private val doc: HDoc) {
     private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val bmpPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
 
-    fun render(out: File) {
-        val needTotal = doc.sections.any { s -> s.paras.any { hasTotalPage(it) } }
+    /** 썸네일처럼 앞쪽만 필요하면 [maxPages]쪽까지만 그린다 (전체 쪽 수 세기도 건너뜀) */
+    fun render(out: File, maxPages: Int = 0) {
+        pageLimit = maxPages
+        val needTotal = maxPages <= 0 && doc.sections.any { s -> s.paras.any { hasTotalPage(it) } }
         if (needTotal) {
             dry = true
             runAll()
@@ -87,7 +91,11 @@ class HRenderer(private val doc: HDoc) {
         val doc = PdfDocument()
         pdf = doc
         try {
-            runAll()
+            try {
+                runAll()
+            } catch (e: PageLimit) {
+                // 필요한 쪽까지 그렸다
+            }
             FileOutputStream(out).use { doc.writeTo(it) }
         } finally {
             doc.close()
@@ -170,6 +178,7 @@ class HRenderer(private val doc: HDoc) {
             canvas = null
         }
         pageNumber++
+        if (!dry && pageLimit > 0 && pageCount >= pageLimit) throw PageLimit()
     }
 
     private fun newPage() {

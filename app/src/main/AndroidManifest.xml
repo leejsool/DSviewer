@@ -64,5 +64,16 @@
                 <data android:mimeType="application/hwp+zip" />
             </intent-filter>
         </activity>
+
+        <!-- 파일 탐색기의 '공유': 기기 저장소의 문서를 다른 앱에 넘긴다 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 </manifest>

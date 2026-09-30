@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 공유할 수 있는 곳: 내장 메모리와 (SD카드·USB 같은) 다른 저장소 -->
+<paths>
+    <external-path name="storage" path="." />
+    <root-path name="root" path="/storage" />
+</paths>

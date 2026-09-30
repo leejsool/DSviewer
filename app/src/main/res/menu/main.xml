@@ -14,4 +14,8 @@
     <item android:id="@+id/action_pick" android:icon="@drawable/ic_folder"
         android:title="다른 위치에서 열기"
         app:showAsAction="ifRoom|withText" />
+    <item android:id="@+id/action_lock_password"
+        android:title="잠금 암호 바꾸기"
+        android:visible="false"
+        app:showAsAction="never" />
 </menu>

@@ -31,7 +31,7 @@
         android:background="?attr/colorSurface"
         android:orientation="vertical">
 
-    <!-- 폴더 탭: 현재 위치와 위로 가기 -->
+    <!-- 목록 줄: (폴더·즐겨찾기 탭) 위로 가기와 현재 위치, 새 폴더, 정렬, 목록/큰 아이콘 -->
     <LinearLayout
         android:id="@+id/pathBar"
         android:layout_width="match_parent"
@@ -39,6 +39,7 @@
         android:background="?attr/colorSurfaceContainer"
         android:gravity="center_vertical"
         android:orientation="horizontal"
+        android:paddingStart="4dp"
         android:visibility="gone">
 
         <ImageButton
@@ -60,10 +61,82 @@
                 android:id="@+id/pathText"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
+                android:paddingStart="12dp"
                 android:paddingEnd="16dp"
                 android:singleLine="true"
                 android:textAppearance="?attr/textAppearanceBodyMedium" />
         </HorizontalScrollView>
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/newFolderButton"
+            style="?attr/materialIconButtonStyle"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:contentDescription="새 폴더"
+            android:tooltipText="새 폴더"
+            android:visibility="gone"
+            app:icon="@drawable/ic_folder_add"
+            app:iconTint="?attr/colorOnSurfaceVariant" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/sortButton"
+            style="?attr/borderlessButtonStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:paddingHorizontal="10dp"
+            android:textAppearance="?attr/textAppearanceLabelLarge"
+            android:textColor="?attr/colorOnSurface"
+            app:icon="@drawable/ic_sort"
+            app:iconPadding="6dp"
+            app:iconTint="?attr/colorOnSurfaceVariant" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/viewButton"
+            style="?attr/materialIconButtonStyle"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_marginEnd="4dp"
+            app:icon="@drawable/ic_grid_view"
+            app:iconTint="?attr/colorOnSurfaceVariant" />
+    </LinearLayout>
+
+    <!-- 선택 모드: 닫기 · 고른 수 · 모두 선택 (목록 줄 자리에) -->
+    <LinearLayout
+        android:id="@+id/selectBar"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:background="?attr/colorSecondaryContainer"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="4dp"
+        android:paddingEnd="8dp"
+        android:visibility="gone">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/selectClose"
+            style="?attr/materialIconButtonStyle"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:contentDescription="선택 끝내기"
+            app:icon="@drawable/ic_close"
+            app:iconTint="?attr/colorOnSecondaryContainer" />
+
+        <TextView
+            android:id="@+id/selectCount"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:textAppearance="?attr/textAppearanceTitleSmall"
+            android:textColor="?attr/colorOnSecondaryContainer" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/selectAll"
+            style="?attr/borderlessButtonStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:text="모두 선택"
+            android:textColor="?attr/colorOnSecondaryContainer" />
     </LinearLayout>
 
     <!-- 저장소 권한 안내 -->
@@ -133,5 +206,26 @@
             android:indeterminate="true"
             android:visibility="gone" />
     </FrameLayout>
+
+    <!-- 선택 모드의 명령 줄 (MainActivity에서 아이콘을 채움) -->
+    <HorizontalScrollView
+        android:id="@+id/actionBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="?attr/colorSurfaceContainer"
+        android:elevation="6dp"
+        android:fillViewport="true"
+        android:scrollbars="none"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:id="@+id/actionRow"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:orientation="horizontal"
+            android:paddingHorizontal="8dp"
+            android:paddingVertical="4dp" />
+    </HorizontalScrollView>
     </LinearLayout>
 </LinearLayout>

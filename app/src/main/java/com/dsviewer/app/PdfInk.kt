@@ -90,6 +90,19 @@ object PdfInk {
         return result
     }
 
+    /** [page]쪽의 이 앱 필기만 꺼낸다 (썸네일용. PdfRenderer는 주석을 그리지 않으므로 원본 위에 얹으면 된다) */
+    fun pageStrokes(src: File, page: Int): List<Stroke> {
+        PDDocument.load(src).use { doc ->
+            if (page !in 0 until doc.numberOfPages) return emptyList()
+            return doc.getPage(page).annotations.mapNotNull { a ->
+                val s = a.cosObject.getString(KEY_NAME) ?: return@mapNotNull null
+                val st = decode(s) ?: return@mapNotNull null
+                if (s.startsWith("1|I|")) st.image = readImage(a) ?: return@mapNotNull null
+                st
+            }
+        }
+    }
+
     /** 원본 [src]에 필기를 주석으로 넣어 [out]에 저장 */
     fun save(src: File, out: File, pages: List<List<Stroke>>) {
         // 글 외형을 그린 임시 PDF (다 저장한 뒤에 닫는다)
