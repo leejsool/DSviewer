@@ -30,6 +30,28 @@ enum class DocType {
     }
 }
 
+/** 파일 탐색기에서 골라 볼 수 있는 형식 묶음 (이 순서가 '종류' 정렬 순서) */
+enum class DocGroup(val label: String, val exts: String) {
+    PDF("PDF", "pdf"),
+    HANGUL("한글", "hwp · hwpx"),
+    WORD("워드", "docx · doc"),
+    POWERPOINT("파워포인트", "pptx · ppt"),
+    TEXT("텍스트", "txt · md · csv"),
+    IMAGE("그림", "jpg · png · heic 등");
+
+    companion object {
+        fun of(t: DocType): DocGroup? = when {
+            t == DocType.PDF -> PDF
+            t.isHangul -> HANGUL
+            t.isWord -> WORD
+            t.isPowerPoint -> POWERPOINT
+            t == DocType.TXT -> TEXT
+            t == DocType.IMAGE -> IMAGE
+            else -> null
+        }
+    }
+}
+
 object FileUtil {
 
     fun displayName(ctx: Context, uri: Uri): String {

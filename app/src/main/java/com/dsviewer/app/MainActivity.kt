@@ -119,6 +119,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var pathText: TextView
     private lateinit var upButton: View
     private lateinit var newFolderButton: View
+    private lateinit var filterButton: MaterialButton
     private lateinit var sortButton: MaterialButton
     private lateinit var viewButton: MaterialButton
     private lateinit var searchItem: MenuItem
@@ -193,6 +194,7 @@ class MainActivity : AppCompatActivity() {
         pathText = findViewById(R.id.pathText)
         upButton = findViewById(R.id.upButton)
         newFolderButton = findViewById(R.id.newFolderButton)
+        filterButton = findViewById(R.id.filterButton)
         sortButton = findViewById(R.id.sortButton)
         viewButton = findViewById(R.id.viewButton)
         selectBar = findViewById(R.id.selectBar)
@@ -212,6 +214,7 @@ class MainActivity : AppCompatActivity() {
         }
         upButton.setOnClickListener { goUp() }
         newFolderButton.setOnClickListener { editFolder(null, favDir) }
+        filterButton.setOnClickListener { showFilterDialog() }
         sortButton.setOnClickListener { showSortMenu() }
         viewButton.setOnClickListener {
             grid = !grid
@@ -271,15 +274,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** '종류' 정렬 순서: PDF · 한글 · 워드 · 파워포인트 · 글 · 그림 */
-    private fun typeRank(t: DocType) = when {
-        t == DocType.PDF -> 0
-        t.isHangul -> 1
-        t.isWord -> 2
-        t.isPowerPoint -> 3
-        t == DocType.TXT -> 4
-        t == DocType.IMAGE -> 5
-        else -> 6
-    }
+    private fun typeRank(t: DocType) = DocGroup.of(t)?.ordinal ?: DocGroup.entries.size
 
     private fun setupMenu() {
         toolbar.inflateMenu(R.menu.main)
@@ -329,6 +324,7 @@ class MainActivity : AppCompatActivity() {
         upButton.isVisible = tab == Tab.FOLDER || tab == Tab.FAVORITE
         newFolderButton.isVisible = tab == Tab.FAVORITE
         updateSortButton()
+        updateFilterButton()
         if (needAccess) {
             progress.isVisible = false
             show(emptyList(), "")
@@ -398,10 +394,14 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun show(rows: List<Row>, emptyMsg: String) {
+    private fun show(all: List<Row>, emptyMsg: String) {
+        val groups = shownGroups()
+        val rows = all.filter { it.kind != Kind.DOC || DocGroup.of(DocType.ofName(it.title))?.let { g -> g in groups } ?: true }
         this.rows = sortRows(rows)
         if (selecting) selected.retainAll(this.rows.mapNotNull { it.key }.toSet())
-        this.emptyMsg = emptyMsg
+        this.emptyMsg = if (rows.none { !it.isFolder } && all.any { !it.isFolder })
+            "고른 형식(${groups.joinToString("·") { it.label }})의 문서가 없습니다.\n깔때기 단추에서 볼 형식을 고르세요."
+        else emptyMsg
         pathText.text = barLabel(rows.count { !it.isFolder })
         applyFilter()
         onSelectionChanged()
@@ -560,6 +560,85 @@ class MainActivity : AppCompatActivity() {
             true
         }
         pm.show()
+    }
+
+    // ================= 보여 줄 형식 =================
+
+    /** 이 탭에서 고를 수 있는 형식. 그림은 기기 사진이 모두 섞이지 않게 '모든 문서'에서는 뺀다 */
+    private fun groupsFor(t: Tab) =
+        if (t == Tab.ALL) DocGroup.entries.filter { it != DocGroup.IMAGE } else DocGroup.entries
+
+    /** 이 탭에서 보여 줄 형식 (처음엔 모두) */
+    private fun shownGroups(): List<DocGroup> {
+        val all = groupsFor(tab)
+        val saved = prefs.getStringSet("groups_${tab.name}", null) ?: return all
+        return all.filter { it.name in saved }.ifEmpty { all }
+    }
+
+    private fun updateFilterButton() {
+        val all = groupsFor(tab)
+        val shown = shownGroups()
+        val active = shown.size < all.size
+        val attr = if (active) androidx.appcompat.R.attr.colorPrimary else com.google.android.material.R.attr.colorOnSurfaceVariant
+        filterButton.iconTint = ColorStateList.valueOf(com.google.android.material.color.MaterialColors.getColor(filterButton, attr))
+        filterButton.backgroundTintList = if (active) ColorStateList.valueOf(
+            com.google.android.material.color.MaterialColors.getColor(filterButton, com.google.android.material.R.attr.colorSecondaryContainer)
+        ) else null
+        val desc = if (active) "보여 줄 형식: ${shown.joinToString(", ") { it.label }}" else "보여 줄 형식: 모두"
+        filterButton.contentDescription = desc
+        filterButton.tooltipText = desc
+    }
+
+    private fun showFilterDialog() {
+        val all = groupsFor(tab)
+        val shown = shownGroups().toMutableSet()
+        val d = resources.displayMetrics.density
+        val gray = com.google.android.material.color.MaterialColors.getColor(filterButton, com.google.android.material.R.attr.colorOnSurfaceVariant)
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding((20 * d).toInt(), (8 * d).toInt(), (20 * d).toInt(), 0)
+        }
+        lateinit var dialog: androidx.appcompat.app.AlertDialog
+        val checks = all.map { g ->
+            com.google.android.material.checkbox.MaterialCheckBox(this).apply {
+                text = android.text.SpannableStringBuilder(g.label).append(
+                    "   ${g.exts}",
+                    android.text.style.ForegroundColorSpan(gray),
+                    android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+                )
+                textSize = 16f
+                minHeight = (48 * d).toInt()
+                isChecked = g in shown
+                setOnCheckedChangeListener { _, on ->
+                    if (on) shown += g else shown -= g
+                    // 하나도 안 고르면 볼 것이 없으므로 '확인'을 막는다
+                    dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE)?.isEnabled = shown.isNotEmpty()
+                }
+                box.addView(this)
+            }
+        }
+        if (tab == Tab.ALL) box.addView(TextView(this).apply {
+            text = "그림(사진)은 '폴더' 탭에서 고를 수 있습니다."
+            setTextColor(gray)
+            textSize = 13f
+            setPadding((8 * d).toInt(), (8 * d).toInt(), 0, 0)
+        })
+        dialog = MaterialAlertDialogBuilder(this)
+            .setTitle("보여 줄 형식")
+            .setView(box)
+            .setPositiveButton("확인") { _, _ ->
+                val set = if (shown.size == all.size) null else shown.map { it.name }.toSet()
+                prefs.edit().putStringSet("groups_${tab.name}", set).apply()
+                refresh()
+            }
+            .setNegativeButton("취소", null)
+            .setNeutralButton("모두", null)
+            .create()
+        dialog.setOnShowListener {
+            // '모두'는 창을 닫지 않고 전부 체크만 한다
+            dialog.getButton(android.content.DialogInterface.BUTTON_NEUTRAL).setOnClickListener { checks.forEach { it.isChecked = true } }
+        }
+        dialog.show()
     }
 
     /** 폴더는 늘 먼저. 폴더끼리는 이름이나 날짜로만 (크기·종류가 없으므로 그때는 이름순) */

@@ -79,6 +79,16 @@
             app:iconTint="?attr/colorOnSurfaceVariant" />
 
         <com.google.android.material.button.MaterialButton
+            android:id="@+id/filterButton"
+            style="?attr/materialIconButtonStyle"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:contentDescription="보여 줄 형식"
+            android:tooltipText="보여 줄 형식"
+            app:icon="@drawable/ic_filter"
+            app:iconTint="?attr/colorOnSurfaceVariant" />
+
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/sortButton"
             style="?attr/borderlessButtonStyle"
             android:layout_width="wrap_content"
