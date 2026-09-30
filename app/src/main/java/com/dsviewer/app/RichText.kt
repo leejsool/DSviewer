@@ -11,7 +11,9 @@ import android.text.Spanned
 import android.text.style.AlignmentSpan
 import android.text.style.BackgroundColorSpan
 import android.text.style.ForegroundColorSpan
+import android.text.TextPaint
 import android.text.style.LeadingMarginSpan
+import android.text.style.MetricAffectingSpan
 import android.text.style.RelativeSizeSpan
 import android.text.style.StrikethroughSpan
 import android.text.style.StyleSpan
@@ -23,7 +25,7 @@ import kotlin.math.roundToInt
 
 /*
  * 글 상자의 서식.
- *  - 글자 서식(굵게·기울임·밑줄·취소선·글자색·배경색·크기)은 글자 범위에 붙는 span
+ *  - 글자 서식(굵게·기울임·밑줄·취소선·글자색·배경색·크기·글씨체)은 글자 범위에 붙는 span
  *  - 문단 서식(정렬·들여쓰기·목록·체크)은 문단마다 하나씩 (ParaAttrs, 그리기는 ParaSpan)
  * 글자 크기는 글 상자의 기본 크기에 대한 비율이라 확대·축소해도 그대로 맞는다.
  */
@@ -42,6 +44,58 @@ class RColor(color: Int) : ForegroundColorSpan(color)
 class RBg(color: Int) : BackgroundColorSpan(color)
 class RSize(val ratio: Float) : RelativeSizeSpan(ratio)
 
+/**
+ * 글씨체. 앱에 넣은 나눔 글꼴 (assets/fonts, 라이선스 Nanum-OFL.txt).
+ * 저장할 때는 순서 번호(ordinal)로 적으므로 새 글씨체는 맨 뒤에만 붙인다
+ */
+enum class TextFont(val label: String, val asset: String?) {
+    DEFAULT("기본", null),
+    GOTHIC("나눔고딕", "fonts/NanumGothic-Regular.ttf"),
+    MYEONGJO("나눔명조", "fonts/NanumMyeongjo-Regular.ttf"),
+    SQUARE_ROUND("나눔스퀘어라운드", "fonts/NanumSquareRoundR.ttf"),
+    PEN("나눔손글씨 펜", "fonts/NanumPenScript-Regular.ttf"),
+    BRUSH("나눔손글씨 붓", "fonts/NanumBrushScript-Regular.ttf");
+
+    /** 글꼴 (처음 쓸 때 읽는다. [init] 전이거나 못 읽으면 기본 글꼴) */
+    val typeface: Typeface
+        get() {
+            val path = asset ?: return Typeface.DEFAULT
+            return loaded.getOrPut(this) {
+                try {
+                    assets?.let { Typeface.createFromAsset(it, path) } ?: return Typeface.DEFAULT
+                } catch (e: Exception) {
+                    android.util.Log.w("TextFont", "font load failed: $path", e)
+                    Typeface.DEFAULT
+                }
+            }
+        }
+
+    companion object {
+        private var assets: android.content.res.AssetManager? = null
+        private val loaded = java.util.concurrent.ConcurrentHashMap<TextFont, Typeface>()
+
+        /** 앱을 열 때 한 번 (글꼴 파일을 읽을 곳) */
+        fun init(ctx: android.content.Context) {
+            assets = ctx.applicationContext.assets
+        }
+    }
+}
+
+/** 글씨체 span. 굵게·기울임이 먼저 붙어 있으면 그 모양을 이어 받는다 (글꼴에 없으면 흉내 낸다) */
+class RFont(val font: TextFont) : MetricAffectingSpan() {
+    override fun updateDrawState(tp: TextPaint) = apply(tp)
+    override fun updateMeasureState(tp: TextPaint) = apply(tp)
+
+    private fun apply(p: TextPaint) {
+        val want = p.typeface?.style ?: Typeface.NORMAL
+        val tf = Typeface.create(font.typeface, want)
+        val fake = want and tf.style.inv()
+        if (fake and Typeface.BOLD != 0) p.isFakeBoldText = true
+        if (fake and Typeface.ITALIC != 0) p.textSkewX = -0.25f
+        p.typeface = tf
+    }
+}
+
 /** 글자 하나의 서식. color·bg가 null이면 기본(글 상자 색·배경 없음), size는 기본 크기에 대한 비율 */
 data class CharStyle(
     val bold: Boolean = false,
@@ -51,6 +105,7 @@ data class CharStyle(
     val color: Int? = null,
     val bg: Int? = null,
     val size: Float = 1f,
+    val font: TextFont = TextFont.DEFAULT,
 )
 
 enum class CharToggle { BOLD, ITALIC, UNDERLINE, STRIKE }
@@ -173,7 +228,7 @@ class ParaSpan(val attrs: ParaAttrs, private val em: Float) : LeadingMarginSpan,
  * 서식 있는 글 한 덩어리 (저장·그리기용 원본). [runs]는 글자 서식, [paras]는 문단마다 서식.
  */
 class RichDoc(val text: String, val runs: List<Run>, paras: List<ParaAttrs>) {
-    /** 글자 서식 한 조각: [start, end) 에 [code] (b 굵게, i 기울임, u 밑줄, s 취소선, c 글자색, g 배경색, z 크기 비율) */
+    /** 글자 서식 한 조각: [start, end) 에 [code] (b 굵게, i 기울임, u 밑줄, s 취소선, c 글자색, g 배경색, z 크기 비율, f 글씨체 번호) */
     data class Run(val start: Int, val end: Int, val code: Char, val value: Double = 0.0)
 
     /** 문단 수에 맞춘 문단 서식 (모자라면 기본, 남으면 버림) */
@@ -193,6 +248,7 @@ class RichDoc(val text: String, val runs: List<Run>, paras: List<ParaAttrs>) {
                 'c' -> RColor(r.value.toInt())
                 'g' -> RBg(r.value.toInt())
                 'z' -> RSize(r.value.toFloat())
+                'f' -> RFont(TextFont.entries.getOrNull(r.value.toInt()) ?: continue)
                 else -> continue
             }
             val s = r.start.coerceIn(0, text.length)
@@ -210,7 +266,7 @@ class RichDoc(val text: String, val runs: List<Run>, paras: List<ParaAttrs>) {
             for (r in runs) put(JSONArray().apply {
                 put(r.start); put(r.end); put(r.code.toString())
                 when (r.code) {
-                    'c', 'g' -> put(r.value.toInt())
+                    'c', 'g', 'f' -> put(r.value.toInt())
                     'z' -> put(r.value)
                 }
             })
@@ -234,7 +290,7 @@ class RichDoc(val text: String, val runs: List<Run>, paras: List<ParaAttrs>) {
                     val r = a.getJSONArray(i)
                     val code = r.getString(2).first()
                     val v = when (code) {
-                        'c', 'g' -> r.getInt(3).toDouble()
+                        'c', 'g', 'f' -> r.getInt(3).toDouble()
                         'z' -> r.getDouble(3)
                         else -> 0.0
                     }
@@ -285,6 +341,7 @@ class RichDoc(val text: String, val runs: List<Run>, paras: List<ParaAttrs>) {
                     is RColor -> o.foregroundColor.toDouble()
                     is RBg -> o.backgroundColor.toDouble()
                     is RSize -> o.ratio.toDouble()
+                    is RFont -> o.font.ordinal.toDouble()
                     else -> 0.0
                 }
                 raw.add(Run(s, e, code, v))
@@ -318,6 +375,7 @@ object Rich {
         is RColor -> 'c'
         is RBg -> 'g'
         is RSize -> 'z'
+        is RFont -> 'f'
         else -> null
     }
 
@@ -329,6 +387,7 @@ object Rich {
         is RColor -> RColor(o.foregroundColor)
         is RBg -> RBg(o.backgroundColor)
         is RSize -> RSize(o.ratio)
+        is RFont -> RFont(o.font)
         else -> error("서식 span이 아님")
     }
 
@@ -373,6 +432,7 @@ object Rich {
                 is RColor -> st.copy(color = o.foregroundColor)
                 is RBg -> st.copy(bg = o.backgroundColor)
                 is RSize -> st.copy(size = o.ratio)
+                is RFont -> st.copy(font = o.font)
                 else -> st
             }
         }
@@ -405,6 +465,7 @@ object Rich {
         st.color?.let { e.setSpan(RColor(it), start, end, EE) }
         st.bg?.let { e.setSpan(RBg(it), start, end, EE) }
         if (st.size != 1f) e.setSpan(RSize(st.size), start, end, EE)
+        if (st.font != TextFont.DEFAULT) e.setSpan(RFont(st.font), start, end, EE)
     }
 
     /** 문단마다 [시작, 내용 끝, 다음 문단 시작(줄바꿈 뒤, 마지막 문단은 글 끝)] */

@@ -146,7 +146,8 @@
                     app:singleSelection="true" />
             </HorizontalScrollView>
 
-            <!-- 글 상자를 치는 동안 뜨는 서식 줄 (ViewerActivity.setupFormatBar) -->
+            <!-- 글 상자를 치는 동안 뜨는 서식 줄 (ViewerActivity.setupFormatBar).
+                 툴바가 왼쪽·오른쪽이면 formatRow를 코드에서 만든 세로 줄로 옮긴다 (ViewerActivity.placeOverlays) -->
             <HorizontalScrollView
                 android:id="@+id/formatBar"
                 android:layout_width="match_parent"
@@ -470,15 +471,6 @@
                     android:visibility="gone"
                     app:icon="@drawable/ic_paste" />
             </LinearLayout>
-
-            <!-- 글 도구: 글자 크기 '가' 칸 4개 (ViewerActivity.buildTextSizes) -->
-            <LinearLayout
-                android:id="@+id/textSizeRow"
-                android:layout_width="wrap_content"
-                android:layout_height="match_parent"
-                android:gravity="center_vertical"
-                android:orientation="horizontal"
-                android:visibility="gone" />
 
             <!-- 굵기 칸 3개 (ViewerActivity.buildWidths) -->
             <LinearLayout

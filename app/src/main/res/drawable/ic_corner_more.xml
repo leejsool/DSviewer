@@ -1,0 +1,7 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- 서식 칸 오른쪽 아래 작은 삼각형: 누르면 고르는 창이 뜬다 -->
+    <path android:fillColor="?attr/colorControlNormal"
+        android:pathData="M24,20.5L24,24L20.5,24Z" />
+</vector>

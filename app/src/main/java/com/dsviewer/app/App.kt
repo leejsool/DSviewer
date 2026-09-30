@@ -9,5 +9,6 @@ class App : Application() {
         super.onCreate()
         PDFBoxResourceLoader.init(applicationContext)
         EqRenderer.init(assets)
+        TextFont.init(this)
     }
 }

@@ -318,6 +318,19 @@ class InlineTextEditor(private val host: TextEditHost, private val docView: Docu
         notifyFormat()
     }
 
+    /** 글씨체 */
+    fun setFont(f: TextFont) {
+        if (!isEditing) return
+        val (a, b) = selection()
+        if (a == b) typing = typing.copy(font = f)
+        else {
+            val e = edit.text
+            Rich.clear(e, a, b, 'f')
+            if (f != TextFont.DEFAULT) e.setSpan(RFont(f), a, b, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        notifyFormat()
+    }
+
     private fun setValue(code: Char, v: Int?, typed: (Int?) -> CharStyle) {
         if (!isEditing) return
         val (a, b) = selection()
@@ -462,7 +475,7 @@ class InlineTextEditor(private val host: TextEditHost, private val docView: Docu
         }
     }
 
-    /** 고른 범위의 서식: 켜고 끄는 서식은 모든 글자가 그럴 때만 켜짐, 색·크기는 첫 글자 */
+    /** 고른 범위의 서식: 켜고 끄는 서식은 모든 글자가 그럴 때만 켜짐, 색·크기·글씨체는 첫 글자 */
     private fun rangeStyle(a: Int, b: Int): CharStyle {
         val t = edit.text
         val chars = (a until b).filter { t[it] != '\n' && t[it] != ZWSP }
@@ -472,7 +485,7 @@ class InlineTextEditor(private val host: TextEditHost, private val docView: Docu
         return CharStyle(
             bold = styles.all { it.bold }, italic = styles.all { it.italic },
             underline = styles.all { it.underline }, strike = styles.all { it.strike },
-            color = f.color, bg = f.bg, size = f.size,
+            color = f.color, bg = f.bg, size = f.size, font = f.font,
         )
     }
 

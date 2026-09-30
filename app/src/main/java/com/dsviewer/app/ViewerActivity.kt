@@ -162,7 +162,6 @@ class ViewerActivity : AppCompatActivity() {
         colorSep = findViewById(R.id.colorSep)
         shapeBar = findViewById(R.id.shapeBar)
         lassoRow = findViewById(R.id.lassoRow)
-        textSizeRow = findViewById(R.id.textSizeRow)
         pasteButton = findViewById(R.id.pasteButton)
         selectionBar = findViewById(R.id.selectionBar)
         setupSelectionTools()
@@ -1155,13 +1154,10 @@ class ViewerActivity : AppCompatActivity() {
 
     // ================= 글 넣기 =================
     // 글 도구로 쪽을 누르면 그 자리에 글 상자가 생기고 바로 친다 (InlineTextEditor).
-    // 글자 크기는 툴바의 '가' 칸 4개로 고른다 (굵기 칸 자리).
+    // 글자 크기는 글 상자를 치는 동안 뜨는 서식 줄의 크기 칸으로 고른다.
 
-    /** 글 크기 (pt): 작게 · 보통 · 크게 · 아주 크게 */
-    private val textSizes = floatArrayOf(14f, 20f, 28f, 40f)
-    private val textSizeNames = arrayOf("작게", "보통", "크게", "아주 크게")
-    private lateinit var textSizeRow: LinearLayout
-    private var textSizeIdx = 1
+    /** 새 글 상자의 기본 글 크기 (pt) */
+    private val defaultTextSize = 20f
 
     private fun onTextTap(page: Int, x: Float, y: Float, existing: Stroke?) {
         // 글 상자를 치는 중이면 상자 밖을 누른 것: 그 글만 넣고 끝낸다
@@ -1169,54 +1165,38 @@ class ViewerActivity : AppCompatActivity() {
             textEditor.commit()
             return
         }
-        textEditor.start(page, x, y, existing, textSizes[textSizeIdx], docView.penColor)
-        // 고치는 글의 크기를 '가' 칸에 보인다
-        if (existing != null) buildTextSizes(nearestTextSize(textEditor.size))
-    }
-
-    private fun nearestTextSize(size: Float) = textSizes.indices.minBy { kotlin.math.abs(textSizes[it] - size) }
-
-    /** '가' 칸 4개 (글자 크기). [shown]은 선택 표시할 칸 (고치는 글의 크기일 수 있다) */
-    private fun buildTextSizes(shown: Int = textSizeIdx) {
-        textSizeRow.removeAllViews()
-        val d = resources.displayMetrics.density
-        val previewSp = floatArrayOf(11f, 14f, 17f, 21f)
-        textSizes.indices.forEach { i ->
-            val v = TextView(this).apply {
-                layoutParams = LinearLayout.LayoutParams((30 * d).toInt(), (40 * d).toInt()).apply {
-                    marginStart = (if (i == 0) 0 else 2 * d).toInt()
-                }
-                setBackgroundResource(R.drawable.bg_tool)
-                gravity = android.view.Gravity.CENTER
-                text = "가"
-                textSize = previewSp[i]
-                includeFontPadding = false
-                isSelected = i == shown
-                contentDescription = "글자 크기 ${textSizeNames[i]}"
-                tooltipText = "글자 크기 ${textSizeNames[i]}"
-                setOnClickListener {
-                    textSizeIdx = i
-                    prefs.edit().putInt("textSizeIdx", i).apply()
-                    if (textEditor.isEditing) textEditor.size = textSizes[i]
-                    buildTextSizes()
-                }
-            }
-            textSizeRow.addView(v)
-        }
-        dock.fit(textSizeRow)
+        textEditor.start(page, x, y, existing, defaultTextSize, docView.penColor)
     }
 
     // ================= 글 서식 줄 =================
-    // 글 상자를 치는 동안 옵션 줄 자리에 뜬다: 체크 목록 · 글자색 · 배경색 · 서식 · 크기 · 굵게 · 기울임 · 밑줄 · 취소선 ·
-    // 번호 · 점 목록 · 왼쪽 · 가운데 · 오른쪽 맞춤 · 들여쓰기 · 내어쓰기
+    // 글 상자를 치는 동안 옵션 줄 자리에 뜬다: 글자색 · 배경색 · 서식 · 글씨체 · 크기 · 굵게 · 기울임 · 밑줄 · 취소선 ·
+    // 목록(체크 · 번호 · 점) · 정렬(왼쪽 · 가운데 · 오른쪽) · 들여쓰기 · 내어쓰기.
+    // 툴바가 왼쪽·오른쪽이면 서식 줄도 세로로 세워 툴바 옆에 붙인다 (placeOverlays)
 
+    /** 지금 쓰는 서식 줄: 가로 줄([formatBarH]) 또는 세로 줄([formatBarV]) */
     private lateinit var formatBar: View
+    private lateinit var formatBarH: View
+    private lateinit var formatBarV: android.widget.ScrollView
     private lateinit var fmtToggles: Map<CharToggle, TextView>
-    private lateinit var fmtLists: Map<ListKind, ImageButton>
-    private lateinit var fmtAligns: Map<TextAlign, ImageButton>
+    private lateinit var fmtListButton: ImageButton
+    private lateinit var fmtAlignButton: ImageButton
     private lateinit var fmtColorBar: View
     private lateinit var fmtBgSwatch: TextView
+    private lateinit var fmtPresetLabel: TextView
+    private lateinit var fmtFontLabel: TextView
     private lateinit var fmtSizeLabel: TextView
+
+    private class Choice<T>(val value: T, val icon: Int, val desc: String)
+    private val listChoices = listOf(
+        Choice(ListKind.CHECK, R.drawable.ic_fmt_checklist, "체크 목록"),
+        Choice(ListKind.NUMBER, R.drawable.ic_fmt_list_number, "번호 목록"),
+        Choice(ListKind.BULLET, R.drawable.ic_fmt_list_bullet, "점 목록"),
+    )
+    private val alignChoices = listOf(
+        Choice(TextAlign.LEFT, R.drawable.ic_fmt_align_left, "왼쪽 맞춤"),
+        Choice(TextAlign.CENTER, R.drawable.ic_fmt_align_center, "가운데 맞춤"),
+        Choice(TextAlign.RIGHT, R.drawable.ic_fmt_align_right, "오른쪽 맞춤"),
+    )
     private var fmtState: InlineTextEditor.FormatState? = null
 
     /** 글자 배경색 (형광펜처럼 옅은 색) */
@@ -1235,11 +1215,11 @@ class ViewerActivity : AppCompatActivity() {
             row.addView(v)
             return v
         }
-        fun icon(res: Int, desc: String, onClick: () -> Unit) = cell(ImageButton(this).apply {
+        fun icon(res: Int, desc: String, onClick: (View) -> Unit) = cell(ImageButton(this).apply {
             setImageResource(res)
             contentDescription = desc
             tooltipText = desc
-            setOnClickListener { onClick() }
+            setOnClickListener { onClick(it) }
         })
         fun label(text: CharSequence, desc: String, w: Float = 40f, onClick: (View) -> Unit) = cell(TextView(this).apply {
             this.text = text
@@ -1257,7 +1237,6 @@ class ViewerActivity : AppCompatActivity() {
             setBackgroundColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOutlineVariant))
         })
 
-        val check = icon(R.drawable.ic_fmt_checklist, "체크 목록") { textEditor.setList(ListKind.CHECK) }
         // 글자색: '가' 아래 색 막대
         val colorCell = cell(FrameLayout(this).apply {
             contentDescription = "글자색"
@@ -1285,7 +1264,9 @@ class ViewerActivity : AppCompatActivity() {
         }
         bgCell.addView(fmtBgSwatch, FrameLayout.LayoutParams((26 * d).toInt(), (26 * d).toInt(), android.view.Gravity.CENTER))
         sep()
-        label("서식 ▾", "기본 서식", 64f) { showPresetMenu(it) }
+        fmtPresetLabel = label("서식 ▾", "기본 서식", 64f) { showPresetMenu(it) }
+        // 글씨체: 지금 글씨체로 쓴 '가'
+        fmtFontLabel = label("가 ▾", "글씨체", 48f) { showFontMenu(it) }
         fmtSizeLabel = label("20 ▾", "글자 크기", 56f) { showSizeMenu(it) }
         sep()
         val bold = label("B", "굵게") { textEditor.toggle(CharToggle.BOLD) }.apply { setTypeface(typeface, android.graphics.Typeface.BOLD) }
@@ -1300,18 +1281,15 @@ class ViewerActivity : AppCompatActivity() {
         }
         fmtToggles = mapOf(CharToggle.BOLD to bold, CharToggle.ITALIC to italic, CharToggle.UNDERLINE to under, CharToggle.STRIKE to strike)
         sep()
-        val number = icon(R.drawable.ic_fmt_list_number, "번호 목록") { textEditor.setList(ListKind.NUMBER) }
-        val bullet = icon(R.drawable.ic_fmt_list_bullet, "점 목록") { textEditor.setList(ListKind.BULLET) }
-        fmtLists = mapOf(ListKind.CHECK to check, ListKind.NUMBER to number, ListKind.BULLET to bullet)
-        sep()
-        fmtAligns = mapOf(
-            TextAlign.LEFT to icon(R.drawable.ic_fmt_align_left, "왼쪽 맞춤") { textEditor.setAlign(TextAlign.LEFT) },
-            TextAlign.CENTER to icon(R.drawable.ic_fmt_align_center, "가운데 맞춤") { textEditor.setAlign(TextAlign.CENTER) },
-            TextAlign.RIGHT to icon(R.drawable.ic_fmt_align_right, "오른쪽 맞춤") { textEditor.setAlign(TextAlign.RIGHT) },
-        )
+        // 목록 (체크 · 번호 · 점)과 정렬 (왼쪽 · 가운데 · 오른쪽)은 한 칸씩. 누르면 셋 중 고르는 창이 뜬다
+        fmtListButton = icon(R.drawable.ic_fmt_list_bullet, "목록") { showChoicePopup(it, listChoices, fmtState?.para?.list) { k -> textEditor.setList(k) } }
+        fmtAlignButton = icon(R.drawable.ic_fmt_align_left, "정렬") { showChoicePopup(it, alignChoices, fmtState?.para?.align) { a -> textEditor.setAlign(a) } }
         sep()
         icon(R.drawable.ic_fmt_indent, "들여쓰기") { textEditor.indent(1) }
         icon(R.drawable.ic_fmt_outdent, "내어쓰기") { textEditor.indent(-1) }
+        fmtListButton.setImageDrawable(choiceIcon(R.drawable.ic_fmt_list_bullet))
+        fmtAlignButton.setImageDrawable(choiceIcon(R.drawable.ic_fmt_align_left))
+        fitFormatBar()
 
         textEditor.onEditingChanged = { editing ->
             formatBar.visibility = if (editing) View.VISIBLE else View.GONE
@@ -1324,8 +1302,11 @@ class ViewerActivity : AppCompatActivity() {
     private fun updateFormatBar(st: InlineTextEditor.FormatState) {
         fmtState = st
         fmtToggles.forEach { (t, v) -> v.isSelected = Rich.has(st.style, t) }
-        fmtLists.forEach { (k, v) -> v.isSelected = st.para.list == k }
-        fmtAligns.forEach { (a, v) -> v.isSelected = st.para.align == a }
+        // 목록 칸: 켜진 목록의 아이콘 (없으면 점 목록 아이콘, 칠하지 않음). 정렬 칸: 지금 정렬의 아이콘
+        val list = listChoices.firstOrNull { it.value == st.para.list }
+        fmtListButton.setImageDrawable(choiceIcon((list ?: listChoices.last()).icon))
+        fmtListButton.isSelected = list != null
+        fmtAlignButton.setImageDrawable(choiceIcon(alignChoices.first { it.value == st.para.align }.icon))
         fmtColorBar.setBackgroundColor(st.style.color ?: textEditor.color)
         val d = resources.displayMetrics.density
         fmtBgSwatch.background = GradientDrawable().apply {
@@ -1333,13 +1314,92 @@ class ViewerActivity : AppCompatActivity() {
             setColor(st.style.bg ?: Color.TRANSPARENT)
             setStroke((1 * d).toInt(), Color.argb(if (st.style.bg == null) 90 else 40, 0, 0, 0))
         }
-        fmtSizeLabel.text = "${ptLabel(st.sizePt)} ▾"
+        fmtSizeLabel.text = "${ptLabel(st.sizePt)}${dropSep()}▾"
+        fmtFontLabel.typeface = st.style.font.typeface
+    }
+
+    /** 세로 서식 줄에서는 '▾'를 글 아래 줄로 */
+    private fun dropSep() = if (dock.side.vertical) "\n" else " "
+
+    /** 서식 줄의 칸들을 지금 툴바 방향(가로/세로)에 맞춘다 */
+    private fun fitFormatBar() {
+        val row = findViewById<LinearLayout>(R.id.formatRow)
+        val v = dock.side.vertical
+        val d = resources.displayMetrics.density
+        dock.fit(row)
+        row.setPadding(((if (v) 4 else 8) * d).toInt(), ((if (v) 8 else 4) * d).toInt(),
+            ((if (v) 4 else 8) * d).toInt(), ((if (v) 8 else 4) * d).toInt())
+        // 세로 줄은 칸이 좁아 글을 줄여 두 줄로
+        fmtPresetLabel.text = "서식${dropSep()}▾"
+        fmtFontLabel.text = "가${dropSep()}▾"
+        fmtFontLabel.textSize = if (v) 15f else 17f
+        fmtFontLabel.setLineSpacing(0f, if (v) 0.9f else 1f)
+        fmtSizeLabel.text = "${ptLabel(fmtState?.sizePt ?: 20f)}${dropSep()}▾"
+        for (l in listOf(fmtPresetLabel, fmtSizeLabel)) {
+            l.textSize = if (v) 13f else 17f
+            l.setLineSpacing(0f, if (v) 0.9f else 1f)
+        }
+    }
+
+    /** 서식 아이콘 + 오른쪽 아래 작은 삼각형 (누르면 고르는 창이 뜬다는 표시) */
+    private fun choiceIcon(res: Int) = LayerDrawable(arrayOf(getDrawable(res)!!, getDrawable(R.drawable.ic_corner_more)!!))
+
+    /**
+     * 목록·정렬 칸을 누르면 뜨는 창: 셋 중 하나를 고른다 (지금 것은 칠해져 있다).
+     * 서식 줄이 가로면 칸 위(아래)에 가로로, 세로면 칸 옆(문서 쪽)에 세로로 뜬다
+     */
+    private fun <T> showChoicePopup(anchor: View, choices: List<Choice<T>>, current: T?, onPick: (T) -> Unit) {
+        val d = resources.displayMetrics.density
+        val vertical = dock.side.vertical
+        val box = LinearLayout(this).apply {
+            orientation = if (vertical) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+            val pd = (6 * d).toInt()
+            setPadding(pd, pd, pd, pd)
+            background = GradientDrawable().apply {
+                cornerRadius = 14 * d
+                setColor(MaterialColors.getColor(anchor, com.google.android.material.R.attr.colorSurfaceContainerHigh))
+            }
+        }
+        val popup = android.widget.PopupWindow(box, LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT, true)
+        popup.elevation = 8 * d
+        choices.forEachIndexed { i, c ->
+            box.addView(ImageButton(this).apply {
+                layoutParams = LinearLayout.LayoutParams((40 * d).toInt(), (40 * d).toInt()).apply {
+                    if (i > 0) { if (vertical) topMargin = (2 * d).toInt() else marginStart = (2 * d).toInt() }
+                }
+                setBackgroundResource(R.drawable.bg_tool)
+                setImageResource(c.icon)
+                contentDescription = c.desc
+                tooltipText = c.desc
+                isSelected = c.value == current
+                setOnClickListener {
+                    onPick(c.value)
+                    popup.dismiss()
+                }
+            })
+        }
+        box.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
+        val w = box.measuredWidth
+        val h = box.measuredHeight
+        val loc = IntArray(2)
+        anchor.getLocationOnScreen(loc)
+        val gap = (6 * d).toInt()
+        val screenW = window.decorView.width
+        val screenH = window.decorView.height
+        val (x, y) = when (dock.side) {
+            ToolbarSide.LEFT -> loc[0] + anchor.width + gap to loc[1] + anchor.height / 2 - h / 2
+            ToolbarSide.RIGHT -> loc[0] - w - gap to loc[1] + anchor.height / 2 - h / 2
+            ToolbarSide.TOP -> loc[0] + anchor.width / 2 - w / 2 to loc[1] + anchor.height + gap
+            ToolbarSide.BOTTOM -> loc[0] + anchor.width / 2 - w / 2 to loc[1] - h - gap
+        }
+        popup.showAtLocation(anchor, android.view.Gravity.NO_GRAVITY,
+            x.coerceIn(gap, maxOf(gap, screenW - w - gap)), y.coerceIn(gap, maxOf(gap, screenH - h - gap)))
     }
 
     private fun ptLabel(v: Float) = if (kotlin.math.abs(v - v.roundToInt()) < 0.05f) "${v.roundToInt()}" else String.format("%.1f", v)
 
-    /** 서식 줄의 창은 문서 쪽으로 (툴바가 위면 아래로, 아니면 위로) */
-    private fun fmtSide() = if (dock.side == ToolbarSide.TOP) ToolbarSide.TOP else ToolbarSide.BOTTOM
+    /** 서식 줄의 창은 문서 쪽으로 (툴바가 위면 아래로, 아래면 위로, 왼쪽·오른쪽이면 옆으로) */
+    private fun fmtSide() = dock.side
 
     private fun openTextColorPicker(anchor: View) {
         val initial = fmtState?.style?.color ?: textEditor.color
@@ -1407,6 +1467,25 @@ class ViewerActivity : AppCompatActivity() {
         popup.show()
     }
 
+    /** 글씨체 고르기: 이름을 그 글씨체로 보인다 */
+    private fun showFontMenu(anchor: View) {
+        val popup = PopupMenu(this, anchor)
+        val cur = fmtState?.style?.font ?: TextFont.DEFAULT
+        TextFont.entries.forEach { f ->
+            val title = android.text.SpannableString(f.label).apply {
+                setSpan(android.text.style.TypefaceSpan(f.typeface), 0, length, 0)
+                setSpan(android.text.style.RelativeSizeSpan(1.15f), 0, length, 0)
+            }
+            popup.menu.add(2, f.ordinal, f.ordinal, title).isChecked = f == cur
+        }
+        popup.menu.setGroupCheckable(2, true, true)
+        popup.setOnMenuItemClickListener { item ->
+            textEditor.setFont(TextFont.entries[item.itemId])
+            true
+        }
+        popup.show()
+    }
+
     /** 글자 크기 (pt) 고르기 */
     private fun showSizeMenu(anchor: View) {
         val popup = PopupMenu(this, anchor)
@@ -1427,7 +1506,13 @@ class ViewerActivity : AppCompatActivity() {
     // 툴바 맨 앞 손잡이를 끌어 위·아래·왼쪽·오른쪽에 붙인다 (ToolbarDock). 자리는 기억해 둔다.
 
     private fun setupToolbarDock() {
-        formatBar = findViewById(R.id.formatBar)
+        formatBarH = findViewById(R.id.formatBar)
+        formatBar = formatBarH
+        formatBarV = android.widget.ScrollView(this).apply {
+            setBackgroundColor(MaterialColors.getColor(formatBarH, com.google.android.material.R.attr.colorSurfaceContainer))
+            isVerticalScrollBarEnabled = false
+            visibility = View.GONE
+        }
         topOverlay = findViewById(R.id.topOverlay)
         bottomOverlay = findViewById(R.id.bottomOverlay)
         dock = ToolbarDock(
@@ -1453,10 +1538,31 @@ class ViewerActivity : AppCompatActivity() {
         hideOptionBar()
         val top = side == ToolbarSide.TOP
         val target = if (top) topOverlay else bottomOverlay
-        for (v in if (top) listOf(optionBar, formatBar, shapeBar) else listOf(shapeBar, formatBar, optionBar)) {
+        // 서식 줄: 가로 툴바면 가로 줄(위·아래 묶음 안), 세로 툴바면 세로 줄을 문서 화면의 그쪽 가장자리에
+        val newFormat = if (side.vertical) formatBarV else formatBarH
+        if (newFormat !== formatBar) {
+            val row = findViewById<LinearLayout>(R.id.formatRow)
+            (row.parent as ViewGroup).removeView(row)
+            (newFormat as ViewGroup).addView(row)
+            newFormat.visibility = formatBar.visibility
+            formatBar.visibility = View.GONE
+            (formatBar.parent as? ViewGroup)?.removeView(formatBar)
+            formatBar = newFormat
+        }
+        val bars = if (side.vertical) listOf(shapeBar, optionBar)
+            else if (top) listOf(optionBar, formatBar, shapeBar) else listOf(shapeBar, formatBar, optionBar)
+        for (v in bars) {
             (v.parent as? ViewGroup)?.removeView(v)
             target.addView(v)
         }
+        if (side.vertical) {
+            (formatBar.parent as? ViewGroup)?.removeView(formatBar)
+            val frame = findViewById<FrameLayout>(R.id.docFrame)
+            frame.addView(formatBar, frame.indexOfChild(topOverlay) + 1, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT,
+                if (side == ToolbarSide.LEFT) android.view.Gravity.START else android.view.Gravity.END))
+        }
+        if (::fmtSizeLabel.isInitialized) fitFormatBar()
         val d = resources.displayMetrics.density
         // 툴바에서 먼 쪽에 여백을 둔다
         findViewById<View>(R.id.shapeChips).let {
@@ -1803,8 +1909,6 @@ class ViewerActivity : AppCompatActivity() {
             auto
         }
 
-        textSizeIdx = prefs.getInt("textSizeIdx", 1).coerceIn(textSizes.indices)
-        buildTextSizes()
         toolButtons.getValue(Tool.SHAPE).setImageDrawable(ShapePenDrawable(this))
         setupShapeBar()
         updateEraserIcon()
@@ -2072,7 +2176,6 @@ class ViewerActivity : AppCompatActivity() {
         val noColor = t == Tool.ERASER || t == Tool.LASSO
         colorSep.visibility = if (noColor) View.GONE else View.VISIBLE
         lassoRow.visibility = if (t == Tool.LASSO) View.VISIBLE else View.GONE
-        textSizeRow.visibility = if (t == Tool.TEXT) View.VISIBLE else View.GONE
         pasteButton.visibility = if (docView.hasClipboard) View.VISIBLE else View.GONE
         if (noColor) {
             colorRow.visibility = View.GONE

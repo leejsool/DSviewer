@@ -90,11 +90,12 @@ object PdfInk {
 
     /** 원본 [src]에 필기를 주석으로 넣어 [out]에 저장 */
     fun save(src: File, out: File, pages: List<List<Stroke>>) {
-        // 글 외형을 가져온 임시 PDF들 (다 저장한 뒤에 닫는다)
-        val temps = ArrayList<PDDocument>()
+        // 글 외형을 그린 임시 PDF (다 저장한 뒤에 닫는다)
+        var texts: TextForms? = null
         try {
             PDDocument.load(src).use { doc ->
                 if (doc.isEncrypted) doc.isAllSecurityToBeRemoved = true
+                texts = renderTexts(doc, pages)
                 for ((i, page) in doc.pages.withIndex()) {
                     val list: MutableList<PDAnnotation> =
                         page.annotations.filterTo(ArrayList()) { !it.cosObject.containsKey(KEY_NAME) }
@@ -105,7 +106,7 @@ object PdfInk {
                             list.add(
                                 when {
                                     s.image != null -> makeImageAnnotation(doc, page, s)
-                                    s.text != null -> makeTextAnnotation(doc, page, s, temps)
+                                    s.text != null -> makeTextAnnotation(doc, page, s, texts!!)
                                     else -> makeAnnotation(doc, page, s)
                                 }
                             )
@@ -116,8 +117,40 @@ object PdfInk {
                 doc.save(out)
             }
         } finally {
-            temps.forEach { it.close() }
+            texts?.src?.close()
         }
+    }
+
+    /** 글 상자 외형들: 한 임시 PDF의 쪽들 ([index]는 글 획 → 쪽 번호) */
+    private class TextForms(val src: PDDocument?, val index: java.util.IdentityHashMap<Stroke, Int>, val layer: LayerUtility)
+
+    /**
+     * 모든 글 상자를 안드로이드 PDF 하나에 한 쪽씩 그린다. 한 문서 안에서는 글꼴이 한 번만 담기고
+     * (쓴 글자만 모아서), 같은 LayerUtility로 가져오면 그 글꼴을 모든 글 상자가 같이 쓴다.
+     * 글 상자마다 PDF를 따로 만들면 같은 글꼴이 글 상자 수만큼 들어가 파일이 커진다
+     */
+    private fun renderTexts(doc: PDDocument, pages: List<List<Stroke>>): TextForms {
+        val index = java.util.IdentityHashMap<Stroke, Int>()
+        val layer = LayerUtility(doc)
+        val all = pages.flatten().filter { it.text != null && it.count > 0 }
+        if (all.isEmpty()) return TextForms(null, index, layer)
+        val bytes = ByteArrayOutputStream().use { out ->
+            val pd = PdfDocument()
+            try {
+                for ((n, s) in all.withIndex()) {
+                    val t = s.text!!
+                    val pg = pd.startPage(PdfDocument.PageInfo.Builder(t.boxW, t.boxH, n + 1).create())
+                    t.draw(pg.canvas, s.color)
+                    pd.finishPage(pg)
+                    index[s] = n
+                }
+                pd.writeTo(out)
+            } finally {
+                pd.close()
+            }
+            out.toByteArray()
+        }
+        return TextForms(PDDocument.load(bytes), index, layer)
     }
 
     private fun makeAnnotation(doc: PDDocument, page: PDPage, s: Stroke): PDAnnotation {
@@ -237,10 +270,10 @@ object PdfInk {
     }
 
     /**
-     * 글 주석(Stamp). 글을 안드로이드 PDF 한 쪽(상자 크기)으로 그려 글꼴째 담고,
+     * 글 주석(Stamp). 글을 안드로이드 PDF 한 쪽(상자 크기)으로 그려 글꼴째 담고 ([renderTexts]),
      * 그 쪽을 폼으로 가져와 네 모서리에 맞춰 외형에 넣는다 (다른 앱에서도 글자가 그대로, 벡터로 보인다)
      */
-    private fun makeTextAnnotation(doc: PDDocument, page: PDPage, s: Stroke, temps: MutableList<PDDocument>): PDAnnotation {
+    private fun makeTextAnnotation(doc: PDDocument, page: PDPage, s: Stroke, texts: TextForms): PDAnnotation {
         val t = s.text!!
         val box = page.cropBox
         val rot = ((page.rotation % 360) + 360) % 360
@@ -249,21 +282,7 @@ object PdfInk {
         for (i in 0 until 4) toUser(s.x(i), s.y(i), box, rot, ux, uy, i)
         val rect = PDRectangle(ux.min(), uy.min(), ux.max() - ux.min(), uy.max() - uy.min())
 
-        val bytes = ByteArrayOutputStream().use { out ->
-            val pd = PdfDocument()
-            try {
-                val pg = pd.startPage(PdfDocument.PageInfo.Builder(t.boxW, t.boxH, 1).create())
-                t.draw(pg.canvas, s.color)
-                pd.finishPage(pg)
-                pd.writeTo(out)
-            } finally {
-                pd.close()
-            }
-            out.toByteArray()
-        }
-        val tmp = PDDocument.load(bytes)
-        temps.add(tmp)
-        val form = LayerUtility(doc).importPageAsForm(tmp, 0)
+        val form = texts.layer.importPageAsForm(texts.src!!, texts.index.getValue(s))
 
         val ap = PDAppearanceStream(doc)
         ap.bBox = rect
