@@ -42,6 +42,16 @@ enum class WidthKind(val min: Float, val max: Float, val step: Float, val defaul
             else -> String.format("%.2f mm", v * 0.3528f)
         }
 
+    /** 굵기 칸에 적는 짧은 수치 (단위 없이): 펜·형광펜·테이프는 mm, 지우개는 크기, 레이저는 굵기 */
+    fun short(v: Float): String {
+        fun trim(x: Float, digits: Int) = String.format("%.${digits}f", x).trimEnd('0').trimEnd('.')
+        return when (this) {
+            ERASER -> "${v.roundToInt()}"
+            LASER -> trim(v, 1)
+            else -> (v * 0.3528f).let { mm -> trim(mm, if (mm < 1f) 2 else 1) }
+        }
+    }
+
     companion object {
         fun of(t: Tool) = when (t) {
             Tool.PEN, Tool.SHAPE -> PEN
@@ -54,7 +64,10 @@ enum class WidthKind(val min: Float, val max: Float, val step: Float, val defaul
     }
 }
 
-/** 굵기 칸 하나: 펜·형광펜은 그 굵기의 짧은 선, 지우개는 그 크기의 원 */
+/**
+ * 굵기 칸 하나: 펜·형광펜은 그 굵기의 짧은 선, 지우개는 그 크기의 원. 아래에 지금 수치를 작게 적는다
+ * (펜·형광펜·테이프는 mm, 지우개는 크기, 레이저는 굵기)
+ */
 class WidthSwatchView @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? = null) : View(ctx, attrs) {
     var kind = WidthKind.PEN
     var value = 1f
@@ -67,24 +80,33 @@ class WidthSwatchView @JvmOverloads constructor(ctx: Context, attrs: AttributeSe
         style = Paint.Style.STROKE; strokeWidth = dp(1f); color = Color.argb(90, 0, 0, 0)
     }
     private val fg = MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurface)
+    private val number = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textAlign = Paint.Align.CENTER
+        textSize = dp(9.5f)
+        color = MaterialColors.getColor(this@WidthSwatchView, com.google.android.material.R.attr.colorOnSurfaceVariant)
+    }
 
     override fun onDraw(canvas: Canvas) {
-        val cx = width / 2f; val cy = height / 2f
+        // 아래 한 줄은 수치, 그 위 남은 자리 가운데에 모양
+        val numH = dp(11f)
+        val cx = width / 2f
+        val cy = (height - numH) / 2f + dp(1f)
+        canvas.drawText(kind.short(value), cx, height - dp(3f), number)
         val t = kind.t(value)
         if (kind == WidthKind.ERASER) {
             paint.style = Paint.Style.STROKE
             paint.strokeWidth = dp(1.5f)
             paint.color = fg
-            canvas.drawCircle(cx, cy, dp(3f + t * 10f), paint)
+            canvas.drawCircle(cx, cy, dp(2.5f + t * 6.5f), paint)
             return
         }
         paint.style = Paint.Style.STROKE
-        paint.strokeWidth = dp(if (kind == WidthKind.PEN) 1.5f + t * 8f else 3f + t * 11f)
+        paint.strokeWidth = dp(if (kind == WidthKind.PEN) 1.5f + t * 6f else 2.5f + t * 7.5f)
         paint.color = if (kind == WidthKind.HIGHLIGHTER) ColorUtils.setAlphaComponent(color, 170) else color
         paint.strokeCap = if (kind == WidthKind.HIGHLIGHTER || kind == WidthKind.TAPE) Paint.Cap.SQUARE else Paint.Cap.ROUND
         // 칸이 세로로 길면(가로 툴바) 세로선, 가로로 길면(세로 툴바) 가로선
         val upright = height > width
-        val half = dp(9f)
+        val half = dp(if (upright) 8f else 9f)
         val (hx, hy) = if (upright) 0f to half else half to 0f
         canvas.drawLine(cx - hx, cy - hy, cx + hx, cy + hy, paint)
         // 흰색 계열은 배경에 묻히지 않게 테두리

@@ -125,7 +125,8 @@
                 android:textSize="13sp"
                 android:visibility="gone" />
 
-            <!-- 보정 펜을 고르면 나오는 도형 줄 (칩은 ViewerActivity.setupShapeBar에서 만든다) -->
+            <!-- 보정 펜을 고르면 나오는 도형 줄 (칸은 ViewerActivity.buildShapeBar에서 만든다).
+                 툴바가 왼쪽·오른쪽이면 shapeRow를 코드에서 만든 세로 줄로 옮긴다 (ViewerActivity.placeOverlays) -->
             <HorizontalScrollView
                 android:id="@+id/shapeBar"
                 android:layout_width="match_parent"
@@ -134,16 +135,15 @@
                 android:scrollbars="none"
                 android:visibility="gone">
 
-                <com.google.android.material.chip.ChipGroup
-                    android:id="@+id/shapeChips"
+                <LinearLayout
+                    android:id="@+id/shapeRow"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:paddingHorizontal="12dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="8dp"
                     android:paddingTop="6dp"
-                    app:chipSpacingHorizontal="6dp"
-                    app:selectionRequired="true"
-                    app:singleLine="true"
-                    app:singleSelection="true" />
+                    android:paddingBottom="2dp" />
             </HorizontalScrollView>
 
             <!-- 글 상자를 치는 동안 뜨는 서식 줄 (ViewerActivity.setupFormatBar).
@@ -166,7 +166,8 @@
                     android:paddingVertical="4dp" />
             </HorizontalScrollView>
 
-            <!-- 지우개·선택 도구를 누르면 올라오는 옵션 줄. 하나 고르면 사라진다 (ViewerActivity.showOptionBar) -->
+            <!-- 지우개·테이프 도구를 누르면 올라오는 옵션 줄. 하나 고르면 사라진다 (ViewerActivity.showOptionBar).
+                 툴바가 왼쪽·오른쪽이면 toolOptions를 코드에서 만든 세로 줄로 옮긴다 -->
             <HorizontalScrollView
                 android:id="@+id/toolOptionBar"
                 android:layout_width="match_parent"

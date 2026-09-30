@@ -42,9 +42,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.button.MaterialButton
-import com.google.android.material.chip.Chip
 import com.google.android.material.color.MaterialColors
-import com.google.android.material.chip.ChipGroup
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.dsviewer.app.hwp.HRenderer
 import com.dsviewer.app.hwp.HwpReader
@@ -66,7 +64,11 @@ class ViewerActivity : AppCompatActivity() {
     private lateinit var colorRow: LinearLayout
     private lateinit var widthRow: LinearLayout
     private lateinit var colorSep: View
+    /** 지금 쓰는 도형 줄: 가로 줄([shapeBarH]) 또는 세로 줄([shapeBarV]). 칸들은 [shapeRow]에 */
     private lateinit var shapeBar: View
+    private lateinit var shapeBarH: View
+    private lateinit var shapeBarV: View
+    private lateinit var shapeRow: LinearLayout
     private lateinit var lassoRow: View
     private lateinit var pasteButton: View
     private lateinit var selectionBar: View
@@ -143,7 +145,13 @@ class ViewerActivity : AppCompatActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_viewer)
-        applyInsets(findViewById(R.id.root))
+        // 화면 키보드가 올라오면 그 높이만큼 화면 전체를 줄여 아래 툴바·서식 줄이 키보드 위에 보이게 한다
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.root)) { v, insets ->
+            val b = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
+            v.setPadding(b.left, b.top, b.right, maxOf(b.bottom, ime.bottom))
+            insets
+        }
 
         undoButton = findViewById(R.id.actionUndo)
         redoButton = findViewById(R.id.actionRedo)
@@ -161,6 +169,7 @@ class ViewerActivity : AppCompatActivity() {
         widthRow = findViewById(R.id.widthRow)
         colorSep = findViewById(R.id.colorSep)
         shapeBar = findViewById(R.id.shapeBar)
+        shapeRow = findViewById(R.id.shapeRow)
         lassoRow = findViewById(R.id.lassoRow)
         pasteButton = findViewById(R.id.pasteButton)
         selectionBar = findViewById(R.id.selectionBar)
@@ -176,7 +185,10 @@ class ViewerActivity : AppCompatActivity() {
 
             override fun onSelectionChanged(rect: RectF?, count: Int) = placeSelectionBar(rect, count)
 
-            override fun onPenDown() = hideOptionBar()
+            override fun onPenDown() {
+                hideOptionBar()
+                closeFlyout()
+            }
 
             override fun onTextTap(page: Int, x: Float, y: Float, existing: Stroke?) =
                 this@ViewerActivity.onTextTap(page, x, y, existing)
@@ -1176,7 +1188,7 @@ class ViewerActivity : AppCompatActivity() {
     /** 지금 쓰는 서식 줄: 가로 줄([formatBarH]) 또는 세로 줄([formatBarV]) */
     private lateinit var formatBar: View
     private lateinit var formatBarH: View
-    private lateinit var formatBarV: android.widget.ScrollView
+    private lateinit var formatBarV: View
     private lateinit var fmtToggles: Map<CharToggle, TextView>
     private lateinit var fmtListButton: ImageButton
     private lateinit var fmtAlignButton: ImageButton
@@ -1378,22 +1390,7 @@ class ViewerActivity : AppCompatActivity() {
                 }
             })
         }
-        box.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
-        val w = box.measuredWidth
-        val h = box.measuredHeight
-        val loc = IntArray(2)
-        anchor.getLocationOnScreen(loc)
-        val gap = (6 * d).toInt()
-        val screenW = window.decorView.width
-        val screenH = window.decorView.height
-        val (x, y) = when (dock.side) {
-            ToolbarSide.LEFT -> loc[0] + anchor.width + gap to loc[1] + anchor.height / 2 - h / 2
-            ToolbarSide.RIGHT -> loc[0] - w - gap to loc[1] + anchor.height / 2 - h / 2
-            ToolbarSide.TOP -> loc[0] + anchor.width / 2 - w / 2 to loc[1] + anchor.height + gap
-            ToolbarSide.BOTTOM -> loc[0] + anchor.width / 2 - w / 2 to loc[1] - h - gap
-        }
-        popup.showAtLocation(anchor, android.view.Gravity.NO_GRAVITY,
-            x.coerceIn(gap, maxOf(gap, screenW - w - gap)), y.coerceIn(gap, maxOf(gap, screenH - h - gap)))
+        showBeside(popup, box, anchor)
     }
 
     private fun ptLabel(v: Float) = if (kotlin.math.abs(v - v.roundToInt()) < 0.05f) "${v.roundToInt()}" else String.format("%.1f", v)
@@ -1508,11 +1505,11 @@ class ViewerActivity : AppCompatActivity() {
     private fun setupToolbarDock() {
         formatBarH = findViewById(R.id.formatBar)
         formatBar = formatBarH
-        formatBarV = android.widget.ScrollView(this).apply {
-            setBackgroundColor(MaterialColors.getColor(formatBarH, com.google.android.material.R.attr.colorSurfaceContainer))
-            isVerticalScrollBarEnabled = false
-            visibility = View.GONE
-        }
+        formatBarV = sideScroll()
+        shapeBarH = shapeBar
+        shapeBarV = sideScroll()
+        optionBarH = optionBar
+        optionBarV = sideScroll()
         topOverlay = findViewById(R.id.topOverlay)
         bottomOverlay = findViewById(R.id.bottomOverlay)
         dock = ToolbarDock(
@@ -1530,50 +1527,61 @@ class ViewerActivity : AppCompatActivity() {
         dock.dock(ToolbarSide.entries.firstOrNull { it.name == saved } ?: ToolbarSide.BOTTOM)
     }
 
+    /** 세로 툴바 옆에 붙는 줄(서식·도형·옵션)을 담는 세로 스크롤 */
+    private fun sideScroll() = android.widget.ScrollView(this).apply {
+        setBackgroundColor(MaterialColors.getColor(shapeBar, com.google.android.material.R.attr.colorSurfaceContainer))
+        isVerticalScrollBarEnabled = false
+        visibility = View.GONE
+    }
+
+    /** 줄 [row]를 [old] 스크롤에서 [new] 스크롤로 옮겨 담고 보임 상태를 넘긴다. 새로 쓰는 스크롤을 돌려준다 */
+    private fun swapBar(old: View, new: View, row: View): View {
+        if (new === old) return old
+        (row.parent as? ViewGroup)?.removeView(row)
+        (new as ViewGroup).addView(row)
+        new.visibility = old.visibility
+        old.visibility = View.GONE
+        (old.parent as? ViewGroup)?.removeView(old)
+        return new
+    }
+
     /**
-     * 도형 줄·옵션 줄은 툴바가 위면 문서 위쪽에, 아니면 아래쪽에 겹쳐 띄운다 (옵션 줄이 툴바에 가깝게).
-     * 세로 툴바에서는 '붙여넣기'를 아이콘만 보인다
+     * 도형 줄·옵션 줄·서식 줄은 툴바 옆에 나란히 띄운다: 툴바가 위면 문서 위쪽에, 아래면 아래쪽에 가로로,
+     * 왼쪽·오른쪽이면 문서 화면의 그쪽 가장자리에 세로로. 세로 툴바에서는 '붙여넣기'를 아이콘만 보인다
      */
     private fun placeOverlays(side: ToolbarSide) {
         hideOptionBar()
+        closeFlyout()
         val top = side == ToolbarSide.TOP
+        val v = side.vertical
         val target = if (top) topOverlay else bottomOverlay
-        // 서식 줄: 가로 툴바면 가로 줄(위·아래 묶음 안), 세로 툴바면 세로 줄을 문서 화면의 그쪽 가장자리에
-        val newFormat = if (side.vertical) formatBarV else formatBarH
-        if (newFormat !== formatBar) {
-            val row = findViewById<LinearLayout>(R.id.formatRow)
-            (row.parent as ViewGroup).removeView(row)
-            (newFormat as ViewGroup).addView(row)
-            newFormat.visibility = formatBar.visibility
-            formatBar.visibility = View.GONE
-            (formatBar.parent as? ViewGroup)?.removeView(formatBar)
-            formatBar = newFormat
-        }
-        val bars = if (side.vertical) listOf(shapeBar, optionBar)
+        formatBar = swapBar(formatBar, if (v) formatBarV else formatBarH, findViewById(R.id.formatRow))
+        shapeBar = swapBar(shapeBar, if (v) shapeBarV else shapeBarH, shapeRow)
+        optionBar = swapBar(optionBar, if (v) optionBarV else optionBarH, optionRow)
+        val bars = if (v) listOf(shapeBar, optionBar, formatBar)
             else if (top) listOf(optionBar, formatBar, shapeBar) else listOf(shapeBar, formatBar, optionBar)
-        for (v in bars) {
-            (v.parent as? ViewGroup)?.removeView(v)
-            target.addView(v)
-        }
-        if (side.vertical) {
-            (formatBar.parent as? ViewGroup)?.removeView(formatBar)
-            val frame = findViewById<FrameLayout>(R.id.docFrame)
-            frame.addView(formatBar, frame.indexOfChild(topOverlay) + 1, FrameLayout.LayoutParams(
+        val frame = findViewById<FrameLayout>(R.id.docFrame)
+        for (b in bars) {
+            (b.parent as? ViewGroup)?.removeView(b)
+            if (v) frame.addView(b, frame.indexOfChild(topOverlay) + 1, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT,
                 if (side == ToolbarSide.LEFT) android.view.Gravity.START else android.view.Gravity.END))
+            else target.addView(b)
         }
         if (::fmtSizeLabel.isInitialized) fitFormatBar()
         val d = resources.displayMetrics.density
-        // 툴바에서 먼 쪽에 여백을 둔다
-        findViewById<View>(R.id.shapeChips).let {
-            it.setPadding(it.paddingLeft, if (top) 0 else (6 * d).toInt(), it.paddingRight, if (top) (6 * d).toInt() else 0)
+        fun px(x: Int) = (x * d).toInt()
+        // 도형 줄·옵션 줄: 가로면 칸이 옆으로, 세로면 아래로 늘어선다. 가로 줄은 툴바에서 먼 쪽에 여백을 조금 더
+        for (row in listOf(shapeRow, optionRow)) {
+            row.orientation = if (v) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+            row.gravity = if (v) android.view.Gravity.CENTER_HORIZONTAL else android.view.Gravity.CENTER_VERTICAL
+            if (v) row.setPadding(px(4), px(8), px(4), px(8))
+            else row.setPadding(px(8), px(if (top) 2 else 6), px(8), px(if (top) 6 else 2))
         }
-        findViewById<View>(R.id.toolOptions).let {
-            it.setPadding(it.paddingLeft, ((if (top) 2 else 6) * d).toInt(), it.paddingRight, ((if (top) 6 else 2) * d).toInt())
-        }
+        if (::toolButtons.isInitialized) buildShapeBar()
         (pasteButton as MaterialButton).apply {
-            text = if (side.vertical) "" else "붙여넣기"
-            iconPadding = if (side.vertical) 0 else (8 * d).toInt()
+            text = if (v) "" else "붙여넣기"
+            iconPadding = if (v) 0 else px(8)
             tooltipText = "붙여넣기"
         }
         updateOverlayInsets()
@@ -1591,7 +1599,10 @@ class ViewerActivity : AppCompatActivity() {
     // 지우개나 선택 도구를 누르면 도구막대 위로 옵션 줄이 올라오고, 하나 고르면 사라진다.
     // 도구 버튼 아이콘은 지금 고른 방식을 보여 준다.
 
+    /** 지금 쓰는 옵션 줄: 가로 줄([optionBarH]) 또는 세로 줄([optionBarV]). 칸들은 [optionRow]에 */
     private lateinit var optionBar: View
+    private lateinit var optionBarH: View
+    private lateinit var optionBarV: View
     private lateinit var optionRow: LinearLayout
     /** 옵션 줄이 떠 있는 도구 (없으면 null) */
     private var optionTool: Tool? = null
@@ -1643,23 +1654,6 @@ class ViewerActivity : AppCompatActivity() {
                     confirmClearPage()
                 }
             }
-            Tool.HIGHLIGHTER -> {
-                addOption(R.drawable.ic_highlighter, "자유 형광펜", !docView.hlStraight) { setHlStraight(false) }
-                addOption(R.drawable.ic_ruler, "직선 형광펜", docView.hlStraight) { setHlStraight(true) }
-            }
-            Tool.LASER -> {
-                // 레이저가 사라지는 시간 (색·굵기는 아래 도구막대)
-                for (sec in intArrayOf(1, 2, 3, 5)) {
-                    addOption(R.drawable.ic_timer, "${sec}초 뒤 사라짐", docView.laserFadeMs == sec * 1000L) {
-                        docView.laserFadeMs = sec * 1000L
-                        prefs.edit().putLong("laserFadeMs", sec * 1000L).apply()
-                    }
-                }
-            }
-            Tool.LASSO -> {
-                addOption(R.drawable.ic_lasso, "자유 선택", !docView.lassoRect) { setLassoRect(false) }
-                addOption(R.drawable.ic_select_rect, "네모 선택", docView.lassoRect) { setLassoRect(true) }
-            }
             Tool.TAPE -> {
                 val erasing = docView.tapeErasing
                 addOption(R.drawable.ic_tape_pen, "펜", !erasing && !docView.tapeRect) { setTapeMode(rect = false) }
@@ -1701,8 +1695,10 @@ class ViewerActivity : AppCompatActivity() {
         // 툴바 쪽에서 살짝 밀려 나오며 나타난다 (툴바가 위면 위에서 내려온다)
         optionBar.animate().cancel()
         optionBar.alpha = 0f
-        optionBar.translationY = (if (dock.side == ToolbarSide.TOP) -12 else 12) * resources.displayMetrics.density
-        optionBar.animate().alpha(1f).translationY(0f).setDuration(150).start()
+        val shift = 12 * resources.displayMetrics.density
+        optionBar.translationX = when (dock.side) { ToolbarSide.LEFT -> -shift; ToolbarSide.RIGHT -> shift; else -> 0f }
+        optionBar.translationY = when (dock.side) { ToolbarSide.TOP -> -shift; ToolbarSide.BOTTOM -> shift; else -> 0f }
+        optionBar.animate().alpha(1f).translationX(0f).translationY(0f).setDuration(150).start()
     }
 
     private fun hideOptionBar() {
@@ -1797,7 +1793,7 @@ class ViewerActivity : AppCompatActivity() {
     private fun showTapeEraserPopup(anchor: View) {
         val erasing = docView.tapeErasing
         val modes = listOf(EraserMode.STROKE to "획 지우개", EraserMode.AREA to "영역 지우개")
-        showOptionPopup(anchor, modes.map { (m, label) ->
+        showFlyout(anchor, modes.map { (m, label) ->
             Triple(tapeEraserIcon(m), label, erasing && docView.tapeEraseMode == m)
         }) { i -> setTapeEraser(modes[i].first) }
     }
@@ -1819,7 +1815,7 @@ class ViewerActivity : AppCompatActivity() {
     /** 테이프 무늬 고르기: 다섯 가지가 펼쳐진다 */
     private fun showPatternPopup(anchor: View) {
         val d = resources.displayMetrics.density
-        showOptionPopup(anchor, TapePattern.entries.map { p ->
+        showFlyout(anchor, TapePattern.entries.map { p ->
             Triple(TapePatternDrawable(p, docView.tapeColor, d), p.label, p == docView.tapePattern)
         }) { i ->
             val p = TapePattern.entries[i]
@@ -1828,16 +1824,28 @@ class ViewerActivity : AppCompatActivity() {
         }
     }
 
+    // ----- 펼침 창 (롤오버) -----
+    // 형광펜·선택·레이저 버튼, 도형 줄·옵션 줄의 '▾' 칸을 누르면 그 칸 옆(문서 쪽)에 고를 것들이 펼쳐진다.
+    // 창 밖을 누르면 닫히고, 그 누름은 아래(문서·툴바)로 그대로 전달된다 (바로 필기할 수 있게)
+
+    private var flyout: android.widget.PopupWindow? = null
+    private var flyoutAnchor: View? = null
+    private var flyoutClosedAt = 0L
+
     /**
-     * 옵션 줄의 칸에서 펼치는 창: 칸 위(옵션 줄이 위에 있으면 아래)에 고를 것들이 가로로 펼쳐진다.
-     * 고르면 창과 옵션 줄을 닫고 [onPick]에 몇 번째인지 넘긴다
+     * [anchor] 옆에 [items](아이콘, 이름, 고른 것인지)를 툴바 방향으로 늘어놓은 창을 띄운다.
+     * 고르면 창과 옵션 줄을 닫고 [onPick]에 몇 번째인지 넘긴다. [title]은 앞에 붙는 작은 설명
      */
-    private fun showOptionPopup(
-        anchor: View, items: List<Triple<android.graphics.drawable.Drawable, String, Boolean>>, onPick: (Int) -> Unit,
+    private fun showFlyout(
+        anchor: View, items: List<Triple<android.graphics.drawable.Drawable, String, Boolean>>,
+        title: String? = null, onPick: (Int) -> Unit,
     ) {
+        closeFlyout()
         val d = resources.displayMetrics.density
+        val vertical = dock.side.vertical
         val box = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
+            orientation = if (vertical) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+            gravity = if (vertical) android.view.Gravity.CENTER_HORIZONTAL else android.view.Gravity.CENTER_VERTICAL
             val pd = (4 * d).toInt()
             setPadding(pd, pd, pd, pd)
             background = GradientDrawable().apply {
@@ -1845,8 +1853,11 @@ class ViewerActivity : AppCompatActivity() {
                 setColor(MaterialColors.getColor(anchor, com.google.android.material.R.attr.colorSurfaceContainerHigh))
             }
         }
-        val popup = android.widget.PopupWindow(box, LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT, true)
+        val popup = android.widget.PopupWindow(box, LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT, false)
+        popup.isOutsideTouchable = true
+        popup.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
         popup.elevation = 8 * d
+        if (title != null) box.addView(optionLabel(title, (4 * d).toInt()))
         items.forEachIndexed { i, (icon, label, selected) ->
             box.addView(optionItem(icon, label, selected) {
                 popup.dismiss()
@@ -1854,15 +1865,67 @@ class ViewerActivity : AppCompatActivity() {
                 onPick(i)
             })
         }
+        popup.setOnDismissListener {
+            flyoutClosedAt = android.os.SystemClock.uptimeMillis()
+            if (flyout === popup) flyout = null
+        }
+        flyout = popup
+        flyoutAnchor = anchor
+        showBeside(popup, box, anchor)
+    }
+
+    private fun closeFlyout() {
+        flyout?.dismiss()
+    }
+
+    /** [anchor]의 창이 방금(이 누름으로) 닫혔는가. 그렇다면 다시 열지 않는다 (한 번 더 누르면 닫히게) */
+    private fun flyoutJustClosed(anchor: View) =
+        flyoutAnchor === anchor && android.os.SystemClock.uptimeMillis() - flyoutClosedAt < 600
+
+    /** 형광펜·선택·레이저 버튼의 펼침 창 */
+    private fun showToolFlyout(t: Tool, anchor: View) {
+        fun item(res: Int, label: String, on: Boolean) = Triple(getDrawable(res)!!, label, on)
+        when (t) {
+            Tool.HIGHLIGHTER -> showFlyout(anchor, listOf(
+                item(R.drawable.ic_highlighter, "자유 형광펜", !docView.hlStraight),
+                item(R.drawable.ic_ruler, "직선 형광펜", docView.hlStraight),
+            )) { i -> setHlStraight(i == 1) }
+            Tool.LASSO -> showFlyout(anchor, listOf(
+                item(R.drawable.ic_lasso, "자유 선택", !docView.lassoRect),
+                item(R.drawable.ic_select_rect, "네모 선택", docView.lassoRect),
+            )) { i -> setLassoRect(i == 1) }
+            Tool.LASER -> {
+                // 레이저가 사라지는 시간 (색·굵기는 툴바)
+                val secs = intArrayOf(1, 2, 3, 5)
+                showFlyout(anchor, secs.map { sec -> item(R.drawable.ic_timer, "${sec}초", docView.laserFadeMs == sec * 1000L) },
+                    title = "사라지는\n시간") { i ->
+                    docView.laserFadeMs = secs[i] * 1000L
+                    prefs.edit().putLong("laserFadeMs", docView.laserFadeMs).apply()
+                }
+            }
+            else -> {}
+        }
+    }
+
+    /** 창을 [anchor] 옆 문서 쪽에 띄운다 (툴바가 위면 아래로, 아래면 위로, 왼쪽·오른쪽이면 옆으로) */
+    private fun showBeside(popup: android.widget.PopupWindow, box: View, anchor: View) {
+        val d = resources.displayMetrics.density
         box.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
         val w = box.measuredWidth
         val h = box.measuredHeight
         val loc = IntArray(2)
         anchor.getLocationOnScreen(loc)
         val gap = (6 * d).toInt()
-        val x = (loc[0] + anchor.width / 2 - w / 2).coerceIn(gap, maxOf(gap, window.decorView.width - w - gap))
-        val y = if (dock.side == ToolbarSide.TOP) loc[1] + anchor.height + gap else loc[1] - h - gap
-        popup.showAtLocation(anchor, android.view.Gravity.NO_GRAVITY, x, y.coerceAtLeast(gap))
+        val screenW = window.decorView.width
+        val screenH = window.decorView.height
+        val (x, y) = when (dock.side) {
+            ToolbarSide.LEFT -> loc[0] + anchor.width + gap to loc[1] + anchor.height / 2 - h / 2
+            ToolbarSide.RIGHT -> loc[0] - w - gap to loc[1] + anchor.height / 2 - h / 2
+            ToolbarSide.TOP -> loc[0] + anchor.width / 2 - w / 2 to loc[1] + anchor.height + gap
+            ToolbarSide.BOTTOM -> loc[0] + anchor.width / 2 - w / 2 to loc[1] - h - gap
+        }
+        popup.showAtLocation(anchor, android.view.Gravity.NO_GRAVITY,
+            x.coerceIn(gap, maxOf(gap, screenW - w - gap)), y.coerceIn(gap, maxOf(gap, screenH - h - gap)))
     }
 
     /**
@@ -1887,6 +1950,8 @@ class ViewerActivity : AppCompatActivity() {
         icon: android.graphics.drawable.Drawable, label: String, selected: Boolean, onClick: (View) -> Unit,
     ): View {
         val d = resources.displayMetrics.density
+        // 세로 줄(툴바가 왼쪽·오른쪽)에서는 줄 폭이 넓어지지 않게 긴 이름을 두 줄로
+        val vertical = dock.side.vertical
         val item = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = android.view.Gravity.CENTER_HORIZONTAL
@@ -1897,7 +1962,7 @@ class ViewerActivity : AppCompatActivity() {
             contentDescription = if (selected) "$label (선택됨)" else label
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { marginEnd = (1 * d).toInt() }
+            ).apply { if (vertical) bottomMargin = (1 * d).toInt() else marginEnd = (1 * d).toInt() }
             setOnClickListener { onClick(it) }
         }
         item.addView(ImageView(this).apply {
@@ -1907,7 +1972,12 @@ class ViewerActivity : AppCompatActivity() {
         })
         item.addView(TextView(this).apply {
             text = label
-            isSingleLine = true
+            if (vertical) {
+                maxLines = 2
+                maxWidth = (60 * d).toInt()
+                gravity = android.view.Gravity.CENTER
+                setLineSpacing(0f, 0.9f)
+            } else isSingleLine = true
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
             )
@@ -1918,30 +1988,31 @@ class ViewerActivity : AppCompatActivity() {
     }
 
     /** 옵션 줄의 작은 글 (뒤따르는 칸들이 어디에 해당하는지 알려 준다). 누를 수 없다 */
-    private fun addOptionLabel(text: String) {
-        val d = resources.displayMetrics.density
-        optionRow.addView(TextView(this).apply {
-            this.text = text
-            gravity = android.view.Gravity.CENTER
-            setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_LabelMedium)
-            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurfaceVariant))
-            setLineSpacing(0f, 0.9f)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { marginEnd = (4 * d).toInt() }
-        })
+    private fun addOptionLabel(text: String) = optionRow.addView(optionLabel(text, (4 * resources.displayMetrics.density).toInt()))
+
+    private fun optionLabel(text: String, gap: Int) = TextView(this).apply {
+        this.text = text
+        gravity = android.view.Gravity.CENTER
+        setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_LabelMedium)
+        setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurfaceVariant))
+        setLineSpacing(0f, 0.9f)
+        layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { if (dock.side.vertical) bottomMargin = gap else marginEnd = gap }
     }
 
+    /** 칸 묶음 사이 구분선 (가로 줄은 세로선, 세로 줄은 가로선) */
     private fun addOptionSeparator() {
         val d = resources.displayMetrics.density
+        val vertical = dock.side.vertical
         optionRow.addView(View(this).apply {
-            layoutParams = LinearLayout.LayoutParams((1 * d).toInt(), (32 * d).toInt()).apply {
-                marginStart = (4 * d).toInt()
-                marginEnd = (5 * d).toInt()
+            val long = (32 * d).toInt()
+            val thin = (1 * d).toInt()
+            layoutParams = (if (vertical) LinearLayout.LayoutParams(long, thin) else LinearLayout.LayoutParams(thin, long)).apply {
+                if (vertical) { topMargin = (4 * d).toInt(); bottomMargin = (5 * d).toInt() }
+                else { marginStart = (4 * d).toInt(); marginEnd = (5 * d).toInt() }
             }
-            setBackgroundColor(com.google.android.material.color.MaterialColors.getColor(
-                this, com.google.android.material.R.attr.colorOutlineVariant
-            ))
+            setBackgroundColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOutlineVariant))
         })
     }
 
@@ -2129,8 +2200,13 @@ class ViewerActivity : AppCompatActivity() {
         updateTapeIcon()
         toolButtons.forEach { (t, b) ->
             b.setOnClickListener {
-                if (t == Tool.ERASER || t == Tool.LASSO || t == Tool.LASER || t == Tool.HIGHLIGHTER || t == Tool.TAPE) {
-                    // 형광펜·테이프·지우개·선택·레이저는 누를 때마다 옵션 줄을 열고, 열려 있으면 닫는다
+                if (t == Tool.LASSO || t == Tool.LASER || t == Tool.HIGHLIGHTER) {
+                    // 형광펜·선택·레이저는 고를 것이 적어 옵션 줄 대신 버튼 옆에 펼침 창. 열려 있을 때 누르면 닫는다
+                    val reopen = !flyoutJustClosed(b)
+                    selectTool(t)
+                    if (reopen) showToolFlyout(t, b)
+                } else if (t == Tool.ERASER || t == Tool.TAPE) {
+                    // 테이프·지우개는 누를 때마다 옵션 줄을 열고, 열려 있으면 닫는다
                     if (t == Tool.TAPE && docView.tool != Tool.TAPE) {
                         toast("테이프를 누르면 가린 내용이 보이고, 다시 누르면 가려집니다. 손가락으로는 어느 도구에서나 됩니다.")
                     }
@@ -2151,6 +2227,7 @@ class ViewerActivity : AppCompatActivity() {
     private fun selectTool(t: Tool) {
         if (t != Tool.TEXT) textEditor.commit()
         if (optionTool != t) hideOptionBar()
+        closeFlyout()
         docView.tool = t
         toolButtons.forEach { (k, b) -> b.isSelected = k == t }
         shapeBar.visibility = if (t == Tool.SHAPE) View.VISIBLE else View.GONE
@@ -2159,84 +2236,77 @@ class ViewerActivity : AppCompatActivity() {
 
     // ----- 보정 펜 도형 줄 -----
 
+    /** 펼쳐 고르는 무리: 칸에는 지금 고른 종류가 보이고, 누르면 펼쳐진다 */
+    private val shapeFamilies = mapOf(
+        // 다항: 직선(일차)·이차·삼차·사차
+        ShapeKind.LINE to listOf(ShapeKind.LINE, ShapeKind.QUADRATIC, ShapeKind.CUBIC, ShapeKind.QUARTIC),
+        ShapeKind.CIRCLE to listOf(ShapeKind.CIRCLE, ShapeKind.ELLIPSE, ShapeKind.CIRCLE_CR),
+        ShapeKind.TRIANGLE to listOf(
+            ShapeKind.TRIANGLE, ShapeKind.TRI_EQUILATERAL, ShapeKind.TRI_RIGHT,
+            ShapeKind.TRI_ISOSCELES, ShapeKind.TRI_RIGHT_ISOSCELES,
+        ),
+        ShapeKind.QUADRILATERAL to listOf(
+            ShapeKind.QUADRILATERAL, ShapeKind.SQUARE, ShapeKind.RECTANGLE,
+            ShapeKind.RHOMBUS, ShapeKind.PARALLELOGRAM,
+        ),
+    )
+    private val shapeOrder = listOf(
+        "다항" to ShapeKind.LINE, "원" to ShapeKind.CIRCLE, "쌍곡선" to ShapeKind.HYPERBOLA,
+        "삼각형" to ShapeKind.TRIANGLE, "사각형" to ShapeKind.QUADRILATERAL,
+        "지수·로그" to ShapeKind.EXP_LOG,
+        "사인·코사인" to ShapeKind.SINE, "탄젠트" to ShapeKind.TANGENT,
+    )
+    /** 무리마다 마지막으로 고른 종류 (다른 무리를 쓰는 동안 칸에 보인다) */
+    private val shapeFamilyLast = mutableMapOf<ShapeKind, ShapeKind>()
+
     private fun setupShapeBar() {
-        val group = findViewById<ChipGroup>(R.id.shapeChips)
         docView.shapeKind = prefs.getString("shapeKind", null)
             // 지수·로그 버튼이 따로 있던 때 고른 값
             ?.let { n -> if (n == "EXPONENTIAL" || n == "LOG") ShapeKind.EXP_LOG.name else n }
             ?.let { n -> ShapeKind.entries.firstOrNull { it.name == n } } ?: ShapeKind.LINE
-        // 펼쳐 고르는 무리: 칩에는 지금 고른 종류 이름이 보이고, 누르면 펼쳐진다
-        val families = mapOf(
-            // 다항: 직선(일차)·이차·삼차·사차
-            ShapeKind.LINE to listOf(ShapeKind.LINE, ShapeKind.QUADRATIC, ShapeKind.CUBIC, ShapeKind.QUARTIC),
-            ShapeKind.CIRCLE to listOf(ShapeKind.CIRCLE, ShapeKind.ELLIPSE, ShapeKind.CIRCLE_CR),
-            ShapeKind.TRIANGLE to listOf(
-                ShapeKind.TRIANGLE, ShapeKind.TRI_EQUILATERAL, ShapeKind.TRI_RIGHT,
-                ShapeKind.TRI_ISOSCELES, ShapeKind.TRI_RIGHT_ISOSCELES,
-            ),
-            ShapeKind.QUADRILATERAL to listOf(
-                ShapeKind.QUADRILATERAL, ShapeKind.SQUARE, ShapeKind.RECTANGLE,
-                ShapeKind.RHOMBUS, ShapeKind.PARALLELOGRAM,
-            ),
-        )
-        val order = listOf(
-            "다항" to ShapeKind.LINE, "원" to ShapeKind.CIRCLE, "쌍곡선" to ShapeKind.HYPERBOLA,
-            "삼각형" to ShapeKind.TRIANGLE, "사각형" to ShapeKind.QUADRILATERAL,
-            "지수·로그" to ShapeKind.EXP_LOG,
-            "사인·코사인" to ShapeKind.SINE, "탄젠트" to ShapeKind.TANGENT,
-        )
-        fun selectKind(kind: ShapeKind) {
-            docView.shapeKind = kind
-            docView.shapeGuide = guideStyle(kind)
-            prefs.edit().putString("shapeKind", kind.name).apply()
-        }
         docView.shapeGuide = guideStyle(docView.shapeKind)
-        for ((label, kind) in order) {
-            val chip = layoutInflater.inflate(R.layout.item_shape_chip, group, false) as Chip
-            chip.text = label
-            chip.id = View.generateViewId()
-            val family = families[kind]
-            if (family != null) {
-                val cur = docView.shapeKind.takeIf { it in family } ?: family[0]
-                chip.tag = cur
-                chip.text = "${cur.label} ▾"
-                chip.isCheckable = true
-                group.addView(chip)
-                if (docView.shapeKind in family) group.check(chip.id)
-                chip.setOnClickListener { v ->
-                    PopupMenu(this, v).apply {
-                        family.forEachIndexed { i, k -> menu.add(0, i, i, k.label) }
-                        setOnMenuItemClickListener { item ->
-                            val k = family[item.itemId]
-                            chip.tag = k
-                            chip.text = "${k.label} ▾"
-                            group.check(chip.id)
-                            selectKind(k)
-                            true
-                        }
-                        show()
-                    }
-                }
-            } else {
-                chip.tag = kind
-                chip.isCheckable = true
-                group.addView(chip)
-                if (kind == docView.shapeKind) group.check(chip.id)
-                // 점근선·축이 있는 도형: 누르면 위로 보조선 방식 고르는 창
-                if (kind in GUIDE_KINDS) {
-                    chip.text = "$label ▾"
-                    chip.setOnClickListener { v ->
-                        group.check(chip.id)
-                        showGuideMenu(v, kind)
-                    }
-                }
+        buildShapeBar()
+    }
+
+    private fun selectShapeKind(kind: ShapeKind) {
+        docView.shapeKind = kind
+        docView.shapeGuide = guideStyle(kind)
+        prefs.edit().putString("shapeKind", kind.name).apply()
+        shapeFamilies.entries.firstOrNull { kind in it.value }?.let { shapeFamilyLast[it.key] = kind }
+        buildShapeBar()
+    }
+
+    /** 도형 줄의 칸들 (도형 아이콘 + 이름). 툴바가 왼쪽·오른쪽이면 세로로 늘어선다 */
+    private fun buildShapeBar() {
+        shapeRow.removeAllViews()
+        for ((label, kind) in shapeOrder) {
+            val family = shapeFamilies[kind]
+            val cur = when {
+                family == null -> kind
+                docView.shapeKind in family -> docView.shapeKind
+                else -> shapeFamilyLast[kind] ?: family[0]
             }
-        }
-
-
-        group.setOnCheckedStateChangeListener { g, ids ->
-            val kind = ids.firstOrNull()?.let { g.findViewById<Chip>(it)?.tag as? ShapeKind } ?: return@setOnCheckedStateChangeListener
-            selectKind(kind)
+            val selected = if (family != null) docView.shapeKind in family else docView.shapeKind == kind
+            val text = when {
+                family != null -> "${cur.label} ▾"
+                kind in GUIDE_KINDS -> "$label ▾"
+                else -> label
+            }
+            val index = shapeRow.childCount
+            shapeRow.addView(optionItem(ShapeIconDrawable(this, cur), text, selected) { v ->
+                when {
+                    // 무리: 펼쳐서 하나 고른다
+                    family != null -> showFlyout(v, family.map { k ->
+                        Triple(ShapeIconDrawable(this, k), k.label, k == docView.shapeKind)
+                    }) { i -> selectShapeKind(family[i]) }
+                    // 점근선·축이 있는 도형: 고르고 보조선 방식 고르는 창
+                    kind in GUIDE_KINDS -> {
+                        selectShapeKind(kind)
+                        showGuideMenu(shapeRow.getChildAt(index) ?: v, kind)
+                    }
+                    else -> selectShapeKind(kind)
+                }
+            })
         }
     }
 
@@ -2339,9 +2409,9 @@ class ViewerActivity : AppCompatActivity() {
         if (s == null) return
         val d = resources.displayMetrics.density
         s.slots.forEachIndexed { i, w ->
-            // 툴바 방향으로 좁은 칸 (가로 툴바 기준 너비 28dp × 높이 40dp, 세로 툴바면 dock.fit이 맞바꾼다)
+            // 툴바 방향으로 좁은 칸 (가로 툴바 기준 너비 32dp × 높이 44dp, 세로 툴바면 dock.fit이 맞바꾼다). 아래에 수치
             val v = WidthSwatchView(this).apply {
-                layoutParams = LinearLayout.LayoutParams((28 * d).toInt(), (40 * d).toInt()).apply {
+                layoutParams = LinearLayout.LayoutParams((32 * d).toInt(), (44 * d).toInt()).apply {
                     marginStart = (if (i == 0) 0 else 2 * d).toInt()
                 }
                 setBackgroundResource(R.drawable.bg_tool)

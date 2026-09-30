@@ -165,12 +165,40 @@ class InlineTextEditor(private val host: TextEditHost, private val docView: Docu
                 changing = false
             }
             notifyFormat()
+            // 줄이 늘어 커서가 키보드 뒤로 가면 문서를 올린다 (상자 크기가 바뀐 뒤에)
+            edit.post { ensureCaretVisible() }
         }
     }
 
     init {
         host.addView(edit, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT))
         edit.addTextChangedListener(watcher)
+        // 화면 키보드가 올라와 판이 줄면 커서가 가려지지 않게 문서를 올린다
+        host.addOnLayoutChangeListener { _, _, top, _, bottom, _, oldTop, _, oldBottom ->
+            if (isEditing && bottom - top != oldBottom - oldTop) host.post { ensureCaretVisible() }
+        }
+    }
+
+    /** 커서 줄이 판 아래(서식 줄·키보드)나 위로 가려지면 보이는 곳까지 문서를 스크롤한다 */
+    fun ensureCaretVisible() {
+        if (!isEditing || host.height == 0) return
+        val layout = edit.layout ?: return
+        val line = layout.getLineForOffset(edit.selectionEnd.coerceIn(0, edit.text.length))
+        val x = layout.getPrimaryHorizontal(edit.selectionEnd.coerceIn(0, edit.text.length)) + edit.paddingLeft
+        val pts = floatArrayOf(
+            x, (layout.getLineTop(line) + edit.paddingTop).toFloat(),
+            x, (layout.getLineBottom(line) + edit.paddingTop).toFloat(),
+        )
+        edit.matrix.mapPoints(pts)
+        val top = minOf(pts[1], pts[3]) + edit.top
+        val bottom = maxOf(pts[1], pts[3]) + edit.top
+        val margin = dp(12f)
+        val visTop = docView.topInset + margin
+        val visBottom = host.height - docView.bottomInset - margin
+        when {
+            bottom > visBottom -> docView.scrollByPx(bottom - visBottom)
+            top < visTop -> docView.scrollByPx(top - visTop)
+        }
     }
 
     /** 글 상자의 기본 글자 크기 (pt). 툴바 '가' 칸으로 바꾸면 상자 전체가 같은 비율로 커진다 */

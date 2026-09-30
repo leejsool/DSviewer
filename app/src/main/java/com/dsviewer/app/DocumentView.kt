@@ -333,10 +333,10 @@ class DocumentView @JvmOverloads constructor(
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         if (doc == null || w == 0) return
-        // 화면 가운데에 있던 문서 위치를 유지
+        // 화면 가운데에 있던 문서 위치를 유지. 높이만 바뀌면(화면 키보드) 위쪽을 그대로 둔다
         val anchorY = if (oldw > 0) (offY + oldh / 2f) / scale else 0f
         baseScale = w / docW
-        offY = if (oldw > 0) anchorY * scale - h / 2f else 0f
+        if (oldw != w) offY = if (oldw > 0) anchorY * scale - h / 2f else 0f
         clamp()
         baseCache.evictAll()
         details = emptyList()
@@ -370,6 +370,14 @@ class DocumentView @JvmOverloads constructor(
                 invalidate()
             }
         }
+
+    /** 문서를 [dy](화면 px)만큼 위로 올린다 (음수면 내린다). 글 상자 커서를 키보드 위로 보일 때 */
+    fun scrollByPx(dy: Float) {
+        if (doc == null || dy == 0f) return
+        offY += dy
+        clamp()
+        invalidate()
+    }
 
     /** 스크롤할 수 있는 전체 높이 (화면 px) */
     private fun contentH() = docH * scale + bottomInset + topInset
