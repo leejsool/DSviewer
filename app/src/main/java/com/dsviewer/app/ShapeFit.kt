@@ -21,6 +21,10 @@ enum class ShapeKind(val label: String) {
     ELLIPSE("타원"),
     /** 처음 찍은 점이 중심, 그은 선분의 길이가 반지름 */
     CIRCLE_CR("중심·반지름 원"),
+    /** 중심에서 시작하든 호 끝에서 시작하든 한 획으로 */
+    SECTOR("부채꼴"),
+    /** 호부터 그리든 지름부터 그리든 한 획으로 */
+    SEMICIRCLE("반원"),
     TRIANGLE("일반삼각형"),
     TRI_EQUILATERAL("정삼각형"),
     TRI_RIGHT("직각삼각형"),
@@ -35,6 +39,8 @@ enum class ShapeKind(val label: String) {
     HYPERBOLA("쌍곡선"),
     /** 지수인지 로그인지는 그린 모양으로 알아서 */
     EXP_LOG("지수·로그"),
+    /** y = (ax² + bx + c)·e^(kx) + d: 한쪽은 점근선으로 수렴, 다른 쪽은 발산, 극값 둘 */
+    QUAD_EXP("이차×지수"),
     SINE("사인·코사인"),
     /** 한 획에 한 가지 (점근선 사이) */
     TANGENT("탄젠트"),
@@ -42,7 +48,7 @@ enum class ShapeKind(val label: String) {
 
 /**
  * 보정 결과: 곡선들(쌍곡선은 두 가지)과 보조선들 (좌표는 [x0, y0, x1, y1, ...]).
- * 보조선은 지수·로그·탄젠트·쌍곡선의 점근선, 사인·코사인의 축(가운데 가로선)
+ * 보조선은 지수·로그·이차×지수·탄젠트·쌍곡선의 점근선, 사인·코사인의 축(가운데 가로선)
  */
 class Fitted(val curves: List<FloatArray>, val guides: List<FloatArray> = emptyList())
 
@@ -56,12 +62,16 @@ enum class GuideStyle { NONE, DASHED, SOLID }
  */
 object ShapeFit {
 
-    fun fit(kind: ShapeKind, st: Stroke): Fitted? {
+    /** quick: 그리는 동안의 미리 보기. 오래 다듬는 도형(부채꼴·이차×지수·이등변삼각형)을 덜 다듬는다 */
+    fun fit(kind: ShapeKind, st: Stroke, quick: Boolean = false): Fitted? {
         if (kind == ShapeKind.CIRCLE_CR) return centerRadius(st)?.let { Fitted(listOf(it)) }
         val p = resample(st) ?: return null
         when (kind) {
             ShapeKind.HYPERBOLA -> return ShapeCurves.hyperbola(p)
             ShapeKind.EXP_LOG -> return ShapeCurves.expOrLog(p)
+            ShapeKind.QUAD_EXP -> return ShapeCurves.quadExp(p, quick)
+            ShapeKind.SECTOR -> return ShapeCurves.sector(p, quick)
+            ShapeKind.SEMICIRCLE -> return ShapeCurves.semicircle(p, quick)
             ShapeKind.SINE -> return ShapeCurves.sine(p)
             ShapeKind.TANGENT -> return ShapeCurves.tangent(p)
             else -> {}
@@ -75,7 +85,7 @@ object ShapeFit {
             ShapeKind.ELLIPSE -> ellipse(p)
             ShapeKind.CIRCLE_CR -> null
             ShapeKind.TRIANGLE, ShapeKind.TRI_EQUILATERAL, ShapeKind.TRI_RIGHT,
-            ShapeKind.TRI_ISOSCELES, ShapeKind.TRI_RIGHT_ISOSCELES -> polygon(p, 3)?.let { Polygons.triangle(kind, it) }
+            ShapeKind.TRI_ISOSCELES, ShapeKind.TRI_RIGHT_ISOSCELES -> polygon(p, 3)?.let { Polygons.triangle(kind, it, p, quick) }
             ShapeKind.QUADRILATERAL, ShapeKind.SQUARE, ShapeKind.RECTANGLE,
             ShapeKind.RHOMBUS, ShapeKind.PARALLELOGRAM -> polygon(p, 4)?.let { Polygons.quad(kind, it) }
             else -> null
@@ -88,7 +98,7 @@ object ShapeFit {
      * 1) 볼록 껍질을 구하고 넓이를 가장 적게 잃는 꼭짓점부터 빼서 k개로 줄이고 (Visvalingam)
      * 2) 각 변 가운데 부분의 점들로 직선을 맞춘 뒤, 이웃한 직선의 교점을 꼭짓점으로 삼는다.
      */
-    private fun polygon(p: Pair<DoubleArray, DoubleArray>, k: Int): DoubleArray? {
+    internal fun polygon(p: Pair<DoubleArray, DoubleArray>, k: Int): DoubleArray? {
         val (xs, ys) = p
         val hull = convexHull(xs, ys)
         if (hull.size < k) return null
@@ -259,7 +269,7 @@ object ShapeFit {
     }
 
     /** 앞뒤 몇 점의 평균 (손떨림 줄이기) */
-    private fun smooth(v: DoubleArray, i: Int, w: Int = max(2, v.size / 40)): Double {
+    internal fun smooth(v: DoubleArray, i: Int, w: Int = max(2, v.size / 40)): Double {
         var s = 0.0; var n = 0
         for (j in max(0, i - w)..min(v.size - 1, i + w)) { s += v[j]; n++ }
         return s / n
@@ -269,7 +279,7 @@ object ShapeFit {
      * 부드럽게 한 y에서 뚜렷한 극점(높이 차가 전체의 8% 이상)만 번갈아 찾는다.
      * 양 끝은 극점으로 치지 않는다. 결과는 표본 번호.
      */
-    private fun findExtrema(u: DoubleArray, v: DoubleArray): List<Int> {
+    internal fun findExtrema(u: DoubleArray, v: DoubleArray): List<Int> {
         val n = v.size
         val sv = DoubleArray(n) { smooth(v, it) }
         val range = sv.max() - sv.min()

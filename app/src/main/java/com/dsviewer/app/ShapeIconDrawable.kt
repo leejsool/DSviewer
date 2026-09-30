@@ -7,6 +7,7 @@ import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
+import android.graphics.RectF
 import android.graphics.drawable.Drawable
 import com.google.android.material.color.MaterialColors
 import kotlin.math.cosh
@@ -62,6 +63,14 @@ class ShapeIconDrawable(ctx: Context, private val kind: ShapeKind) : Drawable() 
                 canvas.drawCircle(12f, 12f, 8.5f, line)
                 canvas.drawCircle(12f, 12f, 1.4f, dot)
                 canvas.drawLine(12f, 12f, 18f, 6f, line)
+            }
+            // 중심각 60°쯤의 부채꼴 (중심은 왼쪽 아래)
+            ShapeKind.SECTOR -> {
+                val p = Path()
+                p.moveTo(4f, 19.5f)
+                p.arcTo(RectF(4f - 16f, 19.5f - 16f, 4f + 16f, 19.5f + 16f), 0f, -62f)
+                p.close()
+                canvas.drawPath(p, line)
             }
             ShapeKind.TRIANGLE -> poly(canvas, 3f, 19f, 21f, 19f, 8f, 5f)
             ShapeKind.TRI_EQUILATERAL -> poly(canvas, 3.5f, 19f, 20.5f, 19f, 12f, 4.3f)
@@ -121,6 +130,19 @@ class ShapeIconDrawable(ctx: Context, private val kind: ShapeKind) : Drawable() 
                 }
                 canvas.drawPath(e, line)
                 canvas.drawPath(l, line)
+            }
+            // 지름이 아래인 반원
+            ShapeKind.SEMICIRCLE -> {
+                val p = Path()
+                p.moveTo(2.5f, 16.5f)
+                p.arcTo(RectF(2.5f, 7f, 21.5f, 26f), 180f, 180f)
+                p.close()
+                canvas.drawPath(p, line)
+            }
+            ShapeKind.QUAD_EXP -> {
+                // y = x²eˣ: 왼쪽은 점근선 y = 0으로, 극대 하나 지나 y = 0에서 극소, 오른쪽은 치솟음
+                canvas.drawLine(2f, 20f, 22f, 20f, guide)
+                plot(canvas, -5.5f, 0.75f) { it * it * exp(it) }
             }
             ShapeKind.SINE -> {
                 canvas.drawLine(2f, 12f, 22f, 12f, guide)

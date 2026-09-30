@@ -8,6 +8,7 @@ import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.roundToInt
 import kotlin.math.sin
+import kotlin.math.sqrt
 
 /**
  * 보정 펜 삼각형·사각형: ShapeFit.polygon이 찾은 꼭짓점에 종류별 조건(같은 변, 직각, 평행 …)을 맞춘다.
@@ -96,13 +97,14 @@ object Polygons {
         return acos(((a.x * b.x + a.y * b.y) / (a.len * b.len)).coerceIn(-1.0, 1.0))
     }
 
-    fun triangle(kind: ShapeKind, v: DoubleArray): FloatArray {
+    /** pts는 그린 획의 점들 (이등변삼각형은 획 전체에 맞춘다). quick이면 덜 다듬는다 (그리는 동안의 미리 보기) */
+    fun triangle(kind: ShapeKind, v: DoubleArray, pts: Pair<DoubleArray, DoubleArray>? = null, quick: Boolean = false): FloatArray {
         val ps = toPoints(v)
         val out = when (kind) {
             ShapeKind.TRI_EQUILATERAL -> regular(ps).let { snapEdges(it, centroid(it)) }
             ShapeKind.TRI_RIGHT -> rightTriangle(ps, isosceles = false)
             ShapeKind.TRI_RIGHT_ISOSCELES -> rightTriangle(ps, isosceles = true)
-            ShapeKind.TRI_ISOSCELES -> isosceles(ps)
+            ShapeKind.TRI_ISOSCELES -> isosceles(ps, pts, quick)
             else -> snapEdges(ps, centroid(ps))
         }
         return closed(out)
@@ -128,30 +130,121 @@ object Polygons {
     }
 
     /**
-     * 꼭대기를 골라 대칭축에 맞춘 이등변삼각형.
-     * 대충 그리면 정삼각형에 가까워 어느 꼭짓점이든 두 변이 비슷하므로,
-     * '두 변이 비슷한 정도'에 '마주 보는 밑변이 수평·수직에 가까운 정도'를 더해 고른다.
+     * 이등변삼각형: 꼭대기(3가지)마다 꼭짓점으로 먼저 대칭을 맞추고, 그린 획 전체에 가장 가깝도록
+     * 꼭대기 위치·축 방향·높이·밑변 반폭을 다듬는다 (획 → 변, 변 → 획 두 방향 거리).
+     * 꼭짓점만 보면 모서리를 둥글게 그린 곳이나 치우친 꼭대기에 끌려 그린 것과 어긋나 보인다.
+     * 대충 그리면 정삼각형에 가까워 어느 꼭대기든 비슷하게 맞으므로, 밑변이 수평·수직에 가까운 쪽을 조금 더 친다.
      */
-    private fun isosceles(ps: List<P>): List<P> {
-        val ia = (0..2).minBy {
-            val l1 = (ps[(it + 1) % 3] - ps[it]).len; val l2 = (ps[(it + 2) % 3] - ps[it]).len
-            val base = (ps[(it + 2) % 3] - ps[(it + 1) % 3]).angle
+    private fun isosceles(ps: List<P>, pts: Pair<DoubleArray, DoubleArray>?, quick: Boolean): List<P> {
+        val size = (0..2).sumOf { (ps[(it + 1) % 3] - ps[it]).len } / 3
+        if (pts == null || size < 1) return isoscelesInit(ps, 0).let { fromParams(it, 0, ps) }
+        val (xs, ys) = thin(pts, if (quick) 60 else 100)
+        val o = centroid(ps)
+        val nx = DoubleArray(xs.size) { (xs[it] - o.x) / size }
+        val ny = DoubleArray(ys.size) { (ys[it] - o.y) / size }
+        fun norm(q: DoubleArray) = doubleArrayOf((q[0] - o.x) / size, (q[1] - o.y) / size, q[2], q[3] / size, q[4] / size)
+        fun denorm(q: DoubleArray) = doubleArrayOf(o.x + q[0] * size, o.y + q[1] * size, q[2], q[3] * size, q[4] * size)
+        fun score(q: DoubleArray) = outlineDistance(isoVertices(q), nx, ny)
+
+        var best: DoubleArray? = null
+        var bestApex = 0
+        var bestCost = Double.MAX_VALUE
+        for (ia in 0..2) {
+            val q = ShapeCurves.nelderMead(norm(isoscelesInit(ps, ia)), 0.05, ::score, if (quick) 120 else 300)
+            val base = q[2] + PI / 2
             val unit = PI / 2
             val dev = abs(base - (base / unit).roundToInt() * unit)  // 0 ~ 45°
-            abs(l1 - l2) / maxOf(l1, l2) + 0.15 * dev / (PI / 4)
+            val cost = score(q) * (1 + 1.5 * dev / (PI / 4))
+            if (cost < bestCost) { bestCost = cost; best = q; bestApex = ia }
         }
+        var q = best!!
+        // 축이 수평·수직에 가까우면 딱 맞추고 나머지를 다시 다듬는다.
+        // 일부러 조금 기울여 그린 것이면(맞추면 그린 것과 눈에 띄게 멀어지면) 그대로 둔다
+        val d = snapDelta(q[2])
+        if (d != 0.0) {
+            val phi = q[2] + d
+            val r = ShapeCurves.nelderMead(doubleArrayOf(q[0], q[1], q[3], q[4]), 0.03, { t ->
+                score(doubleArrayOf(t[0], t[1], phi, t[2], t[3]))
+            }, if (quick) 80 else 200)
+            val snapped = doubleArrayOf(r[0], r[1], phi, r[2], r[3])
+            if (sqrt(score(snapped)) - sqrt(score(q)) < 0.006) q = snapped
+        }
+        return fromParams(denorm(q), bestApex, ps)
+    }
+
+    /** 모수 [꼭대기 x, y, 축 방향, 높이, 밑변 반폭(부호 있음)] → 꼭대기, 밑변 두 끝 */
+    private fun isoVertices(q: DoubleArray): List<P> {
+        val a = P(q[0], q[1]); val u = dir(q[2]); val perp = P(-u.y, u.x)
+        return listOf(a, a + u * q[3] + perp * q[4], a + u * q[3] - perp * q[4])
+    }
+
+    /** 원래 꼭짓점 순서대로 (꼭대기가 ia번) */
+    private fun fromParams(q: DoubleArray, ia: Int, ps: List<P>): List<P> {
+        val v = isoVertices(q)
+        val out = MutableList(3) { v[0] }
+        out[(ia + 1) % 3] = v[1]
+        out[(ia + 2) % 3] = v[2]
+        return out
+    }
+
+    /**
+     * 꼭짓점에 최소제곱으로 맞춘 이등변삼각형의 모수 (꼭대기가 ia번, 축은 꼭대기 → 밑변 가운데).
+     * 축 방향 좌표 t, 옆 방향 좌표 s에서 꼭대기와 밑변은 따로, 옆 위치는 세 점의 평균으로 맞춘다.
+     */
+    private fun isoscelesInit(ps: List<P>, ia: Int): DoubleArray {
         val a = ps[ia]; val b = ps[(ia + 1) % 3]; val c = ps[(ia + 2) % 3]
         val m = (b + c) * 0.5
-        var axis = (m - a).angle
-        axis += snapDelta(axis)
-        val u = dir(axis); val perp = P(-u.y, u.x)
-        val h = (m - a).len
-        val w = abs((b - c).x * perp.x + (b - c).y * perp.y) / 2
-        val sb = if ((b - m).x * perp.x + (b - m).y * perp.y >= 0) 1.0 else -1.0
-        val out = MutableList(3) { a }
-        out[(ia + 1) % 3] = a + u * h + perp * (w * sb)
-        out[(ia + 2) % 3] = a + u * h - perp * (w * sb)
-        return out
+        val phi = (m - a).angle
+        val u = dir(phi); val perp = P(-u.y, u.x)
+        fun t(p: P) = (p - a).x * u.x + (p - a).y * u.y
+        fun s(p: P) = (p - a).x * perp.x + (p - a).y * perp.y
+        val sc = (s(b) + s(c)) / 3
+        val apex = a + perp * sc
+        return doubleArrayOf(apex.x, apex.y, phi, (t(b) + t(c)) / 2, (s(b) - s(c)) / 2)
+    }
+
+    private fun thin(p: Pair<DoubleArray, DoubleArray>, max: Int): Pair<DoubleArray, DoubleArray> {
+        val (xs, ys) = p
+        if (xs.size <= max) return p
+        return DoubleArray(max) { xs[it * (xs.size - 1) / (max - 1)] } to DoubleArray(max) { ys[it * (ys.size - 1) / (max - 1)] }
+    }
+
+    /**
+     * 닫힌 다각형과 그린 획이 얼마나 떨어져 있나: 획의 점에서 변까지 거리 제곱의 평균 +
+     * 변 위에 고르게 찍은 점에서 획까지 거리 제곱의 평균 (그리지 않은 곳으로 변이 뻗지 않도록)
+     */
+    private fun outlineDistance(vs: List<P>, xs: DoubleArray, ys: DoubleArray): Double {
+        val k = vs.size
+        var fwd = 0.0
+        for (i in xs.indices) {
+            var best = Double.MAX_VALUE
+            for (e in 0 until k) best = minOf(best, segDist2(xs[i], ys[i], vs[e], vs[(e + 1) % k]))
+            fwd += best
+        }
+        var back = 0.0
+        val per = 8
+        for (e in 0 until k) {
+            val a = vs[e]; val b = vs[(e + 1) % k]
+            for (j in 0 until per) {
+                val t = (j + 0.5) / per
+                val x = a.x + (b.x - a.x) * t; val y = a.y + (b.y - a.y) * t
+                var best = Double.MAX_VALUE
+                for (i in xs.indices) {
+                    val dx = xs[i] - x; val dy = ys[i] - y
+                    best = minOf(best, dx * dx + dy * dy)
+                }
+                back += best
+            }
+        }
+        return fwd / xs.size + back / (k * per)
+    }
+
+    private fun segDist2(x: Double, y: Double, a: P, b: P): Double {
+        val ex = b.x - a.x; val ey = b.y - a.y
+        val l2 = ex * ex + ey * ey
+        val t = if (l2 < 1e-12) 0.0 else (((x - a.x) * ex + (y - a.y) * ey) / l2).coerceIn(0.0, 1.0)
+        val dx = a.x + ex * t - x; val dy = a.y + ey * t - y
+        return dx * dx + dy * dy
     }
 
     private fun angleDiff(a: Double, b: Double): Double {

@@ -98,7 +98,14 @@ class DocumentView @JvmOverloads constructor(
     private var shapePreview: List<Stroke>? = null
     /** 보정 펜: 보조선(지수·로그·탄젠트·쌍곡선의 점근선, 사인·코사인의 축)을 그리는 방식 */
     var shapeGuide = GuideStyle.NONE
-    private var lastShapeFit = 0L
+    /**
+     * 미리 보기는 따로 도는 스레드에서 맞춘다 (무거운 도형도 필기가 멈추지 않도록).
+     * 하나가 도는 동안 들어온 요청은 끝난 뒤 마지막 획으로 한 번만. 획이 바뀌면 shapeGen이 늘어 늦게 온 결과를 버린다
+     */
+    private val shapeWorker = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private var shapeFitting = false
+    private var shapePending = false
+    private var shapeGen = 0
     // ---- 테이프 ----
     var tapeColor = 0xFFF6C744.toInt()
     /** 펜 테이프 굵기 (pt) */
@@ -1242,6 +1249,8 @@ class DocumentView @JvmOverloads constructor(
         listener?.onPenDown()
         scroller.forceFinished(true)
         zoomAnimator?.cancel()
+        shapeGen++
+        shapePending = false
         lastSx = sx
         lastSy = sy
         erased.clear()
@@ -1394,23 +1403,41 @@ class DocumentView @JvmOverloads constructor(
         st.add(px, py, lastPressure)
         lastSx = sx
         lastSy = sy
-        if (tool == Tool.SHAPE) {
-            // 미리 보기는 너무 자주 계산하지 않는다
-            val now = System.currentTimeMillis()
-            if (now - lastShapeFit > 40) {
-                lastShapeFit = now
-                shapePreview = fitShape(st)
+        if (tool == Tool.SHAPE) requestShapePreview()
+        invalidate()
+    }
+
+    /** 지금까지 그린 획으로 미리 보기를 맞춰 달라고 한다 (이미 맞추는 중이면 끝난 뒤에 한 번 더) */
+    private fun requestShapePreview() {
+        if (shapeFitting) { shapePending = true; return }
+        val st = curStroke ?: return
+        val copy = Stroke(st.tool, st.color, st.width).apply { for (i in 0 until st.count) add(st.x(i), st.y(i), st.p(i)) }
+        val gen = shapeGen
+        val kind = shapeKind
+        val guide = shapeGuide
+        shapeFitting = true
+        shapePending = false
+        shapeWorker.execute {
+            val r = try { fitShape(copy, kind, guide, quick = true) } catch (e: Exception) { null }
+            post {
+                shapeFitting = false
+                if (gen == shapeGen) {
+                    shapePreview = r
+                    invalidate()
+                }
+                if (shapePending) requestShapePreview()
             }
         }
-        invalidate()
     }
 
     /**
      * 보정 펜 획을 고른 도형으로 맞춘 새 펜 획들 (굵기는 그린 획의 평균 필압).
-     * 쌍곡선은 두 가지, 보조선(점근선·축)을 켜 두었으면 그 획이 더 붙는다
+     * 쌍곡선은 두 가지, 보조선(점근선·축)을 켜 두었으면 그 획이 더 붙는다. quick은 그리는 동안의 미리 보기 (덜 다듬음)
      */
-    private fun fitShape(raw: Stroke): List<Stroke>? {
-        val fitted = ShapeFit.fit(shapeKind, raw) ?: return null
+    private fun fitShape(
+        raw: Stroke, kind: ShapeKind = shapeKind, guide: GuideStyle = shapeGuide, quick: Boolean = false,
+    ): List<Stroke>? {
+        val fitted = ShapeFit.fit(kind, raw, quick) ?: return null
         var pSum = 0f
         for (i in 0 until raw.count) pSum += raw.p(i)
         val pAvg = pSum / raw.count
@@ -1418,7 +1445,7 @@ class DocumentView @JvmOverloads constructor(
             for (i in 0 until pts.size / 2) add(pts[i * 2], pts[i * 2 + 1], pAvg)
         }
         val out = fitted.curves.map { toStroke(it, false) }.toMutableList()
-        if (shapeGuide != GuideStyle.NONE) fitted.guides.mapTo(out) { toStroke(it, shapeGuide == GuideStyle.DASHED) }
+        if (guide != GuideStyle.NONE) fitted.guides.mapTo(out) { toStroke(it, guide == GuideStyle.DASHED) }
         return out
     }
 
@@ -1465,6 +1492,9 @@ class DocumentView @JvmOverloads constructor(
 
     private fun endPen(commit: Boolean) {
         val inkDoc = ink
+        // 아직 맞추는 중인 미리 보기는 버린다
+        shapeGen++
+        shapePending = false
         if (textPressing) {
             textPressing = false
             val hit = textTap

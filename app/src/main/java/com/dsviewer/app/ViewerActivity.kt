@@ -2227,7 +2227,7 @@ class ViewerActivity : AppCompatActivity() {
     private val shapeFamilies = mapOf(
         // 다항: 직선(일차)·이차·삼차·사차
         ShapeKind.LINE to listOf(ShapeKind.LINE, ShapeKind.QUADRATIC, ShapeKind.CUBIC, ShapeKind.QUARTIC),
-        ShapeKind.CIRCLE to listOf(ShapeKind.CIRCLE, ShapeKind.ELLIPSE, ShapeKind.CIRCLE_CR),
+        ShapeKind.CIRCLE to listOf(ShapeKind.CIRCLE, ShapeKind.CIRCLE_CR, ShapeKind.ELLIPSE, ShapeKind.SECTOR, ShapeKind.SEMICIRCLE),
         ShapeKind.TRIANGLE to listOf(
             ShapeKind.TRIANGLE, ShapeKind.TRI_EQUILATERAL, ShapeKind.TRI_RIGHT,
             ShapeKind.TRI_ISOSCELES, ShapeKind.TRI_RIGHT_ISOSCELES,
@@ -2240,7 +2240,7 @@ class ViewerActivity : AppCompatActivity() {
     private val shapeOrder = listOf(
         "다항" to ShapeKind.LINE, "원" to ShapeKind.CIRCLE, "쌍곡선" to ShapeKind.HYPERBOLA,
         "삼각형" to ShapeKind.TRIANGLE, "사각형" to ShapeKind.QUADRILATERAL,
-        "지수·로그" to ShapeKind.EXP_LOG,
+        "지수·로그" to ShapeKind.EXP_LOG, "이차×지수" to ShapeKind.QUAD_EXP,
         "사인·코사인" to ShapeKind.SINE, "탄젠트" to ShapeKind.TANGENT,
     )
     /** 무리마다 마지막으로 고른 종류 (다른 무리를 쓰는 동안 칸에 보인다) */
@@ -2529,7 +2529,7 @@ class ViewerActivity : AppCompatActivity() {
         /** 넣는 그림의 긴 변 최대 픽셀 */
         private const val MAX_IMAGE_PX = 2048
         /** 보조선(점근선·축)을 고를 수 있는 보정 펜 도형 */
-        private val GUIDE_KINDS = setOf(ShapeKind.HYPERBOLA, ShapeKind.EXP_LOG, ShapeKind.TANGENT, ShapeKind.SINE)
+        private val GUIDE_KINDS = setOf(ShapeKind.HYPERBOLA, ShapeKind.EXP_LOG, ShapeKind.QUAD_EXP, ShapeKind.TANGENT, ShapeKind.SINE)
         private val TAB_ICON_GRAY = Color.parseColor("#9E9E9E")
         /** 열려 있는 탭 수 (탐색기의 '열린 문서' 버튼용) */
         var openTabs = 0
