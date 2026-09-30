@@ -1,0 +1,13 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- 모두 가리기: 빗금 친 띠로 덮인 줄 -->
+    <path android:strokeColor="?attr/colorControlNormal" android:strokeWidth="1.4"
+        android:strokeAlpha="0.45" android:strokeLineCap="round"
+        android:pathData="M3,5.5h18M3,18.5h18" />
+    <path android:fillColor="?attr/colorControlNormal"
+        android:pathData="M2.5,8.5h19v7h-19z" />
+    <path android:strokeColor="?attr/colorSurface" android:strokeWidth="1.1"
+        android:strokeLineCap="round"
+        android:pathData="M6,15L9,9M10.5,15L13.5,9M15,15L18,9" />
+</vector>

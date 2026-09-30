@@ -1660,6 +1660,40 @@ class ViewerActivity : AppCompatActivity() {
                 addOption(R.drawable.ic_lasso, "자유 선택", !docView.lassoRect) { setLassoRect(false) }
                 addOption(R.drawable.ic_select_rect, "네모 선택", docView.lassoRect) { setLassoRect(true) }
             }
+            Tool.TAPE -> {
+                val erasing = docView.tapeErasing
+                addOption(R.drawable.ic_tape_pen, "펜", !erasing && !docView.tapeRect) { setTapeMode(rect = false) }
+                addOption(R.drawable.ic_tape_rect, "사각", !erasing && docView.tapeRect) { setTapeMode(rect = true) }
+                // 테이프만 지우는 지우개: 누르면 획 지우개 / 영역 지우개가 펼쳐진다
+                addOption(tapeEraserIcon(docView.tapeEraseMode), "지우개 ▾", erasing, closeBar = false) { showTapeEraserPopup(it) }
+                addOptionSeparator()
+                if (!erasing && !docView.tapeRect) {
+                    // 펜 테이프만: 곧게 펴기, 글자 크기에 맞추기 (켜고 끄기)
+                    addOption(R.drawable.ic_ruler, "직선 보정", docView.tapeStraight) {
+                        docView.tapeStraight = !docView.tapeStraight
+                        prefs.edit().putBoolean("tapeStraight", docView.tapeStraight).apply()
+                        toast(if (docView.tapeStraight) "직선 자동 보정을 켰습니다." else "직선 자동 보정을 껐습니다.")
+                    }
+                    addOption(R.drawable.ic_tape_fit, "글자 크기 맞춤", docView.tapeFitText) {
+                        docView.tapeFitText = !docView.tapeFitText
+                        prefs.edit().putBoolean("tapeFitText", docView.tapeFitText).apply()
+                        toast(if (docView.tapeFitText) "테이프 굵기를 글자 크기에 맞춥니다." else "고른 굵기 그대로 붙입니다.")
+                    }
+                    addOptionSeparator()
+                }
+                if (!erasing) {
+                    // 무늬: 한 칸에 지금 무늬만 보이고, 누르면 다섯 가지가 펼쳐진다
+                    val p = docView.tapePattern
+                    addOption(TapePatternDrawable(p, docView.tapeColor, resources.displayMetrics.density), "${p.label} ▾", false,
+                        closeBar = false) { showPatternPopup(it) }
+                    addOptionSeparator()
+                }
+                // 아래 세 칸은 보고 있는 쪽에만 해당한다는 표시
+                addOptionLabel("현재\n페이지:")
+                addOption(R.drawable.ic_tape_hide, "모두 가리기", false) { revealPageTapes(false) }
+                addOption(R.drawable.ic_tape_show, "모두 보이기", false) { revealPageTapes(true) }
+                addOption(R.drawable.ic_eraser_page, "모두 지우기", false) { clearPageTapes() }
+            }
             else -> return
         }
         optionTool = t
@@ -1704,28 +1738,171 @@ class ViewerActivity : AppCompatActivity() {
         updateLassoIcon()
     }
 
-    /** 옵션 줄의 칸 하나 (아이콘 + 이름). 누르면 옵션 줄을 닫고 실행한다 */
-    private fun addOption(icon: Int, label: String, selected: Boolean, onClick: () -> Unit) {
+    private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+
+    /** 테이프 붙이기 (펜 / 사각). 테이프 지우개는 끈다 */
+    private fun setTapeMode(rect: Boolean) {
+        docView.tapeRect = rect
+        docView.tapeErasing = false
+        prefs.edit().putBoolean("tapeRect", rect).putBoolean("tapeErasing", false).apply()
+        updateTapeIcon()
+        applyToolWidth(Tool.TAPE)
+        buildColors()  // 네모 테이프는 굵기 칸이 없다
+    }
+
+    /** 테이프만 지우는 지우개로 (획 / 영역) */
+    private fun setTapeEraser(mode: EraserMode) {
+        docView.tapeErasing = true
+        docView.tapeEraseMode = mode
+        prefs.edit().putBoolean("tapeErasing", true).putString("tapeEraseMode", mode.name).apply()
+        updateTapeIcon()
+        applyToolWidth(Tool.TAPE)
+        buildColors()  // 지우개는 색 칸 없이 크기 칸
+    }
+
+    private fun tapeEraserIcon(mode: EraserMode) =
+        getDrawable(if (mode == EraserMode.AREA) R.drawable.ic_eraser_area else R.drawable.ic_eraser_stroke)!!
+
+    /**
+     * 테이프 버튼: 테이프 그림 (색 자국은 지금 테이프 색). 테이프 지우개면 오른쪽 아래에 작은 지우개를 겹친다
+     */
+    private fun updateTapeIcon() {
+        val button = toolButtons.getValue(Tool.TAPE)
+        // 펜·사각: 위에 테이프, 아래에 테이프 색의 S자 띠·네모 (펜 버튼처럼). 지우개: 테이프 색 테이프 + 작은 지우개
+        val layers = when {
+            docView.tapeErasing -> mutableListOf(
+                getDrawable(R.drawable.ic_tape_mark)!!, getDrawable(R.drawable.ic_tape_body)!!, getDrawable(R.drawable.ic_eraser_body)!!)
+            docView.tapeRect -> mutableListOf(getDrawable(R.drawable.ic_tape_mark_rect)!!, getDrawable(R.drawable.ic_tape_body_top)!!)
+            else -> mutableListOf(getDrawable(R.drawable.ic_tape_mark_pen)!!, getDrawable(R.drawable.ic_tape_body_top)!!)
+        }
+        val icon = LayerDrawable(layers.toTypedArray())
+        icon.setId(0, R.id.tool_mark)
+        if (docView.tapeErasing) {
+            val d = resources.displayMetrics.density
+            // 테이프는 왼쪽 위로 조금 작게, 지우개는 오른쪽 아래에 작게
+            icon.setLayerInset(0, 0, 0, (5 * d).toInt(), (5 * d).toInt())
+            icon.setLayerInset(1, 0, 0, (5 * d).toInt(), (5 * d).toInt())
+            icon.setLayerInset(2, (11 * d).toInt(), (11 * d).toInt(), 0, 0)
+        }
+        button.setImageDrawable(icon)
+        button.contentDescription = when {
+            docView.tapeErasing -> if (docView.tapeEraseMode == EraserMode.AREA) "테이프 영역 지우개" else "테이프 획 지우개"
+            docView.tapeRect -> "사각 테이프"
+            else -> "펜 테이프"
+        }
+        updateToolMarks()
+    }
+
+    /** 테이프 지우개 칸: 획 지우개 / 영역 지우개를 펼쳐 고른다 */
+    private fun showTapeEraserPopup(anchor: View) {
+        val erasing = docView.tapeErasing
+        val modes = listOf(EraserMode.STROKE to "획 지우개", EraserMode.AREA to "영역 지우개")
+        showOptionPopup(anchor, modes.map { (m, label) ->
+            Triple(tapeEraserIcon(m), label, erasing && docView.tapeEraseMode == m)
+        }) { i -> setTapeEraser(modes[i].first) }
+    }
+
+    /** 보고 있는 쪽의 테이프를 모두 보이게 하거나 모두 가린다 */
+    private fun revealPageTapes(reveal: Boolean) {
+        val page = docView.currentPage() + 1
+        if (docView.revealPageTapes(reveal) == 0) toast("${page}쪽에는 테이프가 없습니다.")
+    }
+
+    /** 보고 있는 쪽의 테이프를 모두 지운다. 실행 취소로 되돌릴 수 있으니 묻지 않는다 */
+    private fun clearPageTapes() {
+        val page = docView.currentPage()
+        if (page < 0) return
+        val n = docView.clearPageTapes()
+        toast(if (n == 0) "${page + 1}쪽에는 지울 테이프가 없습니다." else "테이프 ${n}개를 지웠습니다. 실행 취소로 되돌릴 수 있습니다.")
+    }
+
+    /** 테이프 무늬 고르기: 다섯 가지가 펼쳐진다 */
+    private fun showPatternPopup(anchor: View) {
+        val d = resources.displayMetrics.density
+        showOptionPopup(anchor, TapePattern.entries.map { p ->
+            Triple(TapePatternDrawable(p, docView.tapeColor, d), p.label, p == docView.tapePattern)
+        }) { i ->
+            val p = TapePattern.entries[i]
+            docView.tapePattern = p
+            prefs.edit().putString("tapePattern", p.name).apply()
+        }
+    }
+
+    /**
+     * 옵션 줄의 칸에서 펼치는 창: 칸 위(옵션 줄이 위에 있으면 아래)에 고를 것들이 가로로 펼쳐진다.
+     * 고르면 창과 옵션 줄을 닫고 [onPick]에 몇 번째인지 넘긴다
+     */
+    private fun showOptionPopup(
+        anchor: View, items: List<Triple<android.graphics.drawable.Drawable, String, Boolean>>, onPick: (Int) -> Unit,
+    ) {
+        val d = resources.displayMetrics.density
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            val pd = (4 * d).toInt()
+            setPadding(pd, pd, pd, pd)
+            background = GradientDrawable().apply {
+                cornerRadius = 14 * d
+                setColor(MaterialColors.getColor(anchor, com.google.android.material.R.attr.colorSurfaceContainerHigh))
+            }
+        }
+        val popup = android.widget.PopupWindow(box, LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT, true)
+        popup.elevation = 8 * d
+        items.forEachIndexed { i, (icon, label, selected) ->
+            box.addView(optionItem(icon, label, selected) {
+                popup.dismiss()
+                hideOptionBar()
+                onPick(i)
+            })
+        }
+        box.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
+        val w = box.measuredWidth
+        val h = box.measuredHeight
+        val loc = IntArray(2)
+        anchor.getLocationOnScreen(loc)
+        val gap = (6 * d).toInt()
+        val x = (loc[0] + anchor.width / 2 - w / 2).coerceIn(gap, maxOf(gap, window.decorView.width - w - gap))
+        val y = if (dock.side == ToolbarSide.TOP) loc[1] + anchor.height + gap else loc[1] - h - gap
+        popup.showAtLocation(anchor, android.view.Gravity.NO_GRAVITY, x, y.coerceAtLeast(gap))
+    }
+
+    /**
+     * 옵션 줄의 칸 하나 (아이콘 + 이름). 누르면 옵션 줄을 닫고 실행한다.
+     * [closeBar]가 false면 옵션 줄을 둔 채 실행한다 (칸에서 창을 펼칠 때). onClick은 누른 칸을 받는다
+     */
+    private fun addOption(icon: Int, label: String, selected: Boolean, closeBar: Boolean = true, onClick: (View) -> Unit) =
+        addOption(getDrawable(icon)!!, label, selected, closeBar, onClick)
+
+    private fun addOption(
+        icon: android.graphics.drawable.Drawable, label: String, selected: Boolean,
+        closeBar: Boolean = true, onClick: (View) -> Unit,
+    ) {
+        optionRow.addView(optionItem(icon, label, selected) {
+            if (closeBar) hideOptionBar()
+            onClick(it)
+        })
+    }
+
+    /** 아이콘 아래 이름이 붙은 칸 (옵션 줄, 무늬 고르기 창) */
+    private fun optionItem(
+        icon: android.graphics.drawable.Drawable, label: String, selected: Boolean, onClick: (View) -> Unit,
+    ): View {
         val d = resources.displayMetrics.density
         val item = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = android.view.Gravity.CENTER_HORIZONTAL
-            minimumWidth = (72 * d).toInt()
-            setPadding((10 * d).toInt(), (6 * d).toInt(), (10 * d).toInt(), (4 * d).toInt())
+            minimumWidth = (48 * d).toInt()
+            setPadding((6 * d).toInt(), (5 * d).toInt(), (6 * d).toInt(), (3 * d).toInt())
             setBackgroundResource(R.drawable.bg_tool)
             isSelected = selected
             contentDescription = if (selected) "$label (선택됨)" else label
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { marginEnd = (4 * d).toInt() }
-            setOnClickListener {
-                hideOptionBar()
-                onClick()
-            }
+            ).apply { marginEnd = (1 * d).toInt() }
+            setOnClickListener { onClick(it) }
         }
         item.addView(ImageView(this).apply {
-            setImageResource(icon)
-            layoutParams = LinearLayout.LayoutParams((28 * d).toInt(), (28 * d).toInt())
+            setImageDrawable(icon)
+            layoutParams = LinearLayout.LayoutParams((26 * d).toInt(), (26 * d).toInt())
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         })
         item.addView(TextView(this).apply {
@@ -1737,15 +1914,30 @@ class ViewerActivity : AppCompatActivity() {
             setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_LabelMedium)
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         })
-        optionRow.addView(item)
+        return item
+    }
+
+    /** 옵션 줄의 작은 글 (뒤따르는 칸들이 어디에 해당하는지 알려 준다). 누를 수 없다 */
+    private fun addOptionLabel(text: String) {
+        val d = resources.displayMetrics.density
+        optionRow.addView(TextView(this).apply {
+            this.text = text
+            gravity = android.view.Gravity.CENTER
+            setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_LabelMedium)
+            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurfaceVariant))
+            setLineSpacing(0f, 0.9f)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { marginEnd = (4 * d).toInt() }
+        })
     }
 
     private fun addOptionSeparator() {
         val d = resources.displayMetrics.density
         optionRow.addView(View(this).apply {
             layoutParams = LinearLayout.LayoutParams((1 * d).toInt(), (32 * d).toInt()).apply {
-                marginStart = (6 * d).toInt()
-                marginEnd = (10 * d).toInt()
+                marginStart = (4 * d).toInt()
+                marginEnd = (5 * d).toInt()
             }
             setBackgroundColor(com.google.android.material.color.MaterialColors.getColor(
                 this, com.google.android.material.R.attr.colorOutlineVariant
@@ -1804,6 +1996,10 @@ class ViewerActivity : AppCompatActivity() {
     private val hlDefaults = intArrayOf(
         0xFFFFEB3B.toInt(), 0xFF9CFF57.toInt(), 0xFFFF8AB8.toInt(), 0xFF7FD8FF.toInt(), 0xFFFFB74D.toInt()
     )
+    /** 테이프: 마스킹 테이프 같은 옅은 색들 */
+    private val tapeDefaults = intArrayOf(
+        0xFFF6C744.toInt(), 0xFF7FC8F8.toInt(), 0xFFF48FB1.toInt(), 0xFF81C784.toInt(), 0xFFB0B0B0.toInt()
+    )
     /** 레이저: 확 눈에 띄는 빨강이 기본 */
     private val laserDefaults = intArrayOf(
         0xFFFF1744.toInt(), 0xFF00E676.toInt(), 0xFF2979FF.toInt(), 0xFFFFEA00.toInt(), 0xFFF500F5.toInt()
@@ -1817,10 +2013,12 @@ class ViewerActivity : AppCompatActivity() {
     private lateinit var penSlots: ColorSlots
     private lateinit var hlSlots: ColorSlots
     private lateinit var laserSlots: ColorSlots
+    private lateinit var tapeSlots: ColorSlots
 
     private fun slotsOf(t: Tool) = when (t) {
         Tool.HIGHLIGHTER -> hlSlots
         Tool.LASER -> laserSlots
+        Tool.TAPE -> tapeSlots
         else -> penSlots
     }
 
@@ -1849,6 +2047,11 @@ class ViewerActivity : AppCompatActivity() {
         when (t) {
             Tool.HIGHLIGHTER -> docView.hlColor = hlSlots.color
             Tool.LASER -> docView.laserColor = laserSlots.color
+            Tool.TAPE -> {
+                docView.tapeColor = tapeSlots.color
+                // 무늬 칸이 떠 있으면 새 색으로
+                if (optionTool == Tool.TAPE) showOptionBar(Tool.TAPE)
+            }
             else -> {
                 docView.penColor = penSlots.color
                 // 글 상자를 치는 중이면 고른 글자(없으면 이어서 칠 글자)의 색을 바꾼다
@@ -1888,17 +2091,26 @@ class ViewerActivity : AppCompatActivity() {
             Tool.LASSO to findViewById(R.id.toolLasso),
             Tool.LASER to findViewById(R.id.toolLaser),
             Tool.TEXT to findViewById(R.id.toolText),
+            Tool.TAPE to findViewById(R.id.toolTape),
         )
         penSlots = loadSlots("pen", penDefaults)
         hlSlots = loadSlots("hl", hlDefaults)
         laserSlots = loadSlots("laser", laserDefaults)
+        tapeSlots = loadSlots("tape", tapeDefaults)
         applyToolColor(Tool.PEN)
         applyToolColor(Tool.HIGHLIGHTER)
         applyToolColor(Tool.LASER)
+        applyToolColor(Tool.TAPE)
+        docView.tapeRect = prefs.getBoolean("tapeRect", false)
+        docView.tapeErasing = prefs.getBoolean("tapeErasing", false)
+        docView.tapeEraseMode = if (prefs.getString("tapeEraseMode", null) == EraserMode.AREA.name) EraserMode.AREA else EraserMode.STROKE
+        docView.tapeStraight = prefs.getBoolean("tapeStraight", true)
+        docView.tapeFitText = prefs.getBoolean("tapeFitText", true)
+        docView.tapePattern = TapePattern.of(prefs.getString("tapePattern", null))
         docView.laserFadeMs = prefs.getLong("laserFadeMs", 2000L)
         docView.hlStraight = prefs.getBoolean("hlStraight", false)
-        widthSlots = listOf(Tool.PEN, Tool.HIGHLIGHTER, Tool.ERASER, Tool.LASER).associateWith { loadWidths(WidthKind.of(it)) }
-        widthSlots.keys.forEach(::applyToolWidth)
+        widthSlots = listOf(Tool.PEN, Tool.HIGHLIGHTER, Tool.ERASER, Tool.LASER, Tool.TAPE).associateWith { loadWidths(WidthKind.of(it)) }
+        widthSlots.keys.forEach(::applySlotWidth)
         docView.fingerDrawing = if (prefs.contains("finger")) prefs.getBoolean("finger", false) else {
             // 처음 한 번만: 펜 입력이 없는 기기면 손가락 쓰기를 켜 두고 알려 준다 (이후엔 사용자가 메뉴에서 바꾼 값)
             val auto = !hasStylus()
@@ -1914,10 +2126,14 @@ class ViewerActivity : AppCompatActivity() {
         updateEraserIcon()
         updateLassoIcon()
         updateHighlighterIcon()
+        updateTapeIcon()
         toolButtons.forEach { (t, b) ->
             b.setOnClickListener {
-                if (t == Tool.ERASER || t == Tool.LASSO || t == Tool.LASER || t == Tool.HIGHLIGHTER) {
-                    // 형광펜·지우개·선택·레이저는 누를 때마다 옵션 줄을 열고, 열려 있으면 닫는다
+                if (t == Tool.ERASER || t == Tool.LASSO || t == Tool.LASER || t == Tool.HIGHLIGHTER || t == Tool.TAPE) {
+                    // 형광펜·테이프·지우개·선택·레이저는 누를 때마다 옵션 줄을 열고, 열려 있으면 닫는다
+                    if (t == Tool.TAPE && docView.tool != Tool.TAPE) {
+                        toast("테이프를 누르면 가린 내용이 보이고, 다시 누르면 가려집니다. 손가락으로는 어느 도구에서나 됩니다.")
+                    }
                     val showing = optionTool == t
                     selectTool(t)
                     if (showing) hideOptionBar() else showOptionBar(t)
@@ -2084,16 +2300,24 @@ class ViewerActivity : AppCompatActivity() {
             .apply()
     }
 
-    /** 보정 펜은 펜과 굵기 칸을 같이 쓴다 */
-    private fun widthTool(t: Tool) = if (t == Tool.SHAPE) Tool.PEN else t
+    /** 보정 펜은 펜과, 테이프 지우개는 지우개와 굵기 칸을 같이 쓴다 */
+    private fun widthTool(t: Tool) = when {
+        t == Tool.SHAPE -> Tool.PEN
+        t == Tool.TAPE && docView.tapeErasing -> Tool.ERASER
+        else -> t
+    }
 
-    private fun applyToolWidth(t: Tool) {
-        val v = widthSlots[widthTool(t)]?.value ?: return
-        when (t) {
+    private fun applyToolWidth(t: Tool) = applySlotWidth(widthTool(t))
+
+    /** 굵기 칸 묶음(도구 [k]의 칸)에서 고른 굵기를 문서 화면에 넣는다 */
+    private fun applySlotWidth(k: Tool) {
+        val v = widthSlots[k]?.value ?: return
+        when (k) {
             Tool.PEN, Tool.SHAPE -> docView.penWidth = v
             Tool.HIGHLIGHTER -> docView.hlWidth = v
             Tool.ERASER -> docView.eraserRadiusDp = v
             Tool.LASER -> docView.laserWidthDp = v
+            Tool.TAPE -> docView.tapeWidth = v
             Tool.LASSO, Tool.TEXT -> {}
         }
     }
@@ -2102,13 +2326,15 @@ class ViewerActivity : AppCompatActivity() {
         Tool.PEN, Tool.SHAPE, Tool.TEXT -> docView.penColor
         Tool.HIGHLIGHTER -> docView.hlColor
         Tool.LASER -> docView.laserColor
+        Tool.TAPE -> docView.tapeColor
         Tool.ERASER, Tool.LASSO -> Color.BLACK
     }
 
     private fun buildWidths() {
         widthRow.removeAllViews()
         val t = docView.tool
-        val s = widthSlots[widthTool(t)]
+        // 네모 테이프는 끌어서 크기를 정하므로 굵기 칸이 없다
+        val s = if (t == Tool.TAPE && docView.tapeRect && !docView.tapeErasing) null else widthSlots[widthTool(t)]
         widthRow.visibility = if (s == null) View.GONE else View.VISIBLE
         if (s == null) return
         val d = resources.displayMetrics.density
@@ -2159,7 +2385,7 @@ class ViewerActivity : AppCompatActivity() {
 
     /** 펜 아래 S자 곡선과 형광펜 아래 줄을 지금 고른 색으로 칠한다 */
     private fun updateToolMarks() {
-        for ((t, color) in listOf(Tool.PEN to docView.penColor, Tool.HIGHLIGHTER to docView.hlColor, Tool.LASER to docView.laserColor)) {
+        for ((t, color) in listOf(Tool.PEN to docView.penColor, Tool.HIGHLIGHTER to docView.hlColor, Tool.LASER to docView.laserColor, Tool.TAPE to docView.tapeColor)) {
             val button = toolButtons[t] ?: continue
             val layers = button.drawable?.mutate() as? LayerDrawable ?: continue
             layers.findDrawableByLayerId(R.id.tool_mark)?.mutate()?.setTint(color)
@@ -2173,7 +2399,7 @@ class ViewerActivity : AppCompatActivity() {
         buildWidths()
         colorRow.removeAllViews()
         val t = docView.tool
-        val noColor = t == Tool.ERASER || t == Tool.LASSO
+        val noColor = t == Tool.ERASER || t == Tool.LASSO || (t == Tool.TAPE && docView.tapeErasing)
         colorSep.visibility = if (noColor) View.GONE else View.VISIBLE
         lassoRow.visibility = if (t == Tool.LASSO) View.VISIBLE else View.GONE
         pasteButton.visibility = if (docView.hasClipboard) View.VISIBLE else View.GONE

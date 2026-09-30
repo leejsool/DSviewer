@@ -1,0 +1,9 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- 테이프 바탕. 색은 ViewerActivity에서 선택한 테이프 색으로 칠한다 -->
+    <group android:pivotX="12" android:pivotY="12" android:rotation="-30">
+        <path android:fillColor="#F6C744"
+            android:pathData="M3,9L5,10.5L3,12L5,13.5L3,15H21L19,13.5L21,12L19,10.5L21,9Z" />
+    </group>
+</vector>

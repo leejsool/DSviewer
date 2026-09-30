@@ -1,0 +1,13 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- 비스듬히 붙인 테이프: 양 끝을 톱니처럼 뜯은 띠와 빗금 -->
+    <group android:pivotX="12" android:pivotY="12" android:rotation="-30">
+        <path android:strokeColor="?attr/colorControlNormal" android:strokeWidth="1.4"
+            android:strokeLineJoin="round"
+            android:pathData="M3,9L5,10.5L3,12L5,13.5L3,15H21L19,13.5L21,12L19,10.5L21,9Z" />
+        <path android:strokeColor="?attr/colorControlNormal" android:strokeWidth="1.1"
+            android:strokeLineCap="round" android:strokeAlpha="0.7"
+            android:pathData="M8,14.2L10.5,9.8M11.5,14.2L14,9.8M15,14.2L17.5,9.8" />
+    </group>
+</vector>

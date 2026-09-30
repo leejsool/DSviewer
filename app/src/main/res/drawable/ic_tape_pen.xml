@@ -1,0 +1,11 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- 펜 테이프: 그은 대로 붙는 굵은 띠 -->
+    <path android:strokeColor="?attr/colorControlNormal" android:strokeWidth="5"
+        android:strokeAlpha="0.35" android:strokeLineJoin="round"
+        android:pathData="M4,16C7,9 10,9 12,12S17,15 20,8" />
+    <path android:strokeColor="?attr/colorControlNormal" android:strokeWidth="1.6"
+        android:strokeLineCap="round"
+        android:pathData="M4,16C7,9 10,9 12,12S17,15 20,8" />
+</vector>

@@ -7,10 +7,14 @@ import android.graphics.DashPathEffect
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.RectF
+import android.graphics.Region
 import android.graphics.Typeface
 import android.text.StaticLayout
 import android.text.TextPaint
+import kotlin.math.abs
 import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
@@ -146,6 +150,10 @@ fun drawInkStroke(c: Canvas, paint: Paint, st: Stroke, alphaMul: Float = 1f) {
         drawInkText(c, st, alphaMul)
         return
     }
+    if (st.tape != null) {
+        drawInkTape(c, st, alphaMul)
+        return
+    }
     paint.color = st.color
     if (st.tool == Tool.HIGHLIGHTER) {
         paint.alpha = (PdfInk.HL_ALPHA * 255).roundToInt()
@@ -163,9 +171,10 @@ fun drawInkStroke(c: Canvas, paint: Paint, st: Stroke, alphaMul: Float = 1f) {
 
 /**
  * SHAPE = 보정 펜 (그린 결과는 PEN 획으로 저장), LASER = 잠깐 보였다 사라지는 레이저 (저장하지 않음),
- * TEXT = 누른 자리에 글 넣기 (글은 [Stroke.text]가 있는 PEN 획으로 저장)
+ * TEXT = 누른 자리에 글 넣기 (글은 [Stroke.text]가 있는 PEN 획으로 저장),
+ * TAPE = 내용을 가리는 테이프 (누르면 보였다 가려졌다 한다. [Stroke.tape]가 있는 TAPE 획)
  */
-enum class Tool { PEN, SHAPE, HIGHLIGHTER, ERASER, LASSO, LASER, TEXT }
+enum class Tool { PEN, SHAPE, HIGHLIGHTER, ERASER, LASSO, LASER, TEXT, TAPE }
 
 /** STROKE = 닿은 획을 통째로, AREA = 지우개가 지나간 부분만 */
 enum class EraserMode { STROKE, AREA }
@@ -191,11 +200,24 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
     /** 글이면 그 글 (점 네 개가 글 상자의 네 모서리). 지우개로는 지우지 않는다 */
     var text: InkText? = null
 
+    /** 테이프면 그 모양·무늬 */
+    var tape: TapeStyle? = null
+    /** 테이프에서 영역 지우개로 뚫은 구멍들 (x, y, 반지름)을 이어 붙인 것 */
+    var holes = FloatArray(0)
+        private set
+
+    /** 테이프를 눌러 가린 내용을 보이게 했는지 (테두리만 그린다). 저장하지 않고, 파일을 열면 늘 가린 상태 */
+    var revealed = false
+
     /** 그림이나 글처럼 네 모서리로 된 상자인지 (지우개가 자르지 않고, 톡 눌러 고를 수 있다) */
     val isBox get() = image != null || text != null
 
     private var cachedPaths: List<Pair<Float, Path>>? = null
     private var cachedVersion = -1
+    private var cachedShape: Path? = null
+    private var cachedShapeVersion = -1
+    private var cachedOutline: Path? = null
+    private var cachedOutlineVersion = -1
 
     fun add(x: Float, y: Float, p: Float) {
         if (count * 3 + 3 > data.size) data = data.copyOf(data.size * 2)
@@ -212,11 +234,34 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
         version++
     }
 
+    /** 점을 모두 뺀다 (테이프를 곧게 펴서 점을 새로 넣을 때) */
+    fun clearPoints() {
+        count = 0
+        version++
+    }
+
+    /** i번째 점만 (dx, dy)만큼 옮긴다 */
+    fun offsetPoint(i: Int, dx: Float, dy: Float) {
+        data[i * 3] += dx
+        data[i * 3 + 1] += dy
+        version++
+    }
+
+    /** 굵기만 바꾼다 (테이프를 글자 크기에 맞출 때) */
+    fun resize(w: Float) {
+        width = w
+        version++
+    }
+
     /** 획 전체를 (dx, dy)만큼 옮긴다 */
     fun translate(dx: Float, dy: Float) {
         for (i in 0 until count) {
             data[i * 3] += dx
             data[i * 3 + 1] += dy
+        }
+        for (i in holes.indices step 3) {
+            holes[i] += dx
+            holes[i + 1] += dy
         }
         version++
     }
@@ -226,6 +271,11 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
         for (i in 0 until count) {
             data[i * 3] = ax + (data[i * 3] - ax) * k
             data[i * 3 + 1] = ay + (data[i * 3 + 1] - ay) * k
+        }
+        for (i in holes.indices step 3) {
+            holes[i] = ax + (holes[i] - ax) * k
+            holes[i + 1] = ay + (holes[i + 1] - ay) * k
+            holes[i + 2] *= k
         }
         width *= k
         version++
@@ -242,6 +292,12 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
             data[i * 3] = cx + dx * c - dy * s
             data[i * 3 + 1] = cy + dx * s + dy * c
         }
+        for (i in holes.indices step 3) {
+            val dx = holes[i] - cx
+            val dy = holes[i + 1] - cy
+            holes[i] = cx + dx * c - dy * s
+            holes[i + 1] = cy + dx * s + dy * c
+        }
         version++
     }
 
@@ -254,21 +310,50 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
         val s = Stroke(tool, color, width, dashed)
         s.image = image
         s.text = text
+        s.tape = tape
+        s.holes = holes.copyOf()
         s.data = data.copyOf(count * 3)
         s.count = count
         return s
     }
 
-    /** 실행 취소용으로 지금 모양을 떠 둔다 */
-    class State(val data: FloatArray, val count: Int, val color: Int, val width: Float)
+    /**
+     * 테이프에 (x, y) 반지름 r인 구멍을 더 뚫은 새 테이프 (영역 지우개). 바로 앞 구멍과 거의 같은 자리면 null
+     */
+    fun withHole(x: Float, y: Float, r: Float): Stroke? {
+        val n = holes.size
+        if (n >= 3 && hypot(holes[n - 3] - x, holes[n - 2] - y) < r * 0.25f && abs(holes[n - 1] - r) < r * 0.1f) return null
+        return copy().also { it.holes = holes + floatArrayOf(x, y, r) }
+    }
 
-    fun state() = State(data.copyOf(count * 3), count, color, width)
+    /** 다른 테이프의 구멍들을 그대로 가져온다 (파일에서 읽을 때) */
+    fun copyHolesFrom(o: Stroke) {
+        holes = o.holes.copyOf()
+        version++
+    }
+
+    /** 구멍을 뚫다 보니 테이프가 거의(1pt 조각도) 남지 않았는지 */
+    fun tapeGone(): Boolean {
+        val shape = tapeShape()
+        val b = RectF()
+        shape.computeBounds(b, true)
+        val clip = Region(floor(b.left).toInt() - 1, floor(b.top).toInt() - 1, ceil(b.right).toInt() + 1, ceil(b.bottom).toInt() + 1)
+        val left = Region()
+        left.setPath(shape, clip)
+        return left.isEmpty
+    }
+
+    /** 실행 취소용으로 지금 모양을 떠 둔다 */
+    class State(val data: FloatArray, val count: Int, val color: Int, val width: Float, val holes: FloatArray)
+
+    fun state() = State(data.copyOf(count * 3), count, color, width, holes.copyOf())
 
     fun restore(s: State) {
         data = s.data.copyOf()
         count = s.count
         color = s.color
         width = s.width
+        holes = s.holes.copyOf()
         version++
     }
 
@@ -279,7 +364,7 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
     /** 필압에 따라 굵기가 달라지는 구간들로 나눠 콜백한다. 화면 그리기와 PDF 저장이 같은 규칙을 쓴다. */
     inline fun forEachGroup(block: (w: Float, from: Int, to: Int) -> Unit) {
         if (count == 0) return
-        if (tool == Tool.HIGHLIGHTER) {
+        if (tool == Tool.HIGHLIGHTER || tool == Tool.TAPE) {
             block(width, 0, count - 1)
             return
         }
@@ -316,15 +401,86 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
         return list
     }
 
-    /** (px, py)에서 반지름 r 안에 이 획이 지나가는지 */
+    /** (px, py)에서 반지름 r 안에 이 획이 지나가는지. 네모 테이프는 안쪽도 */
     fun hitTest(px: Float, py: Float, r: Float): Boolean {
         val rr = r + width / 2f
         val rr2 = rr * rr
         if (count == 1) return dist2(px, py, x(0), y(0)) <= rr2
+        val closed = tape?.rect == true && count >= 3
+        if (closed && inPolygon(px, py)) return true
         for (i in 1 until count) {
             if (segDist2(px, py, x(i - 1), y(i - 1), x(i), y(i)) <= rr2) return true
         }
-        return false
+        return closed && segDist2(px, py, x(count - 1), y(count - 1), x(0), y(0)) <= rr2
+    }
+
+    /** 점들을 이은 다각형 안에 (px, py)가 있는지 */
+    private fun inPolygon(px: Float, py: Float): Boolean {
+        var inside = false
+        var j = count - 1
+        for (i in 0 until count) {
+            val xi = x(i); val yi = y(i); val xj = x(j); val yj = y(j)
+            if ((yi > py) != (yj > py) && px < (xj - xi) * (py - yi) / (yj - yi) + xi) inside = !inside
+            j = i
+        }
+        return inside
+    }
+
+    /** 테이프가 (px, py)를 덮고 있는지 (지우개로 뚫은 구멍 자리는 아님) */
+    fun tapeContains(px: Float, py: Float): Boolean {
+        if (tape == null || !hitTest(px, py, 0f)) return false
+        for (i in holes.indices step 3) if (hypot(holes[i] - px, holes[i + 1] - py) <= holes[i + 2]) return false
+        return true
+    }
+
+    /**
+     * 테이프가 덮는 영역 (쪽 좌표, 채우기용). 펜 테이프는 굵은 선의 테두리, 네모 테이프는 네 점을 이은 네모.
+     * 겹친 부분이 남아 있을 수 있으니 테두리를 그릴 때는 [tapeOutline]
+     */
+    fun tapeShape(): Path {
+        cachedShape?.let { if (cachedShapeVersion == version) return it }
+        val out = Path()
+        if (tape?.rect == true) {
+            if (count >= 3) {
+                out.moveTo(x(0), y(0))
+                for (i in 1 until count) out.lineTo(x(i), y(i))
+                out.close()
+            }
+        } else if (count > 0) {
+            val line = Path()
+            line.moveTo(x(0), y(0))
+            if (count == 1) line.lineTo(x(0) + 0.01f, y(0))
+            else for (i in 1 until count) line.lineTo(x(i), y(i))
+            // 테이프 끝은 그은 처음·끝 자리에서 곧게 잘라 (굵은 테이프가 옆 글자까지 덮지 않게), 꺾인 곳은 둥글게
+            Paint().apply {
+                style = Paint.Style.STROKE
+                strokeWidth = width
+                strokeCap = Paint.Cap.BUTT
+                strokeJoin = Paint.Join.ROUND
+            }.getFillPath(line, out)
+            out.fillType = Path.FillType.WINDING
+        }
+        if (holes.isNotEmpty()) {
+            // 영역 지우개로 뚫은 구멍을 뺀다
+            val cut = Path()
+            for (i in holes.indices step 3) cut.addCircle(holes[i], holes[i + 1], holes[i + 2], Path.Direction.CW)
+            val rest = Path()
+            if (rest.op(out, cut, Path.Op.DIFFERENCE)) out.set(rest)
+        }
+        cachedShape = out
+        cachedShapeVersion = version
+        return out
+    }
+
+    /** 테이프 영역에서 겹친 부분을 합친 바깥 테두리 (보이게 한 테이프의 테두리, PDF 저장) */
+    fun tapeOutline(): Path {
+        cachedOutline?.let { if (cachedOutlineVersion == version) return it }
+        val shape = tapeShape()
+        val out = Path()
+        if (!out.op(shape, Path(), Path.Op.UNION)) out.set(shape)
+        cachedOutline = out
+        cachedOutlineVersion = version
+        return out
     }
 
     /**
@@ -340,7 +496,7 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
         var cur: Stroke? = null
         fun inside(i: Int) = dist2(x(i), y(i), cx, cy) <= rr2
         fun addPoint(i: Int, t: Float) {
-            val piece = cur ?: Stroke(tool, color, width, dashed).also { cur = it }
+            val piece = cur ?: Stroke(tool, color, width, dashed).also { it.tape = tape; cur = it }
             if (t == 1f) piece.add(x(i), y(i), p(i))
             else piece.add(
                 x(i - 1) + (x(i) - x(i - 1)) * t, y(i - 1) + (y(i) - y(i - 1)) * t, p(i - 1) + (p(i) - p(i - 1)) * t

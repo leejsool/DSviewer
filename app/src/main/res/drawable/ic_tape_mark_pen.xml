@@ -1,0 +1,8 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- 펜 테이프로 붙인 S자 띠. 색은 ViewerActivity에서 선택한 테이프 색으로 칠한다 -->
+    <path android:strokeColor="@android:color/white" android:strokeWidth="2.4"
+        android:strokeLineJoin="round"
+        android:pathData="M3,21C4.3,18.4 6.4,18.4 7.5,20.2S10.9,22.4 12.6,19.6" />
+</vector>

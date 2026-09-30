@@ -28,7 +28,9 @@ enum class WidthKind(val min: Float, val max: Float, val step: Float, val defaul
     HIGHLIGHTER(4f, 30f, 0.5f, floatArrayOf(8f, 14f, 22f), "hlWidth"),
     ERASER(6f, 40f, 1f, floatArrayOf(8f, 14f, 24f), "eraserRadius"),
     /** 레이저는 확대와 상관없이 화면에서 늘 같은 굵기 (dp) */
-    LASER(2f, 16f, 0.5f, floatArrayOf(4f, 7f, 11f), "laserWidth");
+    LASER(2f, 16f, 0.5f, floatArrayOf(4f, 7f, 11f), "laserWidth"),
+    /** 펜 테이프 굵기 (pt) */
+    TAPE(4f, 40f, 0.5f, floatArrayOf(10f, 16f, 24f), "tapeWidth");
 
     /** 범위 안에서의 위치 0..1 */
     fun t(v: Float) = ((v - min) / (max - min)).coerceIn(0f, 1f)
@@ -46,6 +48,7 @@ enum class WidthKind(val min: Float, val max: Float, val step: Float, val defaul
             Tool.HIGHLIGHTER -> HIGHLIGHTER
             Tool.ERASER -> ERASER
             Tool.LASER -> LASER
+            Tool.TAPE -> TAPE
             Tool.LASSO, Tool.TEXT -> error("선택·글 도구에는 굵기가 없습니다")
         }
     }
@@ -78,7 +81,7 @@ class WidthSwatchView @JvmOverloads constructor(ctx: Context, attrs: AttributeSe
         paint.style = Paint.Style.STROKE
         paint.strokeWidth = dp(if (kind == WidthKind.PEN) 1.5f + t * 8f else 3f + t * 11f)
         paint.color = if (kind == WidthKind.HIGHLIGHTER) ColorUtils.setAlphaComponent(color, 170) else color
-        paint.strokeCap = if (kind == WidthKind.HIGHLIGHTER) Paint.Cap.SQUARE else Paint.Cap.ROUND
+        paint.strokeCap = if (kind == WidthKind.HIGHLIGHTER || kind == WidthKind.TAPE) Paint.Cap.SQUARE else Paint.Cap.ROUND
         // 칸이 세로로 길면(가로 툴바) 세로선, 가로로 길면(세로 툴바) 가로선
         val upright = height > width
         val half = dp(9f)
@@ -116,7 +119,7 @@ class WidthPreviewView @JvmOverloads constructor(ctx: Context, attrs: AttributeS
         }
         paint.strokeWidth = dp(if (kind == WidthKind.PEN) 1f + t * 12f else 4f + t * 22f)
         paint.color = if (kind == WidthKind.HIGHLIGHTER) ColorUtils.setAlphaComponent(color, 150) else color
-        paint.strokeCap = if (kind == WidthKind.HIGHLIGHTER) Paint.Cap.SQUARE else Paint.Cap.ROUND
+        paint.strokeCap = if (kind == WidthKind.HIGHLIGHTER || kind == WidthKind.TAPE) Paint.Cap.SQUARE else Paint.Cap.ROUND
         val pad = dp(24f); val a = h * 0.22f
         path.reset()
         path.moveTo(pad, h / 2 + a)

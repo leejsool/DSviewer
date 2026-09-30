@@ -99,6 +99,27 @@ class DocumentView @JvmOverloads constructor(
     /** 보정 펜: 보조선(지수·로그·탄젠트·쌍곡선의 점근선, 사인·코사인의 축)을 그리는 방식 */
     var shapeGuide = GuideStyle.NONE
     private var lastShapeFit = 0L
+    // ---- 테이프 ----
+    var tapeColor = 0xFFF6C744.toInt()
+    /** 펜 테이프 굵기 (pt) */
+    var tapeWidth = 16f
+    var tapePattern = TapePattern.STRIPE
+    /** true면 네모 테이프 (끌어서 네모), false면 펜 테이프 */
+    var tapeRect = false
+    /** 펜 테이프: 거의 곧게 그으면 곧은 선으로 편다 */
+    var tapeStraight = true
+    /** 펜 테이프: 아래 글자 줄의 높이에 맞춰 굵기와 자리를 맞춘다 */
+    var tapeFitText = true
+    /** true면 테이프 도구가 테이프만 지우는 지우개 */
+    var tapeErasing = false
+    /** 테이프 지우개: 획(테이프를 통째로) / 영역(지나간 부분만) */
+    var tapeEraseMode = EraserMode.STROKE
+    /** 펜(또는 손가락 필기)이 닿은 뒤 거의 움직이지 않았는지: 테이프를 톡 누른 것인지 보려고 */
+    private var tapCandidate = false
+    private var tapDownTime = 0L
+    private var tapDownSx = 0f
+    private var tapDownSy = 0f
+
     /** 글 도구: 누른 자리 (쪽, x, y). 떼기 전에 많이 움직이면 취소 */
     private var textTap: Triple<Int, Float, Float>? = null
     private var textPressing = false
@@ -880,6 +901,8 @@ class DocumentView @JvmOverloads constructor(
         override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
             // 글 도구: 손가락으로 톡 눌러도 글을 넣거나 고친다 (손가락 필기를 꺼 두었을 때)
             if (tool == Tool.TEXT) hitPage(e.x, e.y)?.let { tapText(it.first, it.second, it.third) }
+            // 다른 도구에서는 손가락으로 테이프를 톡 누르면 보였다 가려졌다
+            else toggleTapeAt(e.x, e.y)
             return true
         }
     })
@@ -1138,7 +1161,8 @@ class DocumentView @JvmOverloads constructor(
                 fingersBlocked = stylus
                 penPointerId = ev.getPointerId(idx)
                 penIsFinger = fingerPen
-                penErasing = tool == Tool.ERASER || (stylus && isEraserInput(ev, idx, samsungButton))
+                penErasing = tool == Tool.ERASER || (tool == Tool.TAPE && tapeErasing) ||
+                    (stylus && isEraserInput(ev, idx, samsungButton))
                 startPen(ev.getX(idx), ev.getY(idx), pressure(ev, idx))
                 return true
             }
@@ -1216,6 +1240,10 @@ class DocumentView @JvmOverloads constructor(
         pieces.clear()
         curStroke = null
         curPage = -1
+        tapCandidate = true
+        tapDownTime = System.currentTimeMillis()
+        tapDownSx = sx
+        tapDownSy = sy
         if (tool == Tool.LASSO && !penErasing) {
             startLasso(sx, sy)
             return
@@ -1236,6 +1264,9 @@ class DocumentView @JvmOverloads constructor(
             val st = when (tool) {
                 Tool.HIGHLIGHTER -> Stroke(Tool.HIGHLIGHTER, hlColor, hlWidth)
                 Tool.LASER -> Stroke(Tool.LASER, laserColor, laserWidthDp).also { holdLaser() }
+                Tool.TAPE -> Stroke(Tool.TAPE, tapeColor, if (tapeRect) 0f else tapeWidth).also {
+                    it.tape = TapeStyle(tapePattern, tapeRect)
+                }
                 else -> Stroke(Tool.PEN, penColor, penWidth)
             }
             lastPressure = p
@@ -1253,6 +1284,7 @@ class DocumentView @JvmOverloads constructor(
     }
 
     private fun movePen(sx: Float, sy: Float, p: Float) {
+        if (tapCandidate && hypot(sx - tapDownSx, sy - tapDownSy) > TAP_SLOP_DP * density) tapCandidate = false
         if (textPressing) {
             if (hypot(sx - textTapSx, sy - textTapSy) > TAP_SLOP_DP * density) textTap = null
             return
@@ -1334,6 +1366,19 @@ class DocumentView @JvmOverloads constructor(
             invalidate()
             return
         }
+        if (st.tape?.rect == true) {
+            // 네모 테이프: 첫 점과 지금 점이 마주 보는 모서리
+            val x0 = st.x(0)
+            val y0 = st.y(0)
+            st.keepFirst()
+            st.add(px, y0, 1f)
+            st.add(px, py, 1f)
+            st.add(x0, py, 1f)
+            lastSx = sx
+            lastSy = sy
+            invalidate()
+            return
+        }
         val last = st.count - 1
         val minDist = 0.8f / scale
         if (hypot(px - st.x(last), py - st.y(last)) < minDist) return
@@ -1374,12 +1419,32 @@ class DocumentView @JvmOverloads constructor(
         val r = eraserRadiusDp * density / scale
         val list = inkDoc.pages[page]
         var removed = false
+        // 테이프 도구의 지우개는 테이프만 (보이게 한 테이프도) 지운다
+        val tapesOnly = tool == Tool.TAPE && tapeErasing
+        val mode = if (tapesOnly) tapeEraseMode else eraserMode
+        // 가린 테이프 아래(먼저 그린 획)는 보이지 않으므로 지우지 않는다
+        var covered = false
         for (k in list.indices.reversed()) {
             val st = list[k]
             if (st.isBox) continue  // 그림·글은 선택해서 삭제
-            if (eraseHlOnly && st.tool != Tool.HIGHLIGHTER) continue
-            val rest = if (eraserMode == EraserMode.AREA) st.cut(px, py, r) ?: continue
-            else if (st.hitTest(px, py, r)) emptyList() else continue
+            val isTape = st.tape != null
+            if (tapesOnly) {
+                if (!isTape) continue
+            } else if (isTape && st.revealed) continue  // 보이게 한 테이프는 투명한 셈이라 지우개가 그대로 지나간다
+            if (covered) break
+            val coversHere = isTape && !st.revealed && st.tapeContains(px, py)
+            if (!tapesOnly && eraseHlOnly && st.tool != Tool.HIGHLIGHTER) {
+                if (coversHere) covered = true
+                continue
+            }
+            if (!st.hitTest(px, py, r)) continue
+            val rest = when {
+                mode == EraserMode.STROKE -> emptyList()
+                // 테이프는 지우개가 지나간 동그라미만큼 구멍을 뚫는다
+                isTape -> st.withHole(px, py, r)?.let { if (it.tapeGone()) emptyList() else listOf(it) } ?: continue
+                else -> st.cut(px, py, r) ?: continue
+            }
+            if (coversHere) covered = true
             list.removeAt(k)
             list.addAll(k, rest)
             // 이번에 잘라 넣은 조각을 다시 자르면 조각 목록에서만 뺀다 (원래 획이 아니므로)
@@ -1428,6 +1493,11 @@ class DocumentView @JvmOverloads constructor(
         } else if (lassoing) {
             lassoing = false
             if (commit) finishLasso()
+        } else if (commit && tapCandidate && !penErasing && curStroke != null && (tool == Tool.TAPE || penIsFinger) &&
+            System.currentTimeMillis() - tapDownTime < TAP_MS && toggleTapeAt(tapDownSx, tapDownSy)
+        ) {
+            // 테이프를 톡 누름 (테이프 도구, 또는 손가락 필기): 획을 남기지 않고 테이프만 보였다 가려졌다
+            shapePreview = null
         } else if (inkDoc != null) {
             if (penErasing) {
                 inkDoc.erased(ArrayList(erased), ArrayList(pieces))
@@ -1439,6 +1509,8 @@ class DocumentView @JvmOverloads constructor(
                         val fitted = fitShape(st)
                         if (fitted != null) inkDoc.addAll(curPage, fitted)
                         else if (st.count > 2) listener?.onShapeFailed(shapeKind)
+                    } else if (st.tool == Tool.TAPE) {
+                        if (finishTape(curPage, st)) inkDoc.add(curPage, st)
                     } else if (st.tool == Tool.LASER) {
                         // 레이저: 필기에 넣지 않고 잠깐 보였다가 사라진다
                         laserStrokes.add(curPage to st)
@@ -1455,6 +1527,7 @@ class DocumentView @JvmOverloads constructor(
         curPage = -1
         penPointerId = -1
         penErasing = false
+        tapCandidate = false
         invalidate()
     }
 
@@ -1531,7 +1604,7 @@ class DocumentView @JvmOverloads constructor(
             minY = min(minY, lasso[k * 2 + 1]); maxY = max(maxY, lasso[k * 2 + 1])
         }
         if (max(maxX - minX, maxY - minY) * scale < 10 * density) {
-            boxAt(lassoPage, lasso[0], lasso[1])?.let { select(lassoPage, listOf(it)) }
+            (boxAt(lassoPage, lasso[0], lasso[1]) ?: tapeAt(lassoPage, lasso[0], lasso[1]))?.let { select(lassoPage, listOf(it)) }
             return
         }
         if (lassoRect) {
@@ -1618,6 +1691,228 @@ class DocumentView @JvmOverloads constructor(
         select(page, listOf(st))
         invalidate()
         return true
+    }
+
+    // ================= 테이프 =================
+
+    /** 쪽 좌표 (x, y)를 덮고 있는 맨 위 테이프 */
+    private fun tapeAt(page: Int, x: Float, y: Float): Stroke? =
+        ink?.pages?.getOrNull(page)?.lastOrNull { it.tapeContains(x, y) }
+
+    /** 화면 좌표의 테이프를 보이게 하거나 다시 가린다 (실행 취소 기록에 남기지 않음). 테이프가 없으면 false */
+    private fun toggleTapeAt(sx: Float, sy: Float): Boolean {
+        val hit = hitPage(sx, sy) ?: return false
+        val st = tapeAt(hit.first, hit.second, hit.third) ?: return false
+        st.revealed = !st.revealed
+        invalidate()
+        return true
+    }
+
+    /** 다 그린 테이프를 다듬는다 (곧게 펴기, 글자 크기에 맞추기). 너무 작아 남길 것이 없으면 false */
+    private fun finishTape(page: Int, st: Stroke): Boolean {
+        if (st.tape?.rect == true) {
+            if (st.count < 4) return false
+            val w = abs(st.x(2) - st.x(0))
+            val h = abs(st.y(2) - st.y(0))
+            return min(w, h) * scale >= 6 * density
+        }
+        if (st.count < 2 || st.length() * scale < 8 * density) return false
+        if (tapeStraight) straightenTape(st)
+        if (tapeFitText) fitTapeToText(page, st)
+        return true
+    }
+
+    /**
+     * 거의 곧게 그은 펜 테이프를 곧은 선 하나로 편다. 점들에 가장 잘 맞는 직선(주성분)에 첫 점과 끝 점을 내리고,
+     * 가로·세로에 가까우면(5° 안) 딱 맞춘다. 많이 휘었으면 그대로 둔다
+     */
+    private fun straightenTape(st: Stroke) {
+        val n = st.count
+        var mx = 0f; var my = 0f
+        for (i in 0 until n) { mx += st.x(i); my += st.y(i) }
+        mx /= n; my /= n
+        var sxx = 0f; var sxy = 0f; var syy = 0f
+        for (i in 0 until n) {
+            val dx = st.x(i) - mx; val dy = st.y(i) - my
+            sxx += dx * dx; sxy += dx * dy; syy += dy * dy
+        }
+        val th = 0.5 * kotlin.math.atan2(2.0 * sxy, (sxx - syy).toDouble())
+        val ux = kotlin.math.cos(th).toFloat()
+        val uy = kotlin.math.sin(th).toFloat()
+        var tMin = Float.MAX_VALUE; var tMax = -Float.MAX_VALUE; var dev = 0f
+        for (i in 0 until n) {
+            val dx = st.x(i) - mx; val dy = st.y(i) - my
+            val t = dx * ux + dy * uy
+            tMin = min(tMin, t); tMax = max(tMax, t)
+            dev = max(dev, abs(dx * uy - dy * ux))
+        }
+        val len = tMax - tMin
+        if (len <= 0f || dev > max(st.width * 0.6f, len * 0.12f)) return
+        // 그은 방향(첫 점 → 끝 점)을 지킨다
+        val forward = (st.x(n - 1) - st.x(0)) * ux + (st.y(n - 1) - st.y(0)) * uy >= 0f
+        val (ta, tb) = if (forward) tMin to tMax else tMax to tMin
+        var x0 = mx + ux * ta; var y0 = my + uy * ta
+        var x1 = mx + ux * tb; var y1 = my + uy * tb
+        val deg = Math.toDegrees(kotlin.math.atan2(abs(y1 - y0).toDouble(), abs(x1 - x0).toDouble()))
+        if (deg <= 5.0) { val y = (y0 + y1) / 2; y0 = y; y1 = y }
+        else if (deg >= 85.0) { val x = (x0 + x1) / 2; x0 = x; x1 = x }
+        val p = st.p(0)
+        st.clearPoints()
+        st.add(x0, y0, p)
+        st.add(x1, y1, p)
+    }
+
+    /**
+     * 펜 테이프를 아래 글자 줄에 맞춘다: 테이프를 따라 가며 수직 방향으로 쪽 그림(PDF + 필기)의 어두운 점을 세어,
+     * 테이프 가운데에서 가장 가까운 글자 줄의 위·아래 끝을 찾고 그 높이(+ 조금 여유)로 굵기를, 그 가운데로 자리를 옮긴다.
+     * 글자가 없으면(아래가 비었으면) 그대로 둔다
+     */
+    private fun fitTapeToText(page: Int, st: Stroke) {
+        val inkDoc = ink ?: return
+        val base = baseCache.get(page) ?: return
+        val pw = sizes[page].width
+        val ph = sizes[page].height
+        val k = base.width / pw
+        // 찾는 범위: 테이프 가운데에서 위·아래로 FIT_RANGE pt
+        var l = Float.MAX_VALUE; var t = Float.MAX_VALUE; var r = -Float.MAX_VALUE; var b = -Float.MAX_VALUE
+        for (i in 0 until st.count) {
+            l = min(l, st.x(i)); r = max(r, st.x(i)); t = min(t, st.y(i)); b = max(b, st.y(i))
+        }
+        l = max(0f, l - FIT_RANGE); t = max(0f, t - FIT_RANGE)
+        r = min(pw, r + FIT_RANGE); b = min(ph, b + FIT_RANGE)
+        val bw = ((r - l) * k).toInt()
+        val bh = ((b - t) * k).toInt()
+        if (bw <= 0 || bh <= 0 || bw.toLong() * bh > 8_000_000L) return
+        val bmp = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888)
+        val px = IntArray(bw * bh)
+        try {
+            val c = Canvas(bmp)
+            c.drawColor(Color.WHITE)
+            c.scale(k, k)
+            c.translate(-l, -t)
+            c.drawBitmap(base, null, RectF(0f, 0f, pw, ph), bmpPaint)
+            // 필기·그림·글도 (다른 테이프는 빼고)
+            val paint = inkPaint()
+            for (s in inkDoc.pages[page]) if (s.image != null) drawInkStroke(c, paint, s)
+            for (s in inkDoc.pages[page]) if (s.image == null && s.tape == null) drawInkStroke(c, paint, s)
+            bmp.getPixels(px, 0, bw, 0, 0, bw, bh)
+        } finally {
+            bmp.recycle()
+        }
+        fun dark(x: Float, y: Float): Boolean {
+            val ix = ((x - l) * k).toInt()
+            val iy = ((y - t) * k).toInt()
+            if (ix !in 0 until bw || iy !in 0 until bh) return false
+            val c = px[iy * bw + ix]
+            val lum = (Color.red(c) * 299 + Color.green(c) * 587 + Color.blue(c) * 114) / 1000
+            return lum < 160
+        }
+        // 테이프를 따라 1pt마다, 수직 방향 (-FIT_RANGE ~ +FIT_RANGE)을 0.5pt 간격으로 본다
+        val step = 0.5f
+        val m = (FIT_RANGE * 2 / step).toInt() + 1
+        val hits = IntArray(m)
+        var samples = 0
+        for (i in 1 until st.count) {
+            val dx = st.x(i) - st.x(i - 1)
+            val dy = st.y(i) - st.y(i - 1)
+            val len = hypot(dx, dy)
+            if (len < 0.01f) continue
+            val nx = -dy / len
+            val ny = dx / len
+            var d = 0f
+            while (d < len) {
+                val sx = st.x(i - 1) + dx * d / len
+                val sy = st.y(i - 1) + dy * d / len
+                for (j in 0 until m) {
+                    val off = -FIT_RANGE + j * step
+                    if (dark(sx + nx * off, sy + ny * off)) hits[j]++
+                }
+                samples++
+                d += 1f
+            }
+        }
+        if (samples == 0) return
+        val need = max(1, (samples * 0.03f).toInt())
+        val on = BooleanArray(m) { hits[it] >= need }
+        // 가운데에서 가장 가까운 글자 줄 (테이프 굵기의 절반, 적어도 6pt 안)
+        val center = m / 2
+        val reach = (max(st.width / 2, 6f) / step).toInt()
+        var start = -1
+        for (dd in 0..reach) {
+            if (center - dd >= 0 && on[center - dd]) { start = center - dd; break }
+            if (center + dd < m && on[center + dd]) { start = center + dd; break }
+        }
+        if (start < 0) return
+        var lo = start
+        var hi = start
+        // 위·아래로 넓혀 간다. 글자 안의 작은 틈(받침 사이 등)은 건너뛰고, 줄 사이 빈칸에서 멈춘다
+        fun gapLimit() = max(1.5f, (hi - lo + 1) * step * 0.25f) / step
+        repeat(2) {
+            var gap = 0
+            var j = lo - 1
+            while (j >= 0) {
+                if (on[j]) { lo = j; gap = 0 } else if (++gap > gapLimit()) break
+                j--
+            }
+            gap = 0
+            j = hi + 1
+            while (j < m) {
+                if (on[j]) { hi = j; gap = 0 } else if (++gap > gapLimit()) break
+                j++
+            }
+        }
+        // 찾는 범위 끝까지 이어지면 글자 줄이 아니라 그림·표 같은 것이므로 그대로 둔다
+        if (lo == 0 || hi == m - 1) return
+        val d0 = -FIT_RANGE + lo * step
+        val d1 = -FIT_RANGE + (hi + 1) * step
+        val h = d1 - d0
+        val pad = max(1f, h * 0.15f)
+        st.resize(h + pad * 2)
+        // 글자 줄 가운데로 옮긴다 (점마다 앞뒤 선분의 수직 방향 평균으로)
+        val shift = (d0 + d1) / 2
+        val n = st.count
+        val ox = FloatArray(n)
+        val oy = FloatArray(n)
+        for (i in 0 until n) {
+            var nx = 0f; var ny = 0f
+            for (j in intArrayOf(i - 1, i)) {
+                if (j < 0 || j + 1 >= n) continue
+                val dx = st.x(j + 1) - st.x(j)
+                val dy = st.y(j + 1) - st.y(j)
+                val len = hypot(dx, dy)
+                if (len < 0.01f) continue
+                nx += -dy / len; ny += dx / len
+            }
+            val len = hypot(nx, ny)
+            if (len > 0f) { ox[i] = nx / len * shift; oy[i] = ny / len * shift }
+        }
+        for (i in 0 until n) st.offsetPoint(i, ox[i], oy[i])
+    }
+
+    /** 보고 있는 쪽의 테이프 수 */
+    fun pageTapeCount(): Int {
+        val page = currentPage().takeIf { it >= 0 } ?: return 0
+        return ink?.pages?.getOrNull(page)?.count { it.tape != null } ?: 0
+    }
+
+    /** 보고 있는 쪽의 테이프를 모두 보이게(reveal) 하거나 모두 가린다. 테이프 수 */
+    fun revealPageTapes(reveal: Boolean): Int {
+        val page = currentPage().takeIf { it >= 0 } ?: return 0
+        val tapes = ink?.pages?.getOrNull(page)?.filter { it.tape != null } ?: return 0
+        tapes.forEach { it.revealed = reveal }
+        invalidate()
+        return tapes.size
+    }
+
+    /** 보고 있는 쪽의 테이프를 모두 지운다 (실행 취소 가능). 지운 수 */
+    fun clearPageTapes(): Int {
+        val inkDoc = ink ?: return 0
+        val page = currentPage().takeIf { it >= 0 } ?: return 0
+        val targets = inkDoc.pages[page].filter { it.tape != null }
+        if (targets.isEmpty()) return 0
+        clearSelection()
+        inkDoc.remove(page, targets)
+        return targets.size
     }
 
     // ================= 글 =================
@@ -1803,6 +2098,10 @@ class DocumentView @JvmOverloads constructor(
         private const val HANDLE_TOUCH_DP = 24f
         /** 글 도구: 이보다 많이 움직이면 톡 누르기가 아니다 (dp) */
         private const val TAP_SLOP_DP = 12f
+        /** 테이프를 톡 누른 것으로 보는 시간 (ms) */
+        private const val TAP_MS = 500L
+        /** 테이프를 글자 크기에 맞출 때 가운데에서 위·아래로 찾는 범위 (pt) */
+        private const val FIT_RANGE = 40f
         /** 회전 손잡이 반지름과 상자에서 떨어진 거리 */
         private const val ROT_HANDLE_DP = 14f
         private const val ROT_OFFSET_DP = 34f

@@ -1,0 +1,11 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- 글자 크기에 맞춤: 글자 줄 위아래에 맞춘 테이프 테두리와 높이 화살표 -->
+    <path android:strokeColor="?attr/colorControlNormal" android:strokeWidth="1.5"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M2.5,8h14M2.5,16h14M6,10.5v3M9.5,10.5v3M13,10.5v3" />
+    <path android:strokeColor="?attr/colorControlNormal" android:strokeWidth="1.5"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M20,5v14M18.2,6.8L20,5l1.8,1.8M18.2,17.2L20,19l1.8,-1.8" />
+</vector>

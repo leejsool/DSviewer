@@ -1,0 +1,11 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- 네모 테이프: 빗금 친 네모 -->
+    <path android:strokeColor="?attr/colorControlNormal" android:strokeWidth="1.6"
+        android:strokeLineJoin="round"
+        android:pathData="M4,6.5h16v11H4z" />
+    <path android:strokeColor="?attr/colorControlNormal" android:strokeWidth="1.1"
+        android:strokeAlpha="0.6" android:strokeLineCap="round"
+        android:pathData="M5,14L10,8M9,16.5L15,9M13.5,16.5L19,10" />
+</vector>
