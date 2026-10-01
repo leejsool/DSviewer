@@ -78,6 +78,58 @@ object PdfPages {
         }
     }
 
+    /**
+     * 쪽을 [order] 차례로 다시 늘어놓아 [out]에 저장: 새 문서의 k번째 쪽 = 원래 order[k]번째 쪽 (0부터).
+     * order에 없는 쪽은 빠진다 (쪽 순서 바꾸기 · 여러 쪽 지우기 · 고른 쪽만 저장)
+     */
+    fun reorder(src: File, out: File, order: List<Int>) {
+        PDDocument.load(src).use { doc ->
+            if (doc.isEncrypted) doc.isAllSecurityToBeRemoved = true
+            val all = (0 until doc.numberOfPages).map { doc.getPage(it) }
+            for (p in all) doc.pages.remove(p)
+            for (i in order) doc.pages.add(all[i])
+            doc.save(out)
+        }
+    }
+
+    /** [pages]번째 쪽들을 시계 방향으로 [deg]도(90의 배수) 돌려 [out]에 저장 */
+    fun rotate(src: File, out: File, pages: Collection<Int>, deg: Int = 90) {
+        PDDocument.load(src).use { doc ->
+            if (doc.isEncrypted) doc.isAllSecurityToBeRemoved = true
+            for (i in pages) {
+                val p = doc.getPage(i)
+                p.rotation = ((p.rotation + deg) % 360 + 360) % 360
+            }
+            doc.save(out)
+        }
+    }
+
+    /**
+     * [pages]번째 쪽들을 화면에서 보이는 대로 좌우([horizontal]) 또는 상하로 뒤집어 [out]에 저장.
+     * 쪽 내용 앞뒤를 'q 거울 행렬 cm … Q'로 감싼다. 쪽이 90°·270° 돌아가 있으면 PDF 안에서는 반대 축으로 뒤집는다
+     */
+    fun flip(src: File, out: File, pages: Collection<Int>, horizontal: Boolean) {
+        PDDocument.load(src).use { doc ->
+            if (doc.isEncrypted) doc.isAllSecurityToBeRemoved = true
+            for (i in pages) {
+                val p = doc.getPage(i)
+                val box = p.cropBox
+                val rot = ((p.rotation % 360) + 360) % 360
+                val flipX = horizontal == (rot == 0 || rot == 180)
+                val m = if (flipX) com.tom_roush.pdfbox.util.Matrix(-1f, 0f, 0f, 1f, box.lowerLeftX + box.upperRightX, 0f)
+                    else com.tom_roush.pdfbox.util.Matrix(1f, 0f, 0f, -1f, 0f, box.lowerLeftY + box.upperRightY)
+                PDPageContentStream(doc, p, PDPageContentStream.AppendMode.PREPEND, true, false).use { cs ->
+                    cs.saveGraphicsState()
+                    cs.transform(m)
+                }
+                PDPageContentStream(doc, p, PDPageContentStream.AppendMode.APPEND, true, false).use { cs ->
+                    cs.restoreGraphicsState()
+                }
+            }
+            doc.save(out)
+        }
+    }
+
     private fun blankPage(doc: PDDocument, paper: Paper, w: Float, h: Float): PDPage {
         val page = PDPage(PDRectangle(w, h))
         if (paper == Paper.PLAIN) return page

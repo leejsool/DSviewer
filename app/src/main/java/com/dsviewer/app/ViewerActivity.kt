@@ -82,7 +82,17 @@ class ViewerActivity : AppCompatActivity() {
     private lateinit var saveButton: View
     private lateinit var overviewButton: View
     private lateinit var insertButton: View
-    private lateinit var overview: PageOverview
+    private lateinit var overview: PagePanel
+    private lateinit var pagePanel: PagePanel
+    private lateinit var pagesButton: ImageButton
+    private lateinit var twoPageButton: ImageButton
+    private lateinit var readModeButton: ImageButton
+    private lateinit var fullscreenButton: ImageButton
+    private lateinit var exitFullscreenButton: View
+    /** 읽기 모드: 툴바를 숨기고 펜으로도 넘겨 보기만 한다 */
+    private var readMode = false
+    /** 전체 화면: 탭 줄·상태 표시줄·페이지 관리 창을 숨기고 툴바만 남긴다 */
+    private var fullscreen = false
 
     /** 탭 하나 = 열린 문서 하나. 문서 화면(DocumentView)은 하나를 같이 쓰고 탭을 바꿀 때 갈아 끼운다 */
     private class DocTab(var uri: Uri, var canOverwrite: Boolean, var isNewNote: Boolean) {
@@ -98,6 +108,8 @@ class ViewerActivity : AppCompatActivity() {
         var pagesBusy = false
         /** 다른 탭에 가 있는 동안 기억해 둔 스크롤·확대 위치 */
         var viewState: DocumentView.ViewState? = null
+        /** 글자 찾기 (처음 찾을 때 만든다. 쪽을 바꾸면 화면용 PDF가 바뀌어 새로 만든다) */
+        var search: DocSearch? = null
     }
 
     /** 쪽을 넣고 빼기 전·후의 PDF 파일과 그때 보던 쪽 (실행 취소하면 이 상태로 돌아간다) */
@@ -178,7 +190,10 @@ class ViewerActivity : AppCompatActivity() {
         docView.listener = object : DocumentView.Listener {
             override fun onPageChanged(page: Int, count: Int) {
                 pageLabel.visibility = View.VISIBLE
-                pageLabel.text = "${page + 1} / $count"
+                // 양쪽 보기면 나란히 놓인 두 쪽을 '1-2 / 20'처럼
+                pageLabel.text = if (docView.isSpread && page + 1 < count) "${page + 1}-${page + 2} / $count" else "${page + 1} / $count"
+                pagePanel.setCurrent(page)
+                overview.setCurrent(page)
             }
 
             override fun onSelectionChanged(rect: RectF?, count: Int) = placeSelectionBar(rect, count)
@@ -298,15 +313,18 @@ class ViewerActivity : AppCompatActivity() {
         if (current === t) return
         textEditor.commit()
         overview.hide()
+        docView.searchHits = emptyMap()
         current?.let { it.viewState = docView.viewState() }
         current = t
         val d = t.pdf
         val inkDoc = t.ink
         if (d != null && inkDoc != null) {
             docView.setDocument(d, inkDoc, t.viewState)
+            syncPagePanel()
             progress.visibility = View.GONE
         } else {
             docView.clearDocument()
+            pagePanel.clear()
             pageLabel.visibility = View.GONE
             progress.visibility = View.VISIBLE
         }
@@ -339,8 +357,10 @@ class ViewerActivity : AppCompatActivity() {
             overview.hide()
             current = null
             docView.clearDocument()
+            pagePanel.clear()
         }
         docs.removeAt(index)
+        t.search?.cancel()
         openTabs = docs.size
         updateAddButton()
         docTabs.removeTab(index)
@@ -371,8 +391,10 @@ class ViewerActivity : AppCompatActivity() {
 
     /** 뒤로 가기(← 버튼·시스템 뒤로): 지금 보고 있는 탭을 닫는다. 마지막 탭이면 탐색기로 */
     private fun goBack() {
-        if (overview.isShowing) {
-            overview.hide()
+        // 쪽 선택·글자 찾기·쪽 한눈에 보기부터 하나씩 끝낸다
+        if (overview.back() || pagePanel.back()) return
+        if (fullscreen) {
+            setFullscreen(false)
             return
         }
         val t = current
@@ -428,10 +450,11 @@ class ViewerActivity : AppCompatActivity() {
     private suspend fun openPdf(t: DocTab, file: File) {
         t.sourcePdf = file
         // 이 앱으로 저장한 필기가 있으면 꺼내서 편집 가능한 상태로 만든다
+        val marks = HashSet<Int>()
         val (renderFile, strokes) = withContext(Dispatchers.IO) {
             if (PdfInk.containsInk(file)) {
                 val clean = FileUtil.tempFile(this@ViewerActivity, "clean", "pdf")
-                clean to PdfInk.extract(file, clean)
+                clean to PdfInk.extract(file, clean, marks)
             } else file to null
         }
         t.renderPdf = renderFile
@@ -442,11 +465,13 @@ class ViewerActivity : AppCompatActivity() {
             return
         }
         val inkDoc = InkDocument(d.pageCount)
-        strokes?.let { inkDoc.load(it) }
+        strokes?.let { inkDoc.load(it, marks) }
         inkDoc.onChanged = {
             if (current === t) {
                 updateActions()
                 docView.invalidate()
+                pagePanel.inkChanged()
+                overview.inkChanged()
             }
             updateTabTitle(t)
         }
@@ -455,6 +480,7 @@ class ViewerActivity : AppCompatActivity() {
         t.ink = inkDoc
         if (current === t) {
             docView.setDocument(d, inkDoc)
+            syncPagePanel()
             progress.visibility = View.GONE
             updateActions()
         }
@@ -478,10 +504,35 @@ class ViewerActivity : AppCompatActivity() {
         undoButton.setOnClickListener { if (current?.pagesBusy == false) { textEditor.commit(); docView.clearSelection(); ink?.undo() } }
         redoButton.setOnClickListener { if (current?.pagesBusy == false) { textEditor.commit(); docView.clearSelection(); ink?.redo() } }
         saveButton.setOnClickListener { showSaveMenu(it) }
-        overview = PageOverview(findViewById(R.id.overviewPanel), lifecycleScope) { page -> docView.scrollToPage(page) }
+        overview = PagePanel(findViewById(R.id.overviewPanel), lifecycleScope, overview = true, host = pageHost(true))
         overviewButton.setOnClickListener { toggleOverview() }
         insertButton.setOnClickListener { showInsertMenu(it) }
         findViewById<View>(R.id.actionMore).setOnClickListener { showMoreMenu(it) }
+
+        pagePanel = PagePanel(findViewById(R.id.pagePanel), lifecycleScope, overview = false, host = pageHost(false))
+        pagesButton = findViewById(R.id.actionPages)
+        pagesButton.setOnClickListener {
+            val open = !pagePanel.isShowing
+            if (open) overview.hide()
+            prefs.edit().putBoolean("pagePanel", open).apply()
+            syncPagePanel()
+        }
+        twoPageButton = findViewById(R.id.actionTwoPage)
+        docView.twoPage = prefs.getBoolean("twoPage", false)
+        twoPageButton.setOnClickListener {
+            val on = !docView.twoPage
+            prefs.edit().putBoolean("twoPage", on).apply()
+            textEditor.commit()
+            docView.twoPage = on
+            updateActions()
+            if (on && docView.width <= docView.height) toast("가로 화면에서 두 쪽씩 나란히 보입니다.")
+        }
+        readModeButton = findViewById(R.id.actionReadMode)
+        readModeButton.setOnClickListener { setReadMode(!readMode) }
+        fullscreenButton = findViewById(R.id.actionFullscreen)
+        fullscreenButton.setOnClickListener { setFullscreen(true) }
+        exitFullscreenButton = findViewById(R.id.exitFullscreen)
+        exitFullscreenButton.setOnClickListener { setFullscreen(false) }
         updateActions()
     }
 
@@ -493,6 +544,413 @@ class ViewerActivity : AppCompatActivity() {
         saveButton.setEnabledAlpha(inkDoc != null)
         overviewButton.setEnabledAlpha(inkDoc != null)
         insertButton.setEnabledAlpha(inkDoc != null)
+        pagesButton.setActive(pagePanel.isShowing)
+        twoPageButton.setActive(docView.twoPage)
+        readModeButton.setActive(readMode)
+    }
+
+    /** 켜진 보기 단추는 바탕에 옅은 동그라미 */
+    private fun ImageButton.setActive(on: Boolean) {
+        if (isSelected == on && background != null) return
+        isSelected = on
+        background = if (on) GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(MaterialColors.getColor(this@setActive, com.google.android.material.R.attr.colorSecondaryContainer))
+        } else android.util.TypedValue().let { tv ->
+            theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, tv, true)
+            getDrawable(tv.resourceId)
+        }
+    }
+
+    // ================= 페이지 관리 · 읽기 모드 · 전체 화면 =================
+
+    /** 페이지 관리 창·쪽 한눈에 보기가 하는 일 */
+    private fun pageHost(isOverview: Boolean) = object : PagePanel.Host {
+        override fun pick(page: Int, hit: RectF?, query: String?) {
+            if (hit != null) docView.scrollToPoint(page, hit.centerX(), hit.top) else docView.scrollToPage(page)
+            if (!isOverview) return
+            overview.hide()
+            // 쪽 한눈에 보기에서 찾던 말은 페이지 관리 창에서 이어서 (다른 찾은 쪽으로 바로 갈 수 있게)
+            if (query != null && !fullscreen) {
+                prefs.edit().putBoolean("pagePanel", true).apply()
+                syncPagePanel()
+                pagePanel.openSearch(query)
+            }
+        }
+        override fun menu(page: Int, anchor: View) = showPageMenu(page, anchor, isOverview)
+        override fun reorder(order: List<Int>) = reorderPages(order)
+        override fun deletePages(pages: List<Int>, onDone: () -> Unit) {
+            current?.let { deletePageList(it, pages, onDone) }
+        }
+        override fun rotatePages(pages: List<Int>) {
+            current?.let { rotatePages(it, pages) }
+        }
+        override fun flipPages(pages: List<Int>, horizontal: Boolean) {
+            current?.let { flipPages(it, pages, horizontal) }
+        }
+        override fun savePages(pages: List<Int>, asPdf: Boolean) {
+            val t = current ?: return
+            if (asPdf) savePageFile(t, pages) else exportImages(t, pages)
+        }
+        override fun search() = currentSearch()
+        override fun showHits(hits: Map<Int, List<RectF>>) {
+            docView.searchHits = hits
+        }
+        override fun closed() = updateActions()
+    }
+
+    /** 지금 탭의 글자 찾기. 화면용 PDF가 바뀌었으면(쪽 넣기·지우기 등) 새로 */
+    private fun currentSearch(): DocSearch? {
+        val t = current ?: return null
+        val f = t.renderPdf ?: return null
+        t.search?.let { if (it.file == f) return it else it.cancel() }
+        return DocSearch(f, lifecycleScope).also { t.search = it }
+    }
+
+    /** 페이지 관리 창을 저장된 설정대로 열거나 닫는다 (전체 화면에서는 늘 닫음) */
+    private fun syncPagePanel() {
+        val t = current
+        val d = t?.pdf
+        val inkDoc = t?.ink
+        val want = prefs.getBoolean("pagePanel", false) && !fullscreen
+        if (want && d != null && inkDoc != null) {
+            if (pagePanel.isShowing) pagePanel.setDocument(d, inkDoc)
+            else pagePanel.show(d, inkDoc, docView.currentPage().coerceAtLeast(0))
+        } else if (!want) pagePanel.hide()
+        updateActions()
+    }
+
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // 가로는 두 줄, 세로는 한 줄
+        if (::pagePanel.isInitialized) pagePanel.fitWidth()
+    }
+
+    /** 페이지 관리 창 미리보기의 ⋮: 북마크 · 앞/뒤에 빈 쪽 넣기 · 이미지로 저장 · 쪽 지우기 */
+    private fun showPageMenu(page: Int, anchor: View, inOverview: Boolean = false) {
+        val t = current ?: return
+        val d = t.pdf ?: return
+        val inkDoc = t.ink ?: return
+        if (page !in 0 until d.pageCount) return
+        val popup = PopupMenu(this, anchor)
+        val marked = inkDoc.isBookmarked(page)
+        popup.menu.add(0, 1, 0, if (marked) "북마크 풀기" else "북마크")
+            .setIcon(if (marked) R.drawable.ic_bookmark_border else R.drawable.ic_bookmark)
+        val papers = listOf(Paper.PLAIN to "흰 바탕", Paper.GRID to "모눈", Paper.LINED to "줄")
+        val before = popup.menu.addSubMenu(0, 2, 1, "앞에 빈 쪽 넣기")
+        before.item.setIcon(R.drawable.ic_add)
+        papers.forEachIndexed { i, (_, label) -> before.add(0, 20 + i, i, label) }
+        val after = popup.menu.addSubMenu(0, 3, 2, "뒤에 빈 쪽 넣기")
+        after.item.setIcon(R.drawable.ic_add)
+        papers.forEachIndexed { i, (_, label) -> after.add(0, 30 + i, i, label) }
+        popup.menu.add(0, 6, 3, "복사").setIcon(R.drawable.ic_copy)
+        popup.menu.add(0, 7, 4, "잘라내기").setIcon(R.drawable.ic_cut).isEnabled = d.pageCount > 1
+        // 붙여넣기는 복사·잘라낸 쪽이 있을 때만 (다른 문서 탭에서 복사한 쪽도 된다)
+        val paste = popup.menu.addSubMenu(0, 8, 5, "붙여넣기")
+        paste.item.setIcon(R.drawable.ic_paste)
+        paste.item.isEnabled = pageClip != null
+        paste.add(0, 81, 0, "앞에 붙여넣기")
+        paste.add(0, 82, 1, "뒤에 붙여넣기")
+        val save = popup.menu.addSubMenu(0, 4, 6, "저장")
+        save.item.setIcon(R.drawable.ic_save)
+        save.add(0, 41, 0, "이미지로 저장")
+        save.add(0, 42, 1, "파일(PDF)로 저장")
+        val share = popup.menu.addSubMenu(0, 9, 7, "공유")
+        share.item.setIcon(R.drawable.ic_share)
+        share.add(0, 91, 0, "이미지로 공유")
+        share.add(0, 92, 1, "파일(PDF)로 공유")
+        popup.menu.add(0, 5, 8, "쪽 지우기").setIcon(R.drawable.ic_delete).isEnabled = d.pageCount > 1
+        // 쪽 한눈에 보기에서만: 이 쪽 뒤·앞의 쪽을 한꺼번에 (이 쪽은 남긴다)
+        if (inOverview) {
+            val last = d.pageCount
+            popup.menu.add(0, 10, 9, if (page + 1 < last) "이 쪽 뒤 모두 지우기 (${page + 2}~${last}쪽)" else "이 쪽 뒤 모두 지우기")
+                .setIcon(R.drawable.ic_delete).isEnabled = page + 1 < last
+            popup.menu.add(0, 11, 10, if (page > 0) "이 쪽 앞 모두 지우기 (1~${page}쪽)" else "이 쪽 앞 모두 지우기")
+                .setIcon(R.drawable.ic_delete).isEnabled = page > 0
+        }
+        popup.setForceShowIcon(true)
+        popup.setOnMenuItemClickListener { item ->
+            when (val id = item.itemId) {
+                1 -> inkDoc.setBookmark(page, !marked)
+                in 20..22 -> insertBlankPage(papers[id - 20].first, at = page)
+                in 30..32 -> insertBlankPage(papers[id - 30].first, at = page + 1)
+                6 -> copyPage(t, page, cut = false)
+                7 -> copyPage(t, page, cut = true)
+                81 -> pastePage(t, page)
+                82 -> pastePage(t, page + 1)
+                41 -> exportImages(t, listOf(page))
+                42 -> savePageFile(t, listOf(page))
+                91 -> sharePage(t, page, asPdf = false)
+                92 -> sharePage(t, page, asPdf = true)
+                5 -> deletePages(t, page, page)
+                10 -> deletePageList(t, (page + 1 until d.pageCount).toList()) {}
+                11 -> deletePageList(t, (0 until page).toList()) {}
+            }
+            true
+        }
+        popup.show()
+    }
+
+    // ----- 쪽 복사 · 잘라내기 · 붙여넣기 · 옮기기 · 저장 · 공유 -----
+
+    /** 복사하거나 잘라낸 쪽: 필기를 뺀 한 쪽짜리 PDF + 그 쪽 필기(사본) + 북마크 */
+    private class PageClip(val pdf: File, val strokes: List<Stroke>, val bookmarked: Boolean)
+    private var pageClip: PageClip? = null
+
+    /** [pages] 쪽만 그 차례로 담은 PDF (이 앱 필기 주석은 뺀 것). IO 스레드에서 */
+    private fun cleanPagePdf(src: File, pages: List<Int>, prefix: String): File {
+        val raw = FileUtil.tempFile(this, "${prefix}_raw", "pdf")
+        PdfPages.reorder(src, raw, pages)
+        if (!PdfInk.containsInk(raw)) return raw
+        val clean = FileUtil.tempFile(this, prefix, "pdf")
+        PdfInk.extract(raw, clean)
+        raw.delete()
+        return clean
+    }
+
+    private fun copyPage(t: DocTab, page: Int, cut: Boolean) {
+        val src = t.sourcePdf ?: return
+        val inkDoc = t.ink ?: return
+        if (t.pagesBusy) return
+        val strokes = inkDoc.pages.getOrNull(page)?.map { it.copy() } ?: return
+        val marked = inkDoc.isBookmarked(page)
+        lifecycleScope.launch {
+            try {
+                val pdf = withContext(Dispatchers.IO) { cleanPagePdf(src, listOf(page), "clip") }
+                pageClip = PageClip(pdf, strokes, marked)
+                if (cut && t in docs) deletePages(t, page, page, cut = true)
+                else toast("${page + 1}쪽을 복사했습니다. ⋮ → 붙여넣기로 원하는 자리에 넣을 수 있습니다.")
+            } catch (e: Exception) {
+                toast("쪽을 복사하지 못했습니다.")
+            }
+        }
+    }
+
+    /** 복사·잘라낸 쪽을 [at]번째 자리(0부터)에 넣는다 (실행 취소 가능) */
+    private fun pastePage(t: DocTab, at: Int) {
+        val clip = pageClip ?: return
+        val inkDoc = t.ink ?: return
+        val done = { toast("${at + 1}쪽에 붙여넣었습니다.") }
+        editPages(t, { src, out -> PdfPages.insertPdf(src, out, at, clip.pdf) }, done) { pages ->
+            // 여러 번 붙여도 서로 따로 고칠 수 있게 붙일 때마다 사본
+            val list = clip.strokes.mapTo(ArrayList()) { it.copy() }
+            if (clip.bookmarked) inkDoc.markList(list)
+            pages.add(at, list)
+            at
+        }
+    }
+
+    /** 쪽 순서를 [order]로 바꾼다 (새 k번째 = 원래 order[k]번째). 보던 쪽은 그대로 본다 (실행 취소 가능) */
+    private fun reorderPages(order: List<Int>): Boolean {
+        val t = current ?: return false
+        if (t.pagesBusy || t.ink == null || t.sourcePdf == null) return false
+        val viewing = docView.currentPage()
+        val done = { toast("쪽 순서를 바꿨습니다. 실행 취소로 되돌릴 수 있습니다.") }
+        editPages(t, { src, out -> PdfPages.reorder(src, out, order) }, done) { pages ->
+            val old = pages.toList()
+            pages.clear()
+            order.mapTo(pages) { old[it] }
+            order.indexOf(viewing).coerceAtLeast(0)
+        }
+        return true
+    }
+
+    /** 고른 쪽들을 지운다 (여러 쪽이면 묻고). 다 지울 수는 없다. 실행 취소 가능 */
+    private fun deletePageList(t: DocTab, list: List<Int>, onDone: () -> Unit) {
+        val d = t.pdf ?: return
+        if (list.isEmpty()) return
+        if (list.size >= d.pageCount) {
+            toast("모든 쪽을 지울 수는 없습니다.")
+            return
+        }
+        val go = {
+            val gone = list.toSet()
+            val keep = (0 until d.pageCount).filter { it !in gone }
+            val done = { toast("${list.size}쪽을 지웠습니다. 실행 취소로 되돌릴 수 있습니다.") }
+            editPages(t, { src, out -> PdfPages.reorder(src, out, keep) }, done) { pages ->
+                val old = pages.toList()
+                pages.clear()
+                keep.mapTo(pages) { old[it] }
+                list.min().coerceAtMost(pages.size - 1)
+            }
+            onDone()
+        }
+        if (list.size == 1) go()
+        else MaterialAlertDialogBuilder(this)
+            .setMessage("고른 ${list.size}쪽을 지울까요?\n(실행 취소로 되돌릴 수 있습니다)")
+            .setPositiveButton("지우기") { _, _ -> go() }
+            .setNegativeButton("취소", null)
+            .show()
+    }
+
+    /**
+     * 고른 쪽들을 시계 방향으로 90° 돌린다. PDF 쪽을 돌리고, 그 쪽 필기도 같이 돌린다
+     * (돌린 사본으로 바꿔 넣으므로 실행 취소하면 원래 획으로 돌아간다)
+     */
+    private fun rotatePages(t: DocTab, list: List<Int>) {
+        val d = t.pdf ?: return
+        val inkDoc = t.ink ?: return
+        if (list.isEmpty()) return
+        val sizes = d.sizes
+        val viewing = docView.currentPage()
+        editPages(t, { src, out -> PdfPages.rotate(src, out, list, 90) }) { pages ->
+            for (i in list) {
+                // 쪽 (x, y) → 돌린 쪽 (높이 - y, x)
+                val h = sizes[i].height
+                val turned = pages[i].mapTo(ArrayList()) { it.copy().apply { rotate(90f, 0f, 0f); translate(h, 0f) } }
+                if (inkDoc.isBookmarked(i)) inkDoc.markList(turned)
+                // 고른 쪽이었으면 돌린 쪽도 골라진 채로
+                pagePanel.pageReplaced(pages[i], turned)
+                overview.pageReplaced(pages[i], turned)
+                pages[i] = turned
+            }
+            viewing.coerceAtLeast(0)
+        }
+    }
+
+    /**
+     * 고른 쪽들을 좌우([horizontal]) 또는 상하로 뒤집는다. 필기도 같이 거울에 비추되 글·그림은 읽히게 둔다
+     * (뒤집은 사본으로 바꿔 넣으므로 실행 취소하면 원래 획으로 돌아간다)
+     */
+    private fun flipPages(t: DocTab, list: List<Int>, horizontal: Boolean) {
+        val d = t.pdf ?: return
+        val inkDoc = t.ink ?: return
+        if (list.isEmpty()) return
+        val sizes = d.sizes
+        val viewing = docView.currentPage()
+        editPages(t, { src, out -> PdfPages.flip(src, out, list, horizontal) }) { pages ->
+            for (i in list) {
+                val extent = if (horizontal) sizes[i].width else sizes[i].height
+                val flipped = pages[i].mapTo(ArrayList()) { it.copy().apply { mirror(horizontal, extent) } }
+                if (inkDoc.isBookmarked(i)) inkDoc.markList(flipped)
+                pagePanel.pageReplaced(pages[i], flipped)
+                overview.pageReplaced(pages[i], flipped)
+                pages[i] = flipped
+            }
+            viewing.coerceAtLeast(0)
+        }
+    }
+
+    /** 고른 쪽들을 필기와 함께 한 PDF로 만든다 ([out]에). 필기는 부르는 순간의 것 */
+    private suspend fun buildPagePdf(t: DocTab, list: List<Int>, out: File) {
+        val src = t.sourcePdf ?: error("문서가 없습니다.")
+        val inkDoc = t.ink ?: error("문서가 없습니다.")
+        val strokes = list.map { inkDoc.pages.getOrNull(it)?.toList() ?: error("쪽이 없습니다.") }
+        val marks = list.indices.filterTo(HashSet()) { inkDoc.isBookmarked(list[it]) }
+        withContext(Dispatchers.IO) {
+            val part = cleanPagePdf(src, list, "page")
+            try {
+                PdfInk.save(part, out, strokes, marks)
+            } finally {
+                part.delete()
+            }
+        }
+    }
+
+    /** '문서_3쪽.pdf', 여러 쪽이면 '문서_3쪽 외 2쪽.pdf' */
+    private fun pageFileName(t: DocTab, list: List<Int>, ext: String): String {
+        val base = FileUtil.baseName(t.name).replace(Regex("[\\\\/:*?\"<>|]"), "_")
+        val pages = if (list.size == 1) "${list[0] + 1}쪽" else "${list[0] + 1}쪽 외 ${list.size - 1}쪽"
+        return "${base}_$pages.$ext"
+    }
+
+    /** '파일로 저장': 만들어 둔 한 쪽 PDF를 사용자가 고른 곳에 쓴다 */
+    private var pageFileToSave: File? = null
+    private val createPagePdf = registerForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
+        val f = pageFileToSave
+        pageFileToSave = null
+        if (uri == null || f == null) return@registerForActivityResult
+        lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val out = contentResolver.openOutputStream(uri, "wt") ?: error("저장 위치를 열 수 없습니다.")
+                    out.use { o -> f.inputStream().use { it.copyTo(o, 1 shl 16) } }
+                    f.delete()
+                }
+                if (uri.scheme == "file") uri.path?.let { MediaScannerConnection.scanFile(this@ViewerActivity, arrayOf(it), null, null) }
+                toast("'${FileUtil.displayName(this@ViewerActivity, uri)}' 저장했습니다.")
+            } catch (e: Exception) {
+                toast("저장하지 못했습니다. ${e.message ?: ""}")
+            }
+        }
+    }
+
+    private fun savePageFile(t: DocTab, list: List<Int>) {
+        if (list.isEmpty()) return
+        lifecycleScope.launch {
+            progress.visibility = View.VISIBLE
+            try {
+                val f = FileUtil.tempFile(this@ViewerActivity, "page_save", "pdf")
+                buildPagePdf(t, list, f)
+                pageFileToSave = f
+                createPagePdf.launch(pageFileName(t, list, "pdf"))
+            } catch (e: Exception) {
+                toast("쪽을 파일로 만들지 못했습니다.")
+            } finally {
+                progress.visibility = View.GONE
+            }
+        }
+    }
+
+    /** 쪽 공유: 그림(PNG)이나 한 쪽 PDF를 앱 캐시(share/)에 만들어 다른 앱으로 보낸다 */
+    private fun sharePage(t: DocTab, page: Int, asPdf: Boolean) {
+        val d = t.pdf ?: return
+        val inkDoc = t.ink ?: return
+        lifecycleScope.launch {
+            progress.visibility = View.VISIBLE
+            try {
+                val dir = File(cacheDir, "share").apply { deleteRecursively(); mkdirs() }
+                val file = File(dir, pageFileName(t, listOf(page), if (asPdf) "pdf" else "png"))
+                if (asPdf) buildPagePdf(t, listOf(page), file)
+                else {
+                    val bmp = pageBitmap(d, inkDoc, page)
+                    withContext(Dispatchers.IO) { file.outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) } }
+                    bmp.recycle()
+                }
+                val uri = androidx.core.content.FileProvider.getUriForFile(this@ViewerActivity, "$packageName.files", file)
+                val send = Intent(Intent.ACTION_SEND)
+                    .setType(if (asPdf) "application/pdf" else "image/png")
+                    .putExtra(Intent.EXTRA_STREAM, uri)
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                startActivity(Intent.createChooser(send, "${page + 1}쪽 공유"))
+            } catch (e: Exception) {
+                toast("쪽을 공유하지 못했습니다.")
+            } finally {
+                progress.visibility = View.GONE
+            }
+        }
+    }
+
+    /** 읽기 모드: 툴바와 도구 줄을 숨기고, 펜으로도 넘기기·확대만 한다 */
+    private fun setReadMode(on: Boolean) {
+        if (on) {
+            textEditor.commit()
+            hideOptionBar()
+            closeFlyout()
+            docView.clearSelection()
+        }
+        readMode = on
+        docView.readOnly = on
+        findViewById<View>(R.id.toolbar).visibility = if (on) View.GONE else View.VISIBLE
+        shapeBar.visibility = if (!on && docView.tool == Tool.SHAPE) View.VISIBLE else View.GONE
+        updateActions()
+        toast(if (on) "읽기 모드: 필기하지 않고 넘겨 보기만 합니다." else "읽기 모드를 끝냈습니다.")
+    }
+
+    /** 전체 화면: 탭 줄·상태 표시줄·페이지 관리 창을 숨겨 필기할 자리를 넓힌다. 오른쪽 위 단추나 뒤로 가기로 끝낸다 */
+    private fun setFullscreen(on: Boolean) {
+        if (fullscreen == on) return
+        fullscreen = on
+        overview.hide()
+        findViewById<View>(R.id.tabRow).visibility = if (on) View.GONE else View.VISIBLE
+        exitFullscreenButton.visibility = if (on) View.VISIBLE else View.GONE
+        val ctl = WindowCompat.getInsetsController(window, window.decorView)
+        if (on) {
+            // 가장자리에서 밀면 잠깐 나타났다 사라진다
+            ctl.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            ctl.hide(WindowInsetsCompat.Type.systemBars())
+        } else ctl.show(WindowInsetsCompat.Type.systemBars())
+        syncPagePanel()
     }
 
     private fun View.setEnabledAlpha(enabled: Boolean) {
@@ -576,6 +1034,7 @@ class ViewerActivity : AppCompatActivity() {
         }
         lifecycleScope.launch {
             progress.visibility = View.VISIBLE
+            val marks = HashSet<Int>()
             val (file, strokes) = try {
                 withContext(Dispatchers.IO) {
                     val name = FileUtil.displayName(this@ViewerActivity, uri)
@@ -583,7 +1042,7 @@ class ViewerActivity : AppCompatActivity() {
                     if (FileUtil.detect(name, contentResolver.getType(uri), f) != DocType.PDF) error("PDF 파일이 아닙니다.")
                     if (PdfInk.containsInk(f)) {
                         val clean = FileUtil.tempFile(this@ViewerActivity, "ins_clean", "pdf")
-                        clean to PdfInk.extract(f, clean)
+                        clean to PdfInk.extract(f, clean, marks)
                     } else f to List(PdfPages.pageCount(f)) { emptyList<Stroke>() }
                 }
             } catch (e: Exception) {
@@ -600,8 +1059,12 @@ class ViewerActivity : AppCompatActivity() {
             val done = {
                 Toast.makeText(this@ViewerActivity, "${strokes.size}쪽을 ${index + 1}쪽부터 넣었습니다.", Toast.LENGTH_SHORT).show()
             }
+            val inkDoc = t.ink ?: return@launch
             editPages(t, { src, out -> PdfPages.insertPdf(src, out, index, file) }, done) { pages ->
-                pages.addAll(index, strokes.map { it.toMutableList() })
+                val lists = strokes.map { it.toMutableList() }
+                // 넣은 PDF의 북마크도 함께
+                for (i in marks) lists.getOrNull(i)?.let(inkDoc::markList)
+                pages.addAll(index, lists)
                 index
             }
         }
@@ -658,7 +1121,12 @@ class ViewerActivity : AppCompatActivity() {
         val inkDoc = t.ink ?: return
         hideOptionBar()
         docView.clearSelection()
-        overview.show(d, inkDoc, docView.currentPage().coerceAtLeast(0), docView.width, docView.height)
+        // 쪽 한눈에 보기가 페이지 관리 창의 일을 모두 하므로 페이지 관리 창은 닫는다
+        if (pagePanel.isShowing) {
+            prefs.edit().putBoolean("pagePanel", false).apply()
+            syncPagePanel()
+        }
+        overview.show(d, inkDoc, docView.currentPage().coerceAtLeast(0))
     }
 
     // ================= 쪽 이동 =================
@@ -712,13 +1180,14 @@ class ViewerActivity : AppCompatActivity() {
 
     // ================= 쪽 넣기 · 지우기 =================
 
-    /** 보고 있는 쪽 뒤에 같은 크기의 빈 쪽을 넣고 그 쪽으로 간다 */
-    private fun insertBlankPage(paper: Paper) {
+    /**
+     * [at]번째 자리(0부터, 기본은 보고 있는 쪽 뒤)에 앞 쪽과 같은 크기의 빈 쪽을 넣고 그 쪽으로 간다.
+     * 맨 앞에 넣으면 첫 쪽과 같은 크기
+     */
+    private fun insertBlankPage(paper: Paper, at: Int = docView.currentPage() + 1) {
         val t = current ?: return
         val d = t.pdf ?: return
-        val page = docView.currentPage().coerceIn(0, d.pageCount - 1)
-        val size = d.sizes[page]
-        val at = page + 1
+        val size = d.sizes[(at - 1).coerceIn(0, d.pageCount - 1)]
         editPages(t, { src, out -> PdfPages.insert(src, out, at, paper, size.width, size.height) }) { pages ->
             pages.add(at, mutableListOf())
             at
@@ -746,10 +1215,12 @@ class ViewerActivity : AppCompatActivity() {
     }
 
     /** [from]~[to]번째 쪽(0부터)을 필기와 함께 지운다 */
-    private fun deletePages(t: DocTab, from: Int, to: Int) {
+    private fun deletePages(t: DocTab, from: Int, to: Int, cut: Boolean = false) {
         val done = {
             val what = if (from == to) "${from + 1}쪽을" else "${from + 1}~${to + 1}쪽을"
-            Toast.makeText(this, "$what 지웠습니다. 실행 취소로 되돌릴 수 있습니다.", Toast.LENGTH_SHORT).show()
+            val msg = if (cut) "$what 잘라냈습니다. 페이지 관리 창의 ⋮ → 붙여넣기로 원하는 자리에 넣을 수 있습니다."
+                else "$what 지웠습니다. 실행 취소로 되돌릴 수 있습니다."
+            Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
         }
         editPages(t, { src, out -> PdfPages.remove(src, out, from, to) }, done) { pages ->
             repeat(to - from + 1) { pages.removeAt(from) }
@@ -771,7 +1242,6 @@ class ViewerActivity : AppCompatActivity() {
         val inkDoc = t.ink ?: return
         if (t.pagesBusy) return
         t.pagesBusy = true
-        overview.hide()
         textEditor.commit()
         docView.clearSelection()
         val before = PageFiles(src, render, docView.currentPage().coerceAtLeast(0))
@@ -799,6 +1269,8 @@ class ViewerActivity : AppCompatActivity() {
                 val target = after.page
                 if (current === t) {
                     docView.setDocument(nd, inkDoc, docView.viewState())
+                    pagePanel.setDocument(nd, inkDoc)
+                    overview.setDocument(nd, inkDoc)
                     docView.post { docView.scrollToPage(target) }
                 } else t.viewState = null
                 old?.close()
@@ -821,7 +1293,6 @@ class ViewerActivity : AppCompatActivity() {
         val inkDoc = t.ink ?: return
         if (t.pagesBusy) return
         t.pagesBusy = true
-        overview.hide()
         lifecycleScope.launch {
             progress.visibility = View.VISIBLE
             try {
@@ -837,6 +1308,8 @@ class ViewerActivity : AppCompatActivity() {
                 t.renderPdf = f.render
                 if (current === t) {
                     docView.setDocument(nd, inkDoc, docView.viewState())
+                    pagePanel.setDocument(nd, inkDoc)
+                    overview.setDocument(nd, inkDoc)
                     docView.post { docView.scrollToPage(f.page.coerceIn(0, nd.pageCount - 1)) }
                 } else t.viewState = null
                 old?.close()
@@ -978,17 +1451,8 @@ class ViewerActivity : AppCompatActivity() {
         lifecycleScope.launch {
             progress.visibility = View.VISIBLE
             try {
-                val paint = inkPaint()
-                val scale = EXPORT_DPI / 72f
                 for (p in pages) {
-                    val size = d.sizes[p]
-                    val w = (size.width * scale).roundToInt().coerceAtLeast(1)
-                    val h = (size.height * scale).roundToInt().coerceAtLeast(1)
-                    val bmp = withContext(d.dispatcher) { d.render(p, scale, 0f, 0f, w, h) }
-                    // 필기 얹기 (획의 경로 캐시를 문서 화면과 같이 쓰므로 메인 스레드에서). 그림을 먼저
-                    val c = Canvas(bmp)
-                    c.scale(scale, scale)
-                    inkDoc.pages.getOrNull(p)?.sortedBy { if (it.image != null) 0 else 1 }?.forEach { drawInkStroke(c, paint, it) }
+                    val bmp = pageBitmap(d, inkDoc, p)
                     withContext(Dispatchers.IO) { saveToGallery(bmp, "${base}_${p + 1}쪽.png") }
                     bmp.recycle()
                 }
@@ -1004,6 +1468,21 @@ class ViewerActivity : AppCompatActivity() {
                 progress.visibility = View.GONE
             }
         }
+    }
+
+    /** 쪽을 필기·그림과 함께 [EXPORT_DPI]로 그린다 */
+    private suspend fun pageBitmap(d: PdfDoc, inkDoc: InkDocument, p: Int): Bitmap {
+        val scale = EXPORT_DPI / 72f
+        val size = d.sizes[p]
+        val w = (size.width * scale).roundToInt().coerceAtLeast(1)
+        val h = (size.height * scale).roundToInt().coerceAtLeast(1)
+        val bmp = withContext(d.dispatcher) { d.render(p, scale, 0f, 0f, w, h) }
+        // 필기 얹기 (획의 경로 캐시를 문서 화면과 같이 쓰므로 메인 스레드에서). 그림을 먼저
+        val c = Canvas(bmp)
+        c.scale(scale, scale)
+        val paint = inkPaint()
+        inkDoc.pages.getOrNull(p)?.sortedBy { if (it.image != null) 0 else 1 }?.forEach { drawInkStroke(c, paint, it) }
+        return bmp
     }
 
     private fun saveToGallery(bmp: Bitmap, name: String) {
@@ -1053,13 +1532,14 @@ class ViewerActivity : AppCompatActivity() {
         val inkDoc = t.ink ?: return
         val src = t.sourcePdf ?: return
         val snapshot = inkDoc.snapshot()
+        val marks = inkDoc.bookmarkedPages()
         lifecycleScope.launch {
             progress.visibility = View.VISIBLE
             try {
                 withContext(Dispatchers.IO) {
                     val tmp = FileUtil.tempFile(this@ViewerActivity, "out", "pdf")
                     try {
-                        PdfInk.save(src, tmp, snapshot)
+                        PdfInk.save(src, tmp, snapshot, marks)
                         val out = contentResolver.openOutputStream(target, "wt") ?: error("저장 위치를 열 수 없습니다.")
                         out.use { o -> tmp.inputStream().use { it.copyTo(o, 1 shl 16) } }
                     } finally {

@@ -1,0 +1,7 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- 쪽 미리보기 선택 (안 고름): 흰 동그라미에 회색 테두리 -->
+    <path android:fillColor="#F2FFFFFF" android:strokeColor="#9AA0A6" android:strokeWidth="1.6"
+        android:pathData="M12,12m-10.2,0a10.2,10.2 0,1 1,20.4 0a10.2,10.2 0,1 1,-20.4 0" />
+</vector>

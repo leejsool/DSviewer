@@ -327,6 +327,23 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
         version++
     }
 
+    /**
+     * 쪽을 좌우([horizontal]) 또는 상하로 뒤집을 때: 점을 쪽 가로(세로) 길이 [extent]를 기준으로 거울에 비춘다.
+     * 글·그림 상자는 자리만 옮기고 글자·그림이 뒤집히지 않게 모서리 차례를 바꾼다
+     * (네 모서리 왼위·오른위·오른아래·왼아래 → 좌우는 1·0·3·2, 상하는 3·2·1·0)
+     */
+    fun mirror(horizontal: Boolean, extent: Float) {
+        val axis = if (horizontal) 0 else 1
+        for (i in 0 until count) data[i * 3 + axis] = extent - data[i * 3 + axis]
+        for (i in holes.indices step 3) holes[i + axis] = extent - holes[i + axis]
+        if ((image != null || text != null) && count == 4) {
+            val order = if (horizontal) intArrayOf(1, 0, 3, 2) else intArrayOf(3, 2, 1, 0)
+            val old = data.copyOf(12)
+            for (k in 0 until 4) for (j in 0 until 3) data[k * 3 + j] = old[order[k] * 3 + j]
+        }
+        version++
+    }
+
     fun recolor(c: Int) {
         color = c
         version++
@@ -634,9 +651,31 @@ class InkDocument(pageCount: Int) {
     val canUndo get() = undoStack.isNotEmpty()
     val canRedo get() = redoStack.isNotEmpty()
 
-    /** 파일에서 읽어 온 필기 (기록에 남기지 않음) */
-    fun load(strokes: List<List<Stroke>>) {
+    /**
+     * 북마크한 쪽. 쪽 번호 대신 그 쪽의 획 목록(자체)을 담아 두어, 쪽을 넣고 빼거나
+     * 그 일을 실행 취소해도 북마크가 쪽을 따라간다. 북마크는 실행 취소 기록에 남기지 않는다
+     */
+    private val marks: MutableSet<MutableList<Stroke>> = java.util.Collections.newSetFromMap(java.util.IdentityHashMap())
+
+    fun isBookmarked(page: Int) = pages.getOrNull(page)?.let { it in marks } == true
+
+    fun setBookmark(page: Int, on: Boolean) {
+        val list = pages.getOrNull(page) ?: return
+        if (if (on) marks.add(list) else marks.remove(list)) changed()
+    }
+
+    /** 북마크한 쪽 번호 (0부터, 차례대로) */
+    fun bookmarkedPages(): Set<Int> = pages.indices.filterTo(LinkedHashSet()) { pages[it] in marks }
+
+    /** 파일에서 읽어 온 필기와 북마크 (기록에 남기지 않음) */
+    fun load(strokes: List<List<Stroke>>, bookmarks: Set<Int> = emptySet()) {
         for (i in strokes.indices) if (i < pages.size) pages[i].addAll(strokes[i])
+        for (i in bookmarks) pages.getOrNull(i)?.let { marks.add(it) }
+    }
+
+    /** 쪽 구성 바꾸기에서 새로 들어온 쪽 목록에 북마크를 단다 ([changePages]의 edit 안에서) */
+    fun markList(list: MutableList<Stroke>) {
+        marks.add(list)
     }
 
     fun add(page: Int, stroke: Stroke) {

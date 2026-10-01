@@ -1,0 +1,8 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24"
+    android:tint="?attr/colorControlNormal">
+    <!-- 페이지 관리: 왼쪽에 쪽 미리보기가 늘어선 창 -->
+    <path android:strokeColor="@android:color/white" android:strokeWidth="1.8" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M3.5,4.5h17v15h-17z M9.5,4.5v15" />
+    <path android:fillColor="@android:color/white" android:pathData="M5.3,7h2.4v3.4H5.3z M5.3,12.6h2.4v3.4H5.3z" />
+</vector>

@@ -10,6 +10,7 @@
     <!-- 탭 줄: 크롬식 문서 탭(최대 6개) + 새 탭, 오른쪽에 실행 취소·다시 실행·저장·⋮.
          바탕은 한 단계 어둡고, 고른 탭은 아래 문서 화면 쪽과 같은 색으로 이어진다 -->
     <LinearLayout
+        android:id="@+id/tabRow"
         android:layout_width="match_parent"
         android:layout_height="44dp"
         android:gravity="center_vertical"
@@ -53,12 +54,42 @@
             android:src="@drawable/ic_insert"
             android:tooltipText="삽입" />
 
+        <!-- 보기: 양쪽 보기 · 페이지 관리 · 쪽 한눈에 보기 · 읽기 모드 · 전체 화면 (켜진 것은 바탕에 동그라미) -->
+        <ImageButton
+            android:id="@+id/actionTwoPage"
+            style="@style/TabBarAction"
+            android:layout_marginStart="6dp"
+            android:contentDescription="양쪽 보기"
+            android:src="@drawable/ic_two_page"
+            android:tooltipText="양쪽 보기 (가로 화면)" />
+
+        <ImageButton
+            android:id="@+id/actionPages"
+            style="@style/TabBarAction"
+            android:contentDescription="페이지 관리"
+            android:src="@drawable/ic_page_panel"
+            android:tooltipText="페이지 관리" />
+
         <ImageButton
             android:id="@+id/actionOverview"
             style="@style/TabBarAction"
             android:contentDescription="쪽 한눈에 보기"
             android:src="@drawable/ic_grid_view"
             android:tooltipText="쪽 한눈에 보기" />
+
+        <ImageButton
+            android:id="@+id/actionReadMode"
+            style="@style/TabBarAction"
+            android:contentDescription="읽기 모드"
+            android:src="@drawable/ic_read_mode"
+            android:tooltipText="읽기 모드 (필기하지 않고 넘겨 보기)" />
+
+        <ImageButton
+            android:id="@+id/actionFullscreen"
+            style="@style/TabBarAction"
+            android:contentDescription="전체 화면"
+            android:src="@drawable/ic_fullscreen"
+            android:tooltipText="전체 화면" />
 
         <ImageButton
             android:id="@+id/actionMore"
@@ -76,6 +107,15 @@
         android:layout_height="0dp"
         android:layout_weight="1"
         android:orientation="horizontal">
+
+    <!-- 페이지 관리 창: 문서 왼쪽에 붙는 쪽 미리보기 목록 (PagePanel이 속을 채운다, 너비도 코드에서) -->
+    <LinearLayout
+        android:id="@+id/pagePanel"
+        android:layout_width="250dp"
+        android:layout_height="match_parent"
+        android:background="?attr/colorSurfaceContainerLow"
+        android:elevation="1dp"
+        android:visibility="gone" />
 
     <FrameLayout
         android:id="@+id/docFrame"
@@ -249,7 +289,24 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <!-- 쪽 한눈에 보기: 문서 화면을 덮는 쪽 미리보기 모음 (PageOverview) -->
+        <!-- 전체 화면일 때만 보이는 '전체 화면 끝내기' 단추 -->
+        <ImageButton
+            android:id="@+id/exitFullscreen"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_gravity="top|end"
+            android:layout_margin="10dp"
+            android:alpha="0.75"
+            android:background="@drawable/bg_pill"
+            android:contentDescription="전체 화면 끝내기"
+            android:padding="9dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_fullscreen_exit"
+            android:tint="#FFFFFF"
+            android:tooltipText="전체 화면 끝내기"
+            android:visibility="gone" />
+
+        <!-- 쪽 한눈에 보기: 문서 화면을 덮는 쪽 미리보기 모음 (PagePanel이 속을 채운다) -->
         <LinearLayout
             android:id="@+id/overviewPanel"
             android:layout_width="match_parent"
@@ -257,84 +314,7 @@
             android:background="@color/doc_bg"
             android:clickable="true"
             android:focusable="true"
-            android:orientation="vertical"
-            android:visibility="gone">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="52dp"
-                android:background="?attr/colorSurfaceContainer"
-                android:gravity="center_vertical"
-                android:orientation="horizontal"
-                android:paddingStart="16dp"
-                android:paddingEnd="4dp">
-
-                <TextView
-                    android:id="@+id/overviewTitle"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:singleLine="true"
-                    android:text="쪽 한눈에 보기"
-                    android:textAppearance="?attr/textAppearanceTitleMedium" />
-
-                <com.google.android.material.button.MaterialButtonToggleGroup
-                    android:id="@+id/overviewFilter"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    app:selectionRequired="true"
-                    app:singleSelection="true">
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/overviewAll"
-                        style="?attr/materialButtonOutlinedStyle"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="전체" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/overviewInked"
-                        style="?attr/materialButtonOutlinedStyle"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="필기된 쪽" />
-                </com.google.android.material.button.MaterialButtonToggleGroup>
-
-                <ImageButton
-                    android:id="@+id/overviewClose"
-                    android:layout_width="48dp"
-                    android:layout_height="48dp"
-                    android:layout_marginStart="4dp"
-                    android:background="?attr/selectableItemBackgroundBorderless"
-                    android:contentDescription="닫기"
-                    android:src="@drawable/ic_close" />
-            </LinearLayout>
-
-            <FrameLayout
-                android:layout_width="match_parent"
-                android:layout_height="0dp"
-                android:layout_weight="1">
-
-                <androidx.recyclerview.widget.RecyclerView
-                    android:id="@+id/overviewGrid"
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent"
-                    android:clipToPadding="false"
-                    android:padding="6dp"
-                    android:scrollbars="vertical" />
-
-                <TextView
-                    android:id="@+id/overviewEmpty"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="center"
-                    android:gravity="center"
-                    android:padding="32dp"
-                    android:text="아직 필기한 쪽이 없습니다."
-                    android:textAppearance="?attr/textAppearanceBodyMedium"
-                    android:visibility="gone" />
-            </FrameLayout>
-        </LinearLayout>
+            android:visibility="gone" />
     </FrameLayout>
     </LinearLayout>
 

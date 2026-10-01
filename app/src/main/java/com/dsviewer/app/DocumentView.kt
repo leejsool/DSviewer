@@ -92,6 +92,36 @@ class DocumentView @JvmOverloads constructor(
     var eraseHlOnly = false
     /** true면 손가락 한 개로 필기, 두 손가락으로 이동/확대 */
     var fingerDrawing = false
+    /** 읽기 모드: 펜도 손가락처럼 넘기고 확대만 한다 (필기·지우기·선택 없음) */
+    var readOnly = false
+        set(v) {
+            if (field == v) return
+            if (v && penPointerId != -1) endPen(commit = true)
+            field = v
+            if (v) clearSelection()
+        }
+    /**
+     * 양쪽 보기: 화면이 가로로 길면 쪽을 두 개씩 나란히 (1·2쪽, 3·4쪽 …).
+     * 세로 화면에서는 켜 두어도 한 쪽씩
+     */
+    var twoPage = false
+        set(v) {
+            if (field == v) return
+            field = v
+            relayout()
+        }
+    /** 지금 두 쪽씩 놓여 있는지 */
+    private var spread = false
+    /** 글자 찾기 결과: 쪽마다 강조할 상자 (쪽 좌표) */
+    var searchHits: Map<Int, List<RectF>> = emptyMap()
+        set(v) {
+            field = v
+            invalidate()
+        }
+    private val hitPaint = Paint().apply {
+        color = 0xFFFFC94D.toInt()
+        blendMode = BlendMode.MULTIPLY
+    }
     /** 보정 펜으로 그릴 도형 */
     var shapeKind = ShapeKind.LINE
     /** 보정 펜: 그리는 중에 맞춰 본 도형 (흐리게 미리 보여 줌) */
@@ -305,17 +335,7 @@ class DocumentView @JvmOverloads constructor(
         doc = d
         ink = inkDoc
         sizes = d.sizes
-        val n = sizes.size
-        tops = FloatArray(n)
-        lefts = FloatArray(n)
-        docW = (sizes.maxOfOrNull { it.width } ?: 600f) + gap * 2
-        var y = gap
-        for (i in 0 until n) {
-            lefts[i] = (docW - sizes[i].width) / 2f
-            tops[i] = y
-            y += sizes[i].height + gap
-        }
-        docH = y
+        layoutPages()
         zoom = 1f
         baseCache.evictAll()
         details = emptyList()
@@ -337,9 +357,54 @@ class DocumentView @JvmOverloads constructor(
 
     // ================= 레이아웃 / 변환 =================
 
+    /** 쪽을 한 줄에 하나(양쪽 보기면 둘)씩 쌓아 [tops]·[lefts]·[docW]·[docH]를 정한다 */
+    private fun layoutPages() {
+        val n = sizes.size
+        spread = twoPage && width > height && n > 1
+        tops = FloatArray(n)
+        lefts = FloatArray(n)
+        val per = if (spread) 2 else 1
+        val rows = (0 until n step per).map { it until min(n, it + per) }
+        // 줄 너비 = 쪽 너비의 합 + 쪽 사이 여백. 문서 너비는 가장 넓은 줄에 맞춘다
+        val rowW = rows.map { r -> r.sumOf { sizes[it].width.toDouble() }.toFloat() + gap * (r.count() - 1) }
+        docW = (rowW.maxOrNull() ?: 600f) + gap * 2
+        var y = gap
+        for ((k, r) in rows.withIndex()) {
+            var x = (docW - rowW[k]) / 2f
+            var rowH = 0f
+            for (i in r) {
+                lefts[i] = x
+                tops[i] = y
+                x += sizes[i].width + gap
+                rowH = max(rowH, sizes[i].height)
+            }
+            y += rowH + gap
+        }
+        docH = y
+    }
+
+    /** 쪽 배치를 다시 하고, 보던 쪽이 화면 위에 오도록 */
+    private fun relayout() {
+        if (doc == null || width == 0) return
+        val page = currentPage()
+        layoutPages()
+        baseScale = width / docW
+        zoom = 1f
+        baseCache.evictAll()
+        details = emptyList()
+        clearSelection()
+        lastReportedPage = -1
+        scrollToPage(page)
+    }
+
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         if (doc == null || w == 0) return
+        // 양쪽 보기에서 화면이 가로↔세로로 바뀌면 쪽 배치를 새로
+        if (twoPage && sizes.size > 1 && (w > h) != spread) {
+            relayout()
+            return
+        }
         // 화면 가운데에 있던 문서 위치를 유지. 높이만 바뀌면(화면 키보드) 위쪽을 그대로 둔다
         val anchorY = if (oldw > 0) (offY + oldh / 2f) / scale else 0f
         baseScale = w / docW
@@ -418,7 +483,7 @@ class DocumentView @JvmOverloads constructor(
             if (b >= topDoc && t <= bottomDoc) {
                 if (first < 0) first = i
                 last = i
-            } else if (first >= 0) break
+            } else if (first >= 0 && t > bottomDoc) break
         }
         return if (first < 0) IntRange.EMPTY else first..last
     }
@@ -428,24 +493,46 @@ class DocumentView @JvmOverloads constructor(
         val s = scale
         val dx = (sx + offX) / s
         val dy = (sy + offY) / s
+        // 높이가 맞는 쪽 가운데 가로로 가장 가까운 쪽 (양쪽 보기면 한 줄에 둘)
+        var best = -1
+        var bestDist = Float.MAX_VALUE
         for (i in sizes.indices) {
             val t = tops[i] - gap / 2
             val b = tops[i] + sizes[i].height + gap / 2
-            if (dy in t..b) {
-                val px = dx - lefts[i]
-                if (px < -gap || px > sizes[i].width + gap) return null
-                return Triple(i, px, dy - tops[i])
+            if (dy !in t..b) {
+                if (best >= 0 && t > dy) break
+                continue
             }
+            val px = dx - lefts[i]
+            val dist = if (px < 0) -px else max(0f, px - sizes[i].width)
+            if (dist < bestDist) { best = i; bestDist = dist }
         }
-        return null
+        if (best < 0 || bestDist > gap) return null
+        return Triple(best, dx - lefts[best], dy - tops[best])
     }
 
-    /** 화면 가운데에 걸친 쪽 (문서가 없으면 -1) */
-    fun currentPage(): Int {
+    /** 화면 가운데 줄의 첫 쪽 (문서가 없으면 -1) */
+    private fun rowFirstPage(): Int {
         if (sizes.isEmpty()) return -1
         val centerDoc = (offY + height / 2f) / scale
         return sizes.indices.firstOrNull { tops[it] + sizes[it].height + gap / 2 >= centerDoc } ?: sizes.lastIndex
     }
+
+    /** 화면 가운데에 걸친 쪽 (문서가 없으면 -1). 양쪽 보기면 그 줄에서 화면 가운데에 걸친 쪽 */
+    fun currentPage(): Int {
+        val first = rowFirstPage()
+        if (!spread || first < 0) return first
+        val cx = (offX + width / 2f) / scale
+        var page = first
+        for (i in first + 1 until sizes.size) {
+            if (tops[i] != tops[first]) break
+            if (cx >= lefts[i]) page = i
+        }
+        return page
+    }
+
+    /** 양쪽 보기로 두 쪽씩 놓여 있는지 */
+    val isSpread get() = spread
 
     /** [page]쪽의 위쪽 끝이 화면 맨 위에 오도록 옮긴다 */
     fun scrollToPage(page: Int) {
@@ -453,6 +540,19 @@ class DocumentView @JvmOverloads constructor(
         scroller.forceFinished(true)
         zoomAnimator?.cancel()
         offY = (tops[page] - gap / 2) * scale - topInset
+        clamp()
+        scheduleDetail()
+        invalidate()
+    }
+
+    /** [page]쪽의 (x, y)가 화면에 들어오도록 옮긴다 (찾은 글자로 갈 때). 위에서 1/3쯤에 오게 */
+    fun scrollToPoint(page: Int, x: Float, y: Float) {
+        if (page !in sizes.indices || width == 0) return
+        scroller.forceFinished(true)
+        zoomAnimator?.cancel()
+        offY = (tops[page] + y) * scale - height / 3f
+        val sx = (lefts[page] + x) * scale - offX
+        if (sx < 0 || sx > width) offX = (lefts[page] + x) * scale - width / 2f
         clamp()
         scheduleDetail()
         invalidate()
@@ -488,6 +588,8 @@ class DocumentView @JvmOverloads constructor(
             canvas.clipRect(r)
             canvas.translate(r.left, r.top)
             canvas.scale(s, s)
+            // 찾은 글자: 형광펜처럼 글자 아래에 비치게
+            searchHits[i]?.forEach { canvas.drawRect(it, hitPaint) }
             val dragging = (moving || resizing || rotating) && selPage == i
             // 그림을 먼저, 필기를 그 위에
             for (st in inkDoc.pages[i]) if (st.image != null && (!dragging || st !in selSet)) drawStroke(canvas, st)
@@ -740,11 +842,7 @@ class DocumentView @JvmOverloads constructor(
 
     private fun reportPage(count: Int) {
         if (sizes.isEmpty()) return
-        val centerDoc = (offY + height / 2f) / scale
-        var page = sizes.size - 1
-        for (i in sizes.indices) {
-            if (tops[i] + sizes[i].height + gap / 2 >= centerDoc) { page = i; break }
-        }
+        val page = rowFirstPage()
         if (page != lastReportedPage) {
             lastReportedPage = page
             listener?.onPageChanged(page, count)
@@ -915,7 +1013,7 @@ class DocumentView @JvmOverloads constructor(
 
         override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
             // 글 도구: 손가락으로 톡 눌러도 글을 넣거나 고친다 (손가락 필기를 꺼 두었을 때)
-            if (tool == Tool.TEXT) hitPage(e.x, e.y)?.let { tapText(it.first, it.second, it.third) }
+            if (tool == Tool.TEXT && !readOnly) hitPage(e.x, e.y)?.let { tapText(it.first, it.second, it.third) }
             // 다른 도구에서는 손가락으로 테이프를 톡 누르면 보였다 가려졌다
             else toggleTapeAt(e.x, e.y)
             return true
@@ -1163,8 +1261,8 @@ class DocumentView @JvmOverloads constructor(
             SPEN_MOVE -> { action = MotionEvent.ACTION_MOVE; samsungButton = true }
         }
 
-        // 펜 시작
-        if (penPointerId == -1 && (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN)) {
+        // 펜 시작 (읽기 모드에서는 펜도 손가락처럼 넘기기·확대만)
+        if (!readOnly && penPointerId == -1 && (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN)) {
             val idx = if (samsungButton) 0 else ev.actionIndex
             val stylus = isStylus(ev, idx) || samsungButton
             // 선택한 부분은 손가락 필기를 꺼 두어도 손가락으로 끌어 옮길 수 있다

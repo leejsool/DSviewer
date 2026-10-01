@@ -1,0 +1,7 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="18dp" android:height="24dp"
+    android:viewportWidth="18" android:viewportHeight="24">
+    <!-- 쪽 미리보기의 북마크 리본 (끔): 흰 리본에 회색 테두리 -->
+    <path android:fillColor="#F2FFFFFF" android:strokeColor="#B8BCC4" android:strokeWidth="1.2"
+        android:pathData="M0.6,0h16.8v22.8l-8.4,-6 -8.4,6z" />
+</vector>

@@ -42,11 +42,16 @@ import kotlin.math.roundToInt
 object PdfInk {
     private const val KEY = "DSViewerStroke"
     private val KEY_NAME: COSName = COSName.getPDFName(KEY)
+    /** 북마크한 쪽: 쪽 사전에 이 키를 true로 */
+    private val MARK_NAME: COSName = COSName.getPDFName("DSViewerMark")
     const val HL_ALPHA = 0.45f
 
-    /** 이 앱이 저장한 필기가 들어 있는지 빠르게 확인 (PDFBox는 주석 사전을 압축하지 않고 쓴다) */
+    /**
+     * 이 앱이 저장한 필기나 북마크가 들어 있는지 빠르게 확인 (PDFBox는 주석·쪽 사전을 압축하지 않고 쓴다).
+     * 두 키 모두 /DSViewer로 시작한다
+     */
     fun containsInk(file: File): Boolean {
-        val pattern = "/$KEY".toByteArray()
+        val pattern = "/DSViewer".toByteArray()
         var matched = 0
         file.inputStream().buffered(1 shl 16).use { input ->
             while (true) {
@@ -62,12 +67,16 @@ object PdfInk {
         }
     }
 
-    /** 이 앱의 필기를 꺼내고, 필기를 뺀 PDF를 [clean]에 저장한다 (화면 렌더링용) */
-    fun extract(src: File, clean: File): List<List<Stroke>> {
+    /**
+     * 이 앱의 필기를 꺼내고, 필기를 뺀 PDF를 [clean]에 저장한다 (화면 렌더링용).
+     * [marks]를 주면 북마크한 쪽 번호(0부터)를 담는다
+     */
+    fun extract(src: File, clean: File, marks: MutableSet<Int>? = null): List<List<Stroke>> {
         val result = ArrayList<MutableList<Stroke>>()
         PDDocument.load(src).use { doc ->
             if (doc.isEncrypted) doc.isAllSecurityToBeRemoved = true
-            for (page in doc.pages) {
+            for ((pi, page) in doc.pages.withIndex()) {
+                if (page.cosObject.getBoolean(MARK_NAME, false)) marks?.add(pi)
                 val strokes = mutableListOf<Stroke>()
                 val annots = page.annotations
                 val keep = ArrayList<PDAnnotation>()
@@ -103,8 +112,8 @@ object PdfInk {
         }
     }
 
-    /** 원본 [src]에 필기를 주석으로 넣어 [out]에 저장 */
-    fun save(src: File, out: File, pages: List<List<Stroke>>) {
+    /** 원본 [src]에 필기를 주석으로 넣고 [marks] 쪽(0부터)에 북마크를 달아 [out]에 저장 */
+    fun save(src: File, out: File, pages: List<List<Stroke>>, marks: Set<Int> = emptySet()) {
         // 글 외형을 그린 임시 PDF (다 저장한 뒤에 닫는다)
         var texts: TextForms? = null
         try {
@@ -129,6 +138,8 @@ object PdfInk {
                         }
                     }
                     page.annotations = list
+                    if (i in marks) page.cosObject.setBoolean(MARK_NAME, true)
+                    else page.cosObject.removeItem(MARK_NAME)
                 }
                 doc.save(out)
             }

@@ -1,0 +1,11 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24"
+    android:tint="?attr/colorControlNormal">
+    <!-- 상하 반전: 가운데 가로선을 두고 위는 실선 삼각형, 아래는 점선 삼각형 -->
+    <path android:fillColor="@android:color/white" android:pathData="M4.5,10.5L18.5,3v7.5z" />
+    <path android:strokeColor="@android:color/white" android:strokeWidth="1.6" android:strokeLineJoin="round"
+        android:pathData="M4.5,13.5L18.5,21v-7.5z" />
+    <path android:strokeColor="@android:color/white" android:strokeWidth="1.2" android:strokeLineCap="round"
+        android:pathData="M2,12h2 M6,12h2 M10,12h2 M14,12h2 M18,12h2 M22,12h0.5" />
+</vector>
