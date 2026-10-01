@@ -603,7 +603,12 @@ class DocumentView @JvmOverloads constructor(
             val r = pageRect(i, tmpRect)
             canvas.drawRect(r, pagePaint)
             val bmp = baseCache.get(i)
-            if (bmp != null) canvas.drawBitmap(bmp, null, r, bmpPaint) else requestBase(i)
+            if (bmp != null) {
+                canvas.drawBitmap(bmp, null, r, bmpPaint)
+                // 배율 단계가 바뀌었으면 있는 그림을 늘려 보여 주는 동안 맞는 크기로 다시 그린다
+                val want = sizes[i].width * baseRenderScale(i)
+                if (bmp.width < want * 0.9f || bmp.width > want * 1.5f) requestBase(i)
+            } else requestBase(i)
             for (det in details) {
                 if (det.page != i) continue
                 val dst = RectF(
@@ -957,7 +962,13 @@ class DocumentView @JvmOverloads constructor(
     private fun baseRenderScale(i: Int): Float {
         val sz = sizes[i]
         val maxPixels = 8_000_000f
-        return min(baseScale, sqrt(maxPixels / (sz.width * sz.height)))
+        // 많이 줄여 여러 쪽이 한꺼번에 보일 때는 작게 그려 둔다 (큰 화면에서 메모리가 모자라 계속 다시 그리지 않게)
+        val k = when {
+            zoom >= 0.5f -> 1f
+            zoom >= 0.25f -> 0.5f
+            else -> 0.25f
+        }
+        return min(baseScale * k, sqrt(maxPixels / (sz.width * sz.height)))
     }
 
     private fun requestBase(i: Int) {
@@ -1096,7 +1107,7 @@ class DocumentView @JvmOverloads constructor(
             val want = offY
             clamp()
             // 마지막 쪽 끝에서 더 올리면 (뻑뻑하게) 새 쪽 자리를 끌어낸다
-            if (dy > 0f && want > offY + 0.5f && !readOnly) setPull(pullPx + (want - offY) * 0.5f)
+            if (dy > 0f && want > offY + 0.5f && !readOnly) setPull(pullPx + (want - offY) * 0.7f)
             noteScrolled(offY - before)
             invalidate()
             return true
@@ -1400,7 +1411,15 @@ class DocumentView @JvmOverloads constructor(
             if (penIsFinger && action == MotionEvent.ACTION_POINTER_DOWN) {
                 endPen(commit = false)
                 fingerActive = true
+                // 제스처 감지기는 첫 손가락의 DOWN을 못 받았으므로 지금 두 손가락 자리에서 새로 시작시킨다.
+                // 안 그러면 지난 제스처가 끝난 자리를 기준으로 첫 움직임을 계산해 문서가 확 튄다
+                val down = MotionEvent.obtain(ev)
+                down.action = MotionEvent.ACTION_DOWN
+                scaleDetector.onTouchEvent(down)
+                gestureDetector.onTouchEvent(down)
+                down.recycle()
                 scaleDetector.onTouchEvent(ev)
+                gestureDetector.onTouchEvent(ev)
                 return true
             }
             when (action) {
@@ -1439,7 +1458,8 @@ class DocumentView @JvmOverloads constructor(
 
         fingerActive = action != MotionEvent.ACTION_UP && action != MotionEvent.ACTION_CANCEL
         scaleDetector.onTouchEvent(ev)
-        if (!penIsFinger || ev.pointerCount == 1 || !scaling) gestureDetector.onTouchEvent(ev)
+        // 확대 중에도 넘겨 주어야 움직임 기준점이 따라와서 확대가 끝난 뒤 튀지 않는다 (onScroll은 확대 중이면 무시)
+        gestureDetector.onTouchEvent(ev)
         if (!fingerActive) {
             penIsFinger = false
             releasePull(add = action == MotionEvent.ACTION_UP)
@@ -2361,7 +2381,7 @@ class DocumentView @JvmOverloads constructor(
 
     companion object {
         private const val TAG = "DocumentView"
-        private const val MIN_ZOOM = 0.4f
+        private const val MIN_ZOOM = 0.1f
         private const val MAX_ZOOM = 6f
         private const val SEL_COLOR = 0xFF1E6FD9.toInt()
         /** 크기 조절 손잡이 반지름(그리기)과 누르는 범위 */
@@ -2377,7 +2397,7 @@ class DocumentView @JvmOverloads constructor(
         private const val ROT_HANDLE_DP = 14f
         private const val ROT_OFFSET_DP = 34f
         /** 마지막 쪽 아래로 이만큼(dp) 끌어 올렸다 놓으면 빈 쪽을 붙인다 */
-        private const val PULL_ADD_DP = 110f
+        private const val PULL_ADD_DP = 90f
         private const val SPEN_DOWN = 211
         private const val SPEN_UP = 212
         private const val SPEN_MOVE = 213
