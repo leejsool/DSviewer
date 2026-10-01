@@ -269,12 +269,19 @@ class DocumentView @JvmOverloads constructor(
     private var moveStartY = 0f
     private var moveDx = 0f
     private var moveDy = 0f
-    /** 모서리 손잡이로 크기 조절 중: 반대쪽 모서리(anchor)를 기준으로 scaleK배 */
+    /**
+     * 손잡이로 크기 조절 중: 반대쪽 모서리·변(anchor)을 기준으로 가로 scaleK배, 세로 scaleKy배.
+     * 모서리는 같은 비율로, 변 가운데 손잡이는 위아래로만(resizeAxis 2)·옆으로만(1)
+     */
     private var resizing = false
     private var anchorX = 0f
     private var anchorY = 0f
     private var startDist = 1f
     private var scaleK = 1f
+    private var scaleKy = 1f
+    private var resizeAxis = 0
+    /** 변 손잡이가 기준선의 어느 쪽에 있는지 (+1 오른쪽·아래, -1 왼쪽·위) */
+    private var resizeDir = 1f
     /** 회전 손잡이로 돌리는 중: 선택 영역 가운데(rotCx, rotCy)를 중심으로 rotDeg도 */
     private var rotating = false
     private var rotCx = 0f
@@ -290,6 +297,8 @@ class DocumentView @JvmOverloads constructor(
     }
     /** true면 네모 선택, false면 자유 선택(올가미) */
     var lassoRect = false
+    /** 대상 선택: 누른 획·그림·글을 바로 고른다 (빈 곳을 끌면 네모 선택) */
+    var lassoTap = false
     // ---- 레이저 (쪽 좌표. 저장하지 않고, 마지막 획을 떼고 laserFadeMs 뒤 한꺼번에 사라진다) ----
     private val laserStrokes = ArrayList<Pair<Int, Stroke>>()
     private var laserAlpha = 1f
@@ -633,7 +642,7 @@ class DocumentView @JvmOverloads constructor(
                 // 옮기거나 크기를 바꾸는 중인 획은 손을 뗄 때까지 그림만 바꿔 그린다
                 canvas.save()
                 canvas.translate(moveDx, moveDy)
-                if (resizing) canvas.scale(scaleK, scaleK, anchorX, anchorY)
+                if (resizing) canvas.scale(scaleK, scaleKy, anchorX, anchorY)
                 if (rotating) canvas.rotate(rotDeg, rotCx, rotCy)
                 for (st in selection) drawStroke(canvas, st)
                 canvas.restore()
@@ -743,7 +752,7 @@ class DocumentView @JvmOverloads constructor(
         if (lassoing && lassoCount > 1) {
             val ox = lefts[lassoPage] * s - offX
             val oy = tops[lassoPage] * s - offY
-            if (lassoRect) {
+            if (lassoRect || lassoTap) {
                 // 네모 선택: 시작점과 지금 점이 마주 보는 모서리
                 canvas.drawRect(
                     ox + min(lasso[0], lasso[2]) * s, oy + min(lasso[1], lasso[3]) * s,
@@ -783,6 +792,20 @@ class DocumentView @JvmOverloads constructor(
             for (cx in floatArrayOf(rect.left, rect.right)) for (cy in floatArrayOf(rect.top, rect.bottom)) {
                 canvas.drawCircle(cx, cy, hr, handleFill)
                 canvas.drawCircle(cx, cy, hr, handleLine)
+            }
+            // 변 가운데: 위아래로만·옆으로만 늘이는 납작한 손잡이
+            val (topBottom, leftRight) = sideHandles(rect)
+            val long = hr * 1.6f
+            val short = hr * 0.8f
+            if (topBottom) for (cy in floatArrayOf(rect.top, rect.bottom)) {
+                val cx = rect.centerX()
+                canvas.drawRoundRect(cx - long, cy - short, cx + long, cy + short, short, short, handleFill)
+                canvas.drawRoundRect(cx - long, cy - short, cx + long, cy + short, short, short, handleLine)
+            }
+            if (leftRight) for (cx in floatArrayOf(rect.left, rect.right)) {
+                val cy = rect.centerY()
+                canvas.drawRoundRect(cx - short, cy - long, cx + short, cy + long, short, short, handleFill)
+                canvas.drawRoundRect(cx - short, cy - long, cx + short, cy + long, short, short, handleLine)
             }
             if (!moving && !resizing) drawRotateHandle(canvas, rect)
         }
@@ -855,8 +878,8 @@ class DocumentView @JvmOverloads constructor(
         out.set(selBounds)
         if (resizing) {
             out.set(
-                anchorX + (out.left - anchorX) * scaleK, anchorY + (out.top - anchorY) * scaleK,
-                anchorX + (out.right - anchorX) * scaleK, anchorY + (out.bottom - anchorY) * scaleK,
+                anchorX + (out.left - anchorX) * scaleK, anchorY + (out.top - anchorY) * scaleKy,
+                anchorX + (out.right - anchorX) * scaleK, anchorY + (out.bottom - anchorY) * scaleKy,
             )
             out.sort()
         }
@@ -1571,15 +1594,23 @@ class DocumentView @JvmOverloads constructor(
             return
         }
         if (resizing) {
-            val d = hypot(toPageX(selPage, sx) - anchorX, toPageY(selPage, sy) - anchorY)
-            scaleK = (d / startDist).coerceIn(0.1f, 20f)
+            val px = toPageX(selPage, sx)
+            val py = toPageY(selPage, sy)
+            when (resizeAxis) {
+                1 -> scaleK = ((px - anchorX) * resizeDir / startDist).coerceIn(0.05f, 20f)
+                2 -> scaleKy = ((py - anchorY) * resizeDir / startDist).coerceIn(0.05f, 20f)
+                else -> {
+                    scaleK = (hypot(px - anchorX, py - anchorY) / startDist).coerceIn(0.1f, 20f)
+                    scaleKy = scaleK
+                }
+            }
             invalidate()
             return
         }
         if (lassoing) {
             val px = toPageX(lassoPage, sx)
             val py = toPageY(lassoPage, sy)
-            if (lassoRect) {
+            if (lassoRect || lassoTap) {
                 lasso[2] = px
                 lasso[3] = py
             } else {
@@ -1774,13 +1805,17 @@ class DocumentView @JvmOverloads constructor(
             moveDx = 0f
             moveDy = 0f
         } else if (resizing) {
-            if (commit && inkDoc != null && scaleK != 1f) {
-                val k = scaleK
-                inkDoc.edit(selection) { selection.forEach { it.scale(k, anchorX, anchorY) } }
+            if (commit && inkDoc != null && (scaleK != 1f || scaleKy != 1f)) {
+                val kx = scaleK
+                val ky = scaleKy
+                inkDoc.edit(selection) {
+                    selection.forEach { if (kx == ky) it.scale(kx, anchorX, anchorY) else it.scaleXY(kx, ky, anchorX, anchorY) }
+                }
                 select(selPage, selection)
             }
             resizing = false
             scaleK = 1f
+            scaleKy = 1f
         } else if (lassoing) {
             lassoing = false
             if (commit) finishLasso()
@@ -1831,17 +1866,45 @@ class DocumentView @JvmOverloads constructor(
     private fun onSelection(sx: Float, sy: Float) =
         selection.isNotEmpty() && (selectionScreenRect(RectF()).contains(sx, sy) || handleAt(sx, sy) >= 0 || rotateHandleHit(sx, sy))
 
-    /** 누른 곳에 있는 손잡이: 0 왼쪽 위, 1 오른쪽 위, 2 왼쪽 아래, 3 오른쪽 아래, 없으면 -1 */
+    /**
+     * 누른 곳에 있는 손잡이: 0 왼쪽 위, 1 오른쪽 위, 2 왼쪽 아래, 3 오른쪽 아래,
+     * 4 위 변, 5 아래 변, 6 왼쪽 변, 7 오른쪽 변, 없으면 -1 (모서리가 먼저)
+     */
     private fun handleAt(sx: Float, sy: Float): Int {
         if (selection.isEmpty()) return -1
         val r = selectionScreenRect(RectF())
         val reach = HANDLE_TOUCH_DP * density
         val corners = arrayOf(r.left to r.top, r.right to r.top, r.left to r.bottom, r.right to r.bottom)
-        return corners.indices.firstOrNull { hypot(sx - corners[it].first, sy - corners[it].second) <= reach } ?: -1
+        corners.indices.firstOrNull { hypot(sx - corners[it].first, sy - corners[it].second) <= reach }?.let { return it }
+        val (topBottom, leftRight) = sideHandles(r)
+        val sides = arrayOf(r.centerX() to r.top, r.centerX() to r.bottom, r.left to r.centerY(), r.right to r.centerY())
+        val side = (if (topBottom) listOf(0, 1) else emptyList()) + (if (leftRight) listOf(2, 3) else emptyList())
+        return side.firstOrNull { hypot(sx - sides[it].first, sy - sides[it].second) <= reach * 0.8f }?.let { it + 4 } ?: -1
+    }
+
+    /** 변 가운데 손잡이를 둘 만큼 상자가 넓은지 (위·아래 변, 왼쪽·오른쪽 변). 작으면 모서리 손잡이와 겹친다 */
+    private fun sideHandles(r: RectF): Pair<Boolean, Boolean> {
+        val need = HANDLE_TOUCH_DP * density * 2.2f
+        return (r.width() >= need) to (r.height() >= need)
     }
 
     private fun startLasso(sx: Float, sy: Float) {
         val handle = handleAt(sx, sy)
+        if (lassoTap && handle < 0 && !rotateHandleHit(sx, sy)) {
+            // 대상 선택: 누른 것을 고르고 그대로 끌면 옮긴다
+            val hit = hitPage(sx, sy)
+            val obj = hit?.let { objectAt(it.first, it.second, it.third) }
+            if (hit != null && obj != null) {
+                if (obj !in selSet || selPage != hit.first) select(hit.first, listOf(obj))
+                moving = true
+                moveStartX = toPageX(selPage, sx)
+                moveStartY = toPageY(selPage, sy)
+                moveDx = 0f
+                moveDy = 0f
+                invalidate()
+                return
+            }
+        }
         if (rotateHandleHit(sx, sy)) {
             // 회전 손잡이: 선택 영역 가운데를 중심으로 돌리기
             rotCx = selBounds.centerX()
@@ -1849,7 +1912,7 @@ class DocumentView @JvmOverloads constructor(
             rotStart = angleAt(sx, sy)
             rotDeg = 0f
             rotating = true
-        } else if (handle >= 0) {
+        } else if (handle in 0..3) {
             // 모서리 손잡이: 반대쪽 모서리를 기준으로 크기 조절
             val b = selBounds
             val left = handle == 0 || handle == 2
@@ -1858,6 +1921,20 @@ class DocumentView @JvmOverloads constructor(
             anchorY = if (top) b.bottom else b.top
             startDist = max(hypot((if (left) b.left else b.right) - anchorX, (if (top) b.top else b.bottom) - anchorY), 1f)
             scaleK = 1f
+            scaleKy = 1f
+            resizeAxis = 0
+            resizing = true
+        } else if (handle >= 4) {
+            // 변 가운데 손잡이: 맞은편 변을 기준으로 위아래로만(4·5) 또는 옆으로만(6·7)
+            val b = selBounds
+            resizeAxis = if (handle <= 5) 2 else 1
+            anchorX = when (handle) { 6 -> b.right; 7 -> b.left; else -> b.centerX() }
+            anchorY = when (handle) { 4 -> b.bottom; 5 -> b.top; else -> b.centerY() }
+            val edge = when (handle) { 4 -> b.top - anchorY; 5 -> b.bottom - anchorY; 6 -> b.left - anchorX; else -> b.right - anchorX }
+            resizeDir = if (edge < 0f) -1f else 1f
+            startDist = max(abs(edge), 1f)
+            scaleK = 1f
+            scaleKy = 1f
             resizing = true
         } else if (onSelection(sx, sy)) {
             // 선택 상자 안을 누르면 옮기기
@@ -1874,8 +1951,8 @@ class DocumentView @JvmOverloads constructor(
                 lassoPage = hit.first
                 lassoCount = 0
                 addLassoPoint(hit.second, hit.third)
-                // 네모 선택은 [시작점, 지금 점] 두 개만 쓴다
-                if (lassoRect) addLassoPoint(hit.second, hit.third)
+                // 네모 선택(대상 선택의 빈 곳 끌기도)은 [시작점, 지금 점] 두 개만 쓴다
+                if (lassoRect || lassoTap) addLassoPoint(hit.second, hit.third)
             }
         }
         invalidate()
@@ -1901,7 +1978,7 @@ class DocumentView @JvmOverloads constructor(
             (boxAt(lassoPage, lasso[0], lasso[1]) ?: tapeAt(lassoPage, lasso[0], lasso[1]))?.let { select(lassoPage, listOf(it)) }
             return
         }
-        if (lassoRect) {
+        if (lassoRect || lassoTap) {
             // 두 점을 네 모서리로 바꿔 자유 선택과 같은 규칙으로 고른다
             val x0 = min(lasso[0], lasso[2]); val y0 = min(lasso[1], lasso[3])
             val x1 = max(lasso[0], lasso[2]); val y1 = max(lasso[1], lasso[3])
@@ -1934,6 +2011,50 @@ class DocumentView @JvmOverloads constructor(
             }
         }
         if (l <= r) selBounds.set(l, t, r, b) else selBounds.setEmpty()
+    }
+
+    /**
+     * 대상 선택: 쪽 좌표 (x, y)에 닿는 맨 위의 것 (획·글·테이프, 없으면 그림).
+     * 필기와 글은 그림 위에 그려지므로 먼저 본다. 가는 획도 고르기 쉽게 손가락 폭만큼 여유를 둔다
+     */
+    private fun objectAt(page: Int, x: Float, y: Float): Stroke? {
+        val list = ink?.pages?.getOrNull(page) ?: return null
+        val tol = TAP_SELECT_DP * density / scale
+        list.lastOrNull { st ->
+            when {
+                st.image != null -> false
+                st.isBox -> st.count >= 4 && boxContains(st, x, y)
+                st.tool == Tool.TAPE && st.tapeContains(x, y) -> true
+                else -> strokeNear(st, x, y, tol)
+            }
+        }?.let { return it }
+        return list.lastOrNull { it.image != null && it.count >= 4 && boxContains(it, x, y) }
+    }
+
+    private fun boxContains(st: Stroke, x: Float, y: Float): Boolean {
+        var inside = false
+        var j = 3
+        for (i in 0 until 4) {
+            val xi = st.x(i); val yi = st.y(i); val xj = st.x(j); val yj = st.y(j)
+            if ((yi > y) != (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside
+            j = i
+        }
+        return inside
+    }
+
+    /** 획의 선에서 굵기 절반 + [tol] 안인지 */
+    private fun strokeNear(st: Stroke, x: Float, y: Float, tol: Float): Boolean {
+        if (st.count == 0) return false
+        val r = st.halfWidth + tol
+        if (st.count == 1) return hypot(st.x(0) - x, st.y(0) - y) <= r
+        for (k in 1 until st.count) {
+            val ax = st.x(k - 1); val ay = st.y(k - 1)
+            val dx = st.x(k) - ax; val dy = st.y(k) - ay
+            val len2 = dx * dx + dy * dy
+            val t = if (len2 == 0f) 0f else (((x - ax) * dx + (y - ay) * dy) / len2).coerceIn(0f, 1f)
+            if (hypot(ax + dx * t - x, ay + dy * t - y) <= r) return true
+        }
+        return false
     }
 
     /** 쪽 좌표 (x, y)를 덮고 있는 맨 위 그림·글 ([textOnly]면 글만) */
@@ -2312,6 +2433,7 @@ class DocumentView @JvmOverloads constructor(
         moveDx = 0f
         moveDy = 0f
         scaleK = 1f
+        scaleKy = 1f
         invalidate()
     }
 
@@ -2390,6 +2512,8 @@ class DocumentView @JvmOverloads constructor(
         /** 크기 조절 손잡이 반지름(그리기)과 누르는 범위 */
         private const val HANDLE_DP = 7f
         private const val HANDLE_TOUCH_DP = 24f
+        /** 대상 선택: 획에서 이만큼(dp) 떨어져 눌러도 고른다 */
+        private const val TAP_SELECT_DP = 12f
         /** 글 도구: 이보다 많이 움직이면 톡 누르기가 아니다 (dp) */
         private const val TAP_SLOP_DP = 12f
         /** 테이프를 톡 누른 것으로 보는 시간 (ms) */

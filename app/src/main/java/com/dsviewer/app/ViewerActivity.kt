@@ -155,6 +155,24 @@ class ViewerActivity : AppCompatActivity() {
 
     private enum class ImageImportMode { IN_PAGE, NEW_PAGE }
 
+    /** 다른 앱 화면 가져오기: 찍은 화면을 넣을 탭과 자리 (시작할 때 보던 쪽 다음) */
+    private var captureTab: DocTab? = null
+    private var captureIndex = 0
+
+    /** '다른 앱 위에 표시' 권한 설정에서 돌아오면 이어서 화면 전송 허락을 묻는다 */
+    private val overlayPermission = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        if (android.provider.Settings.canDrawOverlays(this)) requestProjection()
+        else toast("'다른 앱 위에 표시'를 허용해야 화면을 가져올 수 있습니다.")
+    }
+
+    private val projectionConsent = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+        val data = r.data
+        if (r.resultCode != RESULT_OK || data == null) { captureTab = null; return@registerForActivityResult }
+        CaptureService.start(this, r.resultCode, data)
+        // 뷰어를 뒤로 보내 바로 전에 쓰던 앱이 보이게 한다
+        moveTaskToBack(true)
+    }
+
     private val backCallback = object : OnBackPressedCallback(true) {
         override fun handleOnBackPressed() = goBack()
     }
@@ -256,6 +274,11 @@ class ViewerActivity : AppCompatActivity() {
 
     /** 인텐트의 문서를 탭으로 연다. 열 문서가 없으면 false (탐색기에서 '뷰어로 돌아가기'만 한 경우) */
     private fun handleIntent(intent: Intent): Boolean {
+        intent.getStringExtra(EXTRA_CAPTURE)?.let { path ->
+            intent.removeExtra(EXTRA_CAPTURE)
+            insertCapturedPage(File(path))
+            return true
+        }
         if (intent.getBooleanExtra(EXTRA_FROM_BROWSER, false)) fromBrowser = true
         val uri = if (intent.action == Intent.ACTION_SEND)
             IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
@@ -271,6 +294,7 @@ class ViewerActivity : AppCompatActivity() {
         super.onDestroy()
         docs.forEach { it.pdf?.close() }
         openTabs = 0
+        if (isFinishing) CaptureService.stop(this)
     }
 
     // ================= 탭 =================
@@ -1013,7 +1037,8 @@ class ViewerActivity : AppCompatActivity() {
     private fun showInsertMenu(anchor: View) {
         val popup = PopupMenu(this, anchor)
         popup.menu.add(0, 1, 0, "그림을 현재 쪽에 넣기").setIcon(R.drawable.ic_image)
-        popup.menu.add(0, 3, 1, "스크린샷/그림을 새 쪽으로").setIcon(R.drawable.ic_image)
+        popup.menu.add(0, 3, 1, "그림을 새 쪽으로").setIcon(R.drawable.ic_image)
+        popup.menu.add(0, 4, 1, "다른 앱 화면 가져오기").setIcon(R.drawable.ic_screen_capture)
         // PDF ▸ 넣을 자리
         val page = docView.currentPage().coerceAtLeast(0) + 1
         val pdf = popup.menu.addSubMenu(0, 2, 1, "PDF")
@@ -1030,6 +1055,7 @@ class ViewerActivity : AppCompatActivity() {
                 else -> null
             }
             when {
+                item.itemId == 4 -> startScreenCapture()
                 item.itemId == 1 || item.itemId == 3 -> {
                     imageImportMode = if (item.itemId == 3) ImageImportMode.NEW_PAGE else ImageImportMode.IN_PAGE
                     pickImage.launch("image/*")
@@ -1110,33 +1136,86 @@ class ViewerActivity : AppCompatActivity() {
         }
     }
 
-    /** 고른 스크린샷/그림을 한 쪽짜리 PDF로 만들어 현재 쪽 뒤에 넣는다. */
+    /** 고른 그림을 한 쪽짜리 PDF로 만들어 현재 쪽 뒤에 넣는다. */
     private fun insertImagePageFrom(uri: Uri) {
         val t = current ?: return
         val d = t.pdf ?: return
-        val inkDoc = t.ink ?: return
-        if (t.pagesBusy) return
         val index = docView.currentPage().coerceIn(0, d.pageCount - 1) + 1
+        insertImagePage(t, index, "그림") {
+            val name = FileUtil.displayName(this@ViewerActivity, uri)
+            val source = FileUtil.copyToCache(this@ViewerActivity, uri, name)
+            val mime = contentResolver.getType(uri).orEmpty()
+            Pair(source, Pair(mime == "image/jpeg", mime != "image/png"))
+        }
+    }
+
+    // ================= 다른 앱 화면 가져오기 =================
+
+    /** 화면 전송 허락을 받고 떠 있는 캡처 단추를 띄운다. 처음엔 '다른 앱 위에 표시' 권한부터 */
+    private fun startScreenCapture() {
+        val t = current ?: return
+        val d = t.pdf ?: return
+        if (t.pagesBusy) return
+        captureTab = t
+        captureIndex = docView.currentPage().coerceIn(0, d.pageCount - 1) + 1
+        if (android.provider.Settings.canDrawOverlays(this)) { requestProjection(); return }
+        MaterialAlertDialogBuilder(this)
+            .setTitle("다른 앱 화면 가져오기")
+            .setMessage("다른 앱 위에 캡처 단추를 띄우려면 'DSnote'의 '다른 앱 위에 표시'를 허용해 주세요.\n허용한 뒤 뒤로 가기를 누르면 이어서 진행합니다.")
+            .setPositiveButton("설정 열기") { _, _ ->
+                val pkg = Uri.parse("package:$packageName")
+                runCatching { overlayPermission.launch(Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkg)) }
+                    .recoverCatching { overlayPermission.launch(Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION)) }
+                    .onFailure { toast("이 기기에서는 권한 설정 화면을 열 수 없습니다.") }
+            }
+            .setNegativeButton("취소") { _, _ -> captureTab = null }
+            .show()
+    }
+
+    private fun requestProjection() {
+        if (CaptureService.running) { moveTaskToBack(true); return }
+        val mpm = getSystemService(android.media.projection.MediaProjectionManager::class.java)
+        // 안드로이드 14부터는 '앱 하나만'도 고를 수 있는데, 앱을 오가며 찍어야 하므로 화면 전체로 받는다
+        val consent = if (android.os.Build.VERSION.SDK_INT >= 34)
+            mpm.createScreenCaptureIntent(android.media.projection.MediaProjectionConfig.createConfigForDefaultDisplay())
+        else mpm.createScreenCaptureIntent()
+        runCatching { projectionConsent.launch(consent) }.onFailure { toast("이 기기에서는 화면을 가져올 수 없습니다.") }
+    }
+
+    /** 떠 있는 단추로 찍어 온 화면을 시작할 때 보던 쪽 다음에 넣는다 */
+    private fun insertCapturedPage(png: File) {
+        val t = captureTab?.takeIf { it in docs } ?: current ?: return
+        captureTab = null
+        val d = t.pdf ?: return
+        if (t !== current) docTabs.select(docs.indexOf(t), notify = true)
+        val index = captureIndex.coerceIn(0, d.pageCount)
+        insertImagePage(t, index, "화면") { Pair(png, Pair(false, false)) }
+    }
+
+    /**
+     * 그림 한 장을 한 쪽짜리 PDF로 만들어 [index] 자리에 넣는다.
+     * [prepare]는 IO 스레드에서 (그림 파일, (JPEG인가, 사진인가))를 돌려준다.
+     */
+    private fun insertImagePage(t: DocTab, index: Int, what: String, prepare: () -> Pair<File, Pair<Boolean, Boolean>>) {
+        if (t.pagesBusy) return
         lifecycleScope.launch {
             progress.visibility = View.VISIBLE
             try {
                 val imagePdf = withContext(Dispatchers.IO) {
-                    val name = FileUtil.displayName(this@ViewerActivity, uri)
-                    val source = FileUtil.copyToCache(this@ViewerActivity, uri, name)
+                    val (source, kind) = prepare()
                     val output = FileUtil.tempFile(this@ViewerActivity, "image_page", "pdf")
-                    val mime = contentResolver.getType(uri).orEmpty()
-                    ImagePdf.make(source, output, isJpeg = mime == "image/jpeg", photo = mime != "image/png")
+                    ImagePdf.make(source, output, isJpeg = kind.first, photo = kind.second)
                     output
                 }
                 if (current !== t) return@launch
                 editPages(t, { src, out -> PdfPages.insertPdf(src, out, index, imagePdf) },
-                    onDone = { toast("스크린샷을 ${index + 1}쪽으로 넣었습니다. 바로 필기할 수 있어요.") }) { pages ->
+                    onDone = { toast("${what}을 ${index + 1}쪽으로 넣었습니다. 바로 필기할 수 있어요.") }) { pages ->
                     pages.add(index, mutableListOf())
                     index
                 }
             } catch (e: Exception) {
                 MaterialAlertDialogBuilder(this@ViewerActivity)
-                    .setMessage("스크린샷을 새 쪽으로 넣지 못했습니다.\n${e.message ?: e.javaClass.simpleName}")
+                    .setMessage("${what}을 새 쪽으로 넣지 못했습니다.\n${e.message ?: e.javaClass.simpleName}")
                     .setPositiveButton("확인", null)
                     .show()
             } finally {
@@ -1707,8 +1786,10 @@ class ViewerActivity : AppCompatActivity() {
         }
         pasteButton.setOnClickListener { docView.pasteClipboard() }
 
-        // 자유 선택 / 네모 선택 (고르는 곳은 옵션 줄)
-        docView.lassoRect = prefs.getBoolean("lassoRect", false)
+        // 자유 선택 / 네모 선택 / 대상 선택 (고르는 곳은 옵션 줄)
+        val lassoMode = prefs.getInt("lassoMode", if (prefs.getBoolean("lassoRect", false)) 1 else 0)
+        docView.lassoRect = lassoMode == 1
+        docView.lassoTap = lassoMode == 2
     }
 
     // ================= 글 넣기 =================
@@ -2172,11 +2253,14 @@ class ViewerActivity : AppCompatActivity() {
         button.contentDescription = (if (area) "영역 지우개" else "획 지우개") + if (docView.eraseHlOnly) " (형광펜만)" else ""
     }
 
-    /** 선택 버튼: 자유 선택이면 올가미, 네모 선택이면 점선 네모 */
+    /** 선택 버튼: 자유 선택이면 올가미, 네모 선택이면 점선 네모, 대상 선택이면 손가락 */
     private fun updateLassoIcon() {
         val button = toolButtons.getValue(Tool.LASSO)
-        button.setImageResource(if (docView.lassoRect) R.drawable.ic_select_rect else R.drawable.ic_lasso)
-        button.contentDescription = if (docView.lassoRect) "네모 선택" else "자유 선택"
+        when {
+            docView.lassoTap -> { button.setImageResource(R.drawable.ic_select_tap); button.contentDescription = "대상 선택" }
+            docView.lassoRect -> { button.setImageResource(R.drawable.ic_select_rect); button.contentDescription = "네모 선택" }
+            else -> { button.setImageResource(R.drawable.ic_lasso); button.contentDescription = "자유 선택" }
+        }
     }
 
     private fun showOptionBar(t: Tool) {
@@ -2316,9 +2400,11 @@ class ViewerActivity : AppCompatActivity() {
         updateToolMarks()
     }
 
-    private fun setLassoRect(rect: Boolean) {
-        docView.lassoRect = rect
-        prefs.edit().putBoolean("lassoRect", rect).apply()
+    /** 선택 방식: 0 자유 선택, 1 네모 선택, 2 대상 선택 */
+    private fun setLassoMode(mode: Int) {
+        docView.lassoRect = mode == 1
+        docView.lassoTap = mode == 2
+        prefs.edit().putInt("lassoMode", mode).apply()
         updateLassoIcon()
     }
 
@@ -2479,9 +2565,10 @@ class ViewerActivity : AppCompatActivity() {
                 item(R.drawable.ic_ruler, "직선 형광펜", docView.hlStraight),
             )) { i -> setHlStraight(i == 1) }
             Tool.LASSO -> showFlyout(anchor, listOf(
-                item(R.drawable.ic_lasso, "자유 선택", !docView.lassoRect),
+                item(R.drawable.ic_lasso, "자유 선택", !docView.lassoRect && !docView.lassoTap),
                 item(R.drawable.ic_select_rect, "네모 선택", docView.lassoRect),
-            )) { i -> setLassoRect(i == 1) }
+                item(R.drawable.ic_select_tap, "대상 선택", docView.lassoTap),
+            )) { i -> setLassoMode(i) }
             Tool.LASER -> {
                 // 레이저가 사라지는 시간 (색·굵기는 툴바)
                 val secs = intArrayOf(1, 2, 3, 5)
@@ -3145,6 +3232,8 @@ class ViewerActivity : AppCompatActivity() {
         const val EXTRA_FROM_BROWSER = "fromBrowser"
         /** 탐색기의 '새 노트'로 만든 빈 문서 (처음 저장할 때 저장 위치를 고른다) */
         const val EXTRA_NEW_NOTE = "newNote"
+        /** 다른 앱 화면 가져오기로 찍은 PNG 경로 (새 쪽으로 넣는다) */
+        const val EXTRA_CAPTURE = "capture"
         private const val MAX_TABS = 6
         /** 이미지로 저장할 때 해상도 */
         private const val EXPORT_DPI = 150f

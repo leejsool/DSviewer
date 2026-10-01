@@ -10,6 +10,11 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="29" />
 
+    <!-- 다른 앱 화면 가져오기: 다른 앱 위의 캡처 단추, 화면 전송 서비스 -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+
     <application
         android:name=".App"
         android:requestLegacyExternalStorage="true"
@@ -78,6 +83,11 @@
                 <data android:mimeType="image/*" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".CaptureService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
 
         <!-- 파일 탐색기의 '공유': 기기 저장소의 문서를 다른 앱에 넘긴다 -->
         <provider

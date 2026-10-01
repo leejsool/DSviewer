@@ -361,6 +361,25 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
         version++
     }
 
+    /**
+     * (ax, ay)를 기준으로 가로 kx배, 세로 ky배 늘인다 (위아래로만·옆으로만 키우기).
+     * 펜 굵기와 테이프 구멍은 덜 늘어난 쪽을 따라 바꿔, 길게 늘여도 획이 뭉뚝해지지 않게 한다
+     */
+    fun scaleXY(kx: Float, ky: Float, ax: Float, ay: Float) {
+        for (i in 0 until count) {
+            data[i * 3] = ax + (data[i * 3] - ax) * kx
+            data[i * 3 + 1] = ay + (data[i * 3 + 1] - ay) * ky
+        }
+        val k = min(kx, ky)
+        for (i in holes.indices step 3) {
+            holes[i] = ax + (holes[i] - ax) * kx
+            holes[i + 1] = ay + (holes[i + 1] - ay) * ky
+            holes[i + 2] *= k
+        }
+        width *= k
+        version++
+    }
+
     /** (cx, cy)를 중심으로 deg도 돌린다 (화면 기준 시계 방향이 +) */
     fun rotate(deg: Float, cx: Float, cy: Float) {
         val r = Math.toRadians(deg.toDouble())
