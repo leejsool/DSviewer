@@ -1,6 +1,33 @@
 <resources>
-    <style name="Theme.DSViewer" parent="Theme.Material3.DayNight.NoActionBar">
+    <!-- 기기의 다크 모드와 상관없이 늘 밝은 파스텔 톤 (전자칠판처럼 까만 테마인 기기에서도 같은 색) -->
+    <style name="Theme.DSViewer" parent="Theme.Material3.Light.NoActionBar">
         <item name="colorPrimary">@color/brand</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="colorPrimaryContainer">#D8E6FB</item>
+        <item name="colorOnPrimaryContainer">#1B3557</item>
+        <item name="colorSecondary">#6A6A8E</item>
+        <item name="colorOnSecondary">#FFFFFF</item>
+        <item name="colorSecondaryContainer">#E2DDF6</item>
+        <item name="colorOnSecondaryContainer">#2E2A4A</item>
+        <item name="colorTertiary">#8E5F6E</item>
+        <item name="colorOnTertiary">#FFFFFF</item>
+        <item name="colorTertiaryContainer">#FBDDE5</item>
+        <item name="colorOnTertiaryContainer">#47232F</item>
+        <item name="android:colorBackground">#F7F9FD</item>
+        <item name="colorOnBackground">#1F2733</item>
+        <item name="colorSurface">#F9FBFE</item>
+        <item name="colorOnSurface">#1F2733</item>
+        <item name="colorSurfaceVariant">#E3EAF4</item>
+        <item name="colorOnSurfaceVariant">#3E4A5C</item>
+        <item name="colorSurfaceContainerLowest">#FFFFFF</item>
+        <item name="colorSurfaceContainerLow">#F3F6FC</item>
+        <item name="colorSurfaceContainer">#EDF2FA</item>
+        <item name="colorSurfaceContainerHigh">#E6EDF7</item>
+        <item name="colorSurfaceContainerHighest">#DFE7F3</item>
+        <item name="colorOutline">#8A94A6</item>
+        <item name="colorOutlineVariant">#C9D3E2</item>
+        <item name="colorControlNormal">#3E4A5C</item>
+        <item name="android:forceDarkAllowed">false</item>
     </style>
 
     <!-- 뷰어 탭 줄 오른쪽의 작은 아이콘 버튼 (아이콘 20dp) -->
