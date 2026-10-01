@@ -80,7 +80,7 @@ class ViewerActivity : AppCompatActivity() {
     private lateinit var undoButton: View
     private lateinit var redoButton: View
     private lateinit var saveButton: View
-    private lateinit var overviewButton: View
+    private lateinit var overviewButton: ImageButton
     private lateinit var insertButton: View
     private lateinit var overview: PagePanel
     private lateinit var pagePanel: PagePanel
@@ -543,6 +543,7 @@ class ViewerActivity : AppCompatActivity() {
         redoButton.setEnabledAlpha(inkDoc?.canRedo == true)
         saveButton.setEnabledAlpha(inkDoc != null)
         overviewButton.setEnabledAlpha(inkDoc != null)
+        overviewButton.setActive(overview.isShowing)
         insertButton.setEnabledAlpha(inkDoc != null)
         pagesButton.setActive(pagePanel.isShowing)
         twoPageButton.setActive(docView.twoPage)
@@ -937,13 +938,17 @@ class ViewerActivity : AppCompatActivity() {
         toast(if (on) "읽기 모드: 필기하지 않고 넘겨 보기만 합니다." else "읽기 모드를 끝냈습니다.")
     }
 
-    /** 전체 화면: 탭 줄·상태 표시줄·페이지 관리 창을 숨겨 필기할 자리를 넓힌다. 오른쪽 위 단추나 뒤로 가기로 끝낸다 */
+    /**
+     * 전체 화면: 탭 줄·상태 표시줄·페이지 관리 창을 숨겨 필기할 자리를 넓힌다. 오른쪽 위 단추나 뒤로 가기로 끝낸다.
+     * 상태 표시줄의 시계 대신 왼쪽 위에 지금 시각을 띄운다
+     */
     private fun setFullscreen(on: Boolean) {
         if (fullscreen == on) return
         fullscreen = on
         overview.hide()
         findViewById<View>(R.id.tabRow).visibility = if (on) View.GONE else View.VISIBLE
         exitFullscreenButton.visibility = if (on) View.VISIBLE else View.GONE
+        findViewById<View>(R.id.fullscreenClock).visibility = if (on) View.VISIBLE else View.GONE
         val ctl = WindowCompat.getInsetsController(window, window.decorView)
         if (on) {
             // 가장자리에서 밀면 잠깐 나타났다 사라진다
@@ -1127,6 +1132,7 @@ class ViewerActivity : AppCompatActivity() {
             syncPagePanel()
         }
         overview.show(d, inkDoc, docView.currentPage().coerceAtLeast(0))
+        updateActions()
     }
 
     // ================= 쪽 이동 =================

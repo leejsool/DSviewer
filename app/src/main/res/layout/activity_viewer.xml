@@ -289,6 +289,24 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
+        <!-- 전체 화면일 때만 보이는 지금 시각 (상태 표시줄을 숨겨도 시간을 볼 수 있게. 기기의 12/24시간 설정을 따른다) -->
+        <TextClock
+            android:id="@+id/fullscreenClock"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top|start"
+            android:layout_margin="10dp"
+            android:alpha="0.75"
+            android:background="@drawable/bg_pill"
+            android:format12Hour="h:mm"
+            android:format24Hour="H:mm"
+            android:paddingHorizontal="12dp"
+            android:paddingVertical="5dp"
+            android:textColor="#FFFFFF"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
         <!-- 전체 화면일 때만 보이는 '전체 화면 끝내기' 단추 -->
         <ImageButton
             android:id="@+id/exitFullscreen"
