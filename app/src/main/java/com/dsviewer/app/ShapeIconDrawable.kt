@@ -21,11 +21,21 @@ import kotlin.math.tan
  * 보정 펜 도형 줄의 아이콘: 도형 종류마다 그 모양을 작게 그린다 (이차는 아래로 볼록한 포물선 등).
  * 24 × 24 칸 좌표로 그린다.
  */
-class ShapeIconDrawable(ctx: Context, private val kind: ShapeKind) : Drawable() {
+class ShapeIconDrawable(ctx: Context, private val kind: ShapeKind, private val dashed: Boolean = false) : Drawable() {
 
     private val size = (24 * ctx.resources.displayMetrics.density).toInt()
     private val color = MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorOnSurface, 0xFF1C1B1F.toInt())
     private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 1.8f
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+        this.color = this@ShapeIconDrawable.color
+        // 보조선(화살표·길이 표시)을 점선으로 고른 때
+        if (dashed) pathEffect = DashPathEffect(floatArrayOf(2.4f, 2f), 0f)
+    }
+    /** 화살촉 (몸통이 점선이어도 실선) */
+    private val solid = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = 1.8f
         strokeCap = Paint.Cap.ROUND
@@ -50,6 +60,40 @@ class ShapeIconDrawable(ctx: Context, private val kind: ShapeKind) : Drawable() 
         canvas.translate(b.left.toFloat(), b.top.toFloat())
         canvas.scale(b.width() / 24f, b.height() / 24f)
         when (kind) {
+            ShapeKind.ARROW -> {
+                canvas.drawLine(4f, 19f, 19.5f, 6.5f, line)
+                head(canvas, 19.5f, 6.5f, 15.5f, -12.5f)
+            }
+            // 위로 볼록하게 휜 화살표
+            ShapeKind.ARROW_CURVE -> {
+                val p = Path()
+                p.moveTo(3f, 19f)
+                p.quadTo(7f, 3f, 20.5f, 9f)
+                canvas.drawPath(p, line)
+                head(canvas, 20.5f, 9f, 13.5f, 6f)
+            }
+            // 곧게 가다 고리를 한 번 감는 선
+            ShapeKind.ARROW_PIGTAIL -> {
+                val pts = ShapeGuides.pigtailPoints(2.5, 16.0, 21.5, 16.0, 0.5, 3.6, -1.0)
+                val p = Path()
+                for (i in 0 until pts.size / 2) {
+                    val x = pts[i * 2].toFloat()
+                    val y = pts[i * 2 + 1].toFloat()
+                    if (i == 0) p.moveTo(x, y) else p.lineTo(x, y)
+                }
+                canvas.drawPath(p, line)
+                head(canvas, 21.5f, 16f, 1f, 0f)
+            }
+            // 선분(옅게)과 그 위에 가운데를 비운 호
+            ShapeKind.LENGTH_MARK -> {
+                canvas.drawLine(3f, 18.5f, 21f, 18.5f, guide)
+                canvas.drawCircle(3f, 18.5f, 1.3f, dot)
+                canvas.drawCircle(21f, 18.5f, 1.3f, dot)
+                val oval = RectF(3f, 7.5f, 21f, 29.5f)
+                // 호의 양 끝은 선분 끝 (중심 (12, 18.5) 위 둥근 지붕), 가운데 40°쯤 비움
+                canvas.drawArc(oval, 180f, 70f, false, line)
+                canvas.drawArc(oval, 290f, 70f, false, line)
+            }
             ShapeKind.LINE -> canvas.drawLine(4f, 19f, 20f, 5f, line)
             // 아래로 볼록한 포물선
             ShapeKind.QUADRATIC -> plot(canvas, -1f, 1f) { it * it }
@@ -188,6 +232,16 @@ class ShapeIconDrawable(ctx: Context, private val kind: ShapeKind) : Drawable() 
             if (i == 0) p.moveTo(x, y) else p.lineTo(x, y)
         }
         canvas.drawPath(p, line)
+    }
+
+    /** (tx, ty)가 끝이고 (dx, dy) 쪽을 가리키는 열린 화살촉 */
+    private fun head(canvas: Canvas, tx: Float, ty: Float, dx: Float, dy: Float) {
+        val h = ShapeGuides.headAt(tx.toDouble(), ty.toDouble(), dx.toDouble(), dy.toDouble(), 5.0)
+        val p = Path()
+        p.moveTo(h[0], h[1])
+        p.lineTo(h[2], h[3])
+        p.lineTo(h[4], h[5])
+        canvas.drawPath(p, solid)
     }
 
     private fun poly(canvas: Canvas, vararg xy: Float) {

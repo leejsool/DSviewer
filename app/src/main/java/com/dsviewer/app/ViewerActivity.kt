@@ -1016,6 +1016,7 @@ class ViewerActivity : AppCompatActivity() {
                 R.id.action_insert_grid -> insertBlankPage(Paper.GRID)
                 R.id.action_insert_lined -> insertBlankPage(Paper.LINED)
                 R.id.action_delete_page -> askDeletePages()
+                R.id.action_toolbar_options -> showToolVisibilityDialog()
                 R.id.action_finger -> {
                     docView.fingerDrawing = !docView.fingerDrawing
                     prefs.edit().putBoolean("finger", docView.fingerDrawing).apply()
@@ -1967,6 +1968,7 @@ class ViewerActivity : AppCompatActivity() {
         val v = dock.side.vertical
         val d = resources.displayMetrics.density
         dock.fit(row)
+        row.gravity = android.view.Gravity.CENTER
         row.setPadding(((if (v) 4 else 8) * d).toInt(), ((if (v) 8 else 4) * d).toInt(),
             ((if (v) 4 else 8) * d).toInt(), ((if (v) 8 else 4) * d).toInt())
         // 세로 줄은 칸이 좁아 글을 줄여 두 줄로
@@ -2147,18 +2149,64 @@ class ViewerActivity : AppCompatActivity() {
             handle = findViewById(R.id.toolbarHandle),
             scrollH = findViewById(R.id.toolScrollH),
             content = findViewById(R.id.toolContent),
-        ) { side ->
-            placeOverlays(side)
-            prefs.edit().putString("toolbarSide", side.name).apply()
-        }
+            onDocked = { side ->
+                placeOverlays(side)
+                prefs.edit().putString("toolbarSide", side.name).apply()
+            },
+            onTap = { showToolVisibilityDialog() },
+        )
         val saved = prefs.getString("toolbarSide", null)
         dock.dock(ToolbarSide.entries.firstOrNull { it.name == saved } ?: ToolbarSide.BOTTOM)
+    }
+
+    // ================= 툴바에 보일 도구 =================
+    // 툴바 손잡이를 톡 누르거나 ⋮ 메뉴 '툴바 옵션'에서 도구마다 보이기·숨기기 (prefs hiddenTools)
+
+    /** 툴바 도구 차례와 이름 (보이기·숨기기 창) */
+    private val toolNames = listOf(
+        Tool.PEN to "펜", Tool.SHAPE to "보정 펜", Tool.HIGHLIGHTER to "형광펜", Tool.TAPE to "테이프",
+        Tool.TEXT to "글 넣기", Tool.ERASER to "지우개", Tool.LASSO to "선택", Tool.LASER to "레이저 포인터",
+    )
+
+    private fun hiddenTools(): Set<Tool> =
+        prefs.getString("hiddenTools", null)?.split(',')?.mapNotNull { n -> Tool.entries.firstOrNull { it.name == n } }?.toSet()
+            ?: emptySet()
+
+    /** 숨긴 도구 버튼을 감춘다. 쓰던 도구를 숨겼으면 보이는 첫 도구로 */
+    private fun applyToolVisibility() {
+        val hidden = hiddenTools()
+        toolButtons.forEach { (t, b) -> b.visibility = if (t in hidden) View.GONE else View.VISIBLE }
+        if (docView.tool in hidden) toolNames.firstOrNull { it.first !in hidden }?.let { selectTool(it.first) }
+    }
+
+    private fun showToolVisibilityDialog() {
+        val hidden = hiddenTools().toMutableSet()
+        val checked = BooleanArray(toolNames.size) { toolNames[it].first !in hidden }
+        MaterialAlertDialogBuilder(this)
+            .setTitle("툴바에 보일 도구")
+            .setMultiChoiceItems(toolNames.map { it.second }.toTypedArray(), checked) { d, which, on ->
+                val t = toolNames[which].first
+                if (!on && toolNames.count { it.first !in hidden } <= 1) {
+                    // 도구가 하나도 없으면 쓸 수 없으니 마지막 하나는 남긴다
+                    (d as androidx.appcompat.app.AlertDialog).listView.setItemChecked(which, true)
+                    checked[which] = true
+                    toast("도구를 하나는 남겨 두어야 합니다.")
+                    return@setMultiChoiceItems
+                }
+                if (on) hidden.remove(t) else hidden.add(t)
+                prefs.edit().putString("hiddenTools", hidden.joinToString(",") { it.name }).apply()
+                applyToolVisibility()
+            }
+            .setPositiveButton("닫기", null)
+            .show()
     }
 
     /** 세로 툴바 옆에 붙는 줄(서식·도형·옵션)을 담는 세로 스크롤 */
     private fun sideScroll() = android.widget.ScrollView(this).apply {
         setBackgroundColor(MaterialColors.getColor(shapeBar, com.google.android.material.R.attr.colorSurfaceContainer))
         isVerticalScrollBarEnabled = false
+        // 칸이 적으면 세로 줄 가운데에
+        isFillViewport = true
         visibility = View.GONE
     }
 
@@ -2202,7 +2250,8 @@ class ViewerActivity : AppCompatActivity() {
         // 도형 줄·옵션 줄: 가로면 칸이 옆으로, 세로면 아래로 늘어선다. 가로 줄은 툴바에서 먼 쪽에 여백을 조금 더
         for (row in listOf(shapeRow, optionRow)) {
             row.orientation = if (v) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
-            row.gravity = if (v) android.view.Gravity.CENTER_HORIZONTAL else android.view.Gravity.CENTER_VERTICAL
+            // 칸이 적어 줄이 남으면 툴바처럼 가운데에 모은다
+            row.gravity = android.view.Gravity.CENTER
             if (v) row.setPadding(px(4), px(8), px(4), px(8))
             else row.setPadding(px(8), px(if (top) 2 else 6), px(8), px(if (top) 6 else 2))
         }
@@ -2928,6 +2977,7 @@ class ViewerActivity : AppCompatActivity() {
             }
         }
         selectTool(Tool.PEN)
+        applyToolVisibility()
     }
 
     private fun selectTool(t: Tool) {
@@ -2944,6 +2994,8 @@ class ViewerActivity : AppCompatActivity() {
 
     /** 펼쳐 고르는 무리: 칸에는 지금 고른 종류가 보이고, 누르면 펼쳐진다 */
     private val shapeFamilies = mapOf(
+        // 보조선 화살표: 직선·곡선·돼지꼬리
+        ShapeKind.ARROW to listOf(ShapeKind.ARROW, ShapeKind.ARROW_CURVE, ShapeKind.ARROW_PIGTAIL),
         // 다항: 직선(일차)·이차·삼차·사차
         ShapeKind.LINE to listOf(ShapeKind.LINE, ShapeKind.QUADRATIC, ShapeKind.CUBIC, ShapeKind.QUARTIC),
         ShapeKind.CIRCLE to listOf(ShapeKind.CIRCLE, ShapeKind.CIRCLE_CR, ShapeKind.ELLIPSE, ShapeKind.SECTOR, ShapeKind.SEMICIRCLE),
@@ -2957,6 +3009,7 @@ class ViewerActivity : AppCompatActivity() {
         ),
     )
     private val shapeOrder = listOf(
+        "화살표" to ShapeKind.ARROW, "길이 표시" to ShapeKind.LENGTH_MARK,
         "다항" to ShapeKind.LINE, "원" to ShapeKind.CIRCLE, "쌍곡선" to ShapeKind.HYPERBOLA,
         "삼각형" to ShapeKind.TRIANGLE, "사각형" to ShapeKind.QUADRILATERAL,
         "지수·로그" to ShapeKind.EXP_LOG, "이차×지수" to ShapeKind.QUAD_EXP,
@@ -2971,12 +3024,14 @@ class ViewerActivity : AppCompatActivity() {
             ?.let { n -> if (n == "EXPONENTIAL" || n == "LOG") ShapeKind.EXP_LOG.name else n }
             ?.let { n -> ShapeKind.entries.firstOrNull { it.name == n } } ?: ShapeKind.LINE
         docView.shapeGuide = guideStyle(docView.shapeKind)
+        docView.shapeDashed = lineDashed(docView.shapeKind)
         buildShapeBar()
     }
 
     private fun selectShapeKind(kind: ShapeKind) {
         docView.shapeKind = kind
         docView.shapeGuide = guideStyle(kind)
+        docView.shapeDashed = lineDashed(kind)
         prefs.edit().putString("shapeKind", kind.name).apply()
         shapeFamilies.entries.firstOrNull { kind in it.value }?.let { shapeFamilyLast[it.key] = kind }
         buildShapeBar()
@@ -2994,13 +3049,20 @@ class ViewerActivity : AppCompatActivity() {
             }
             val selected = if (family != null) docView.shapeKind in family else docView.shapeKind == kind
             val text = when {
+                kind.isGuideLine -> "$label ▾"
                 family != null -> "${cur.label} ▾"
                 kind in GUIDE_KINDS -> "$label ▾"
                 else -> label
             }
             val index = shapeRow.childCount
-            shapeRow.addView(optionItem(ShapeIconDrawable(this, cur), text, selected) { v ->
+            shapeRow.addView(optionItem(ShapeIconDrawable(this, cur, kind.isGuideLine && lineDashed(kind)), text, selected) { v ->
                 when {
+                    // 보조선(화살표·길이 표시): 바로 고르고, 모양·실선/점선을 고르는 창
+                    kind.isGuideLine -> {
+                        selectShapeKind(cur)
+                        // 칸을 새로 만들었으니 자리가 잡힌 뒤에 그 옆에 띄운다
+                        shapeRow.post { showGuideLineFlyout(shapeRow.getChildAt(index) ?: v, family ?: listOf(kind)) }
+                    }
                     // 무리: 펼쳐서 하나 고른다
                     family != null -> showFlyout(v, family.map { k ->
                         Triple(ShapeIconDrawable(this, k), k.label, k == docView.shapeKind)
@@ -3013,6 +3075,37 @@ class ViewerActivity : AppCompatActivity() {
                     else -> selectShapeKind(kind)
                 }
             })
+        }
+    }
+
+    /** 화살표·길이 표시의 몸통이 점선인지 (화살표 셋은 함께, 길이 표시는 따로 기억) */
+    private fun lineDashed(kind: ShapeKind): Boolean {
+        if (!kind.isGuideLine) return false
+        return prefs.getBoolean("dashed_${lineGroup(kind).name}", false)
+    }
+
+    private fun lineGroup(kind: ShapeKind) = if (kind == ShapeKind.LENGTH_MARK) ShapeKind.LENGTH_MARK else ShapeKind.ARROW
+
+    /**
+     * 화살표·길이 표시 칸의 펼침 창: (화살표면) 직선·곡선·돼지꼬리, 그리고 실선·점선.
+     * 실선·점선 아이콘은 지금 고른 모양으로 보인다
+     */
+    private fun showGuideLineFlyout(anchor: View, kinds: List<ShapeKind>) {
+        val cur = docView.shapeKind
+        val dashed = lineDashed(cur)
+        val shapes = if (kinds.size > 1) kinds else emptyList()
+        val items = shapes.map { k -> Triple<android.graphics.drawable.Drawable, String, Boolean>(
+            ShapeIconDrawable(this, k, dashed), k.label.removeSuffix(" 화살표"), k == cur) } +
+            listOf(
+                Triple(ShapeIconDrawable(this, cur, false), "실선", !dashed),
+                Triple(ShapeIconDrawable(this, cur, true), "점선", dashed),
+            )
+        showFlyout(anchor, items) { i ->
+            if (i < shapes.size) selectShapeKind(shapes[i])
+            else {
+                prefs.edit().putBoolean("dashed_${lineGroup(cur).name}", i == shapes.size + 1).apply()
+                selectShapeKind(cur)
+            }
         }
     }
 

@@ -140,6 +140,8 @@ class DocumentView @JvmOverloads constructor(
     private var shapePreview: List<Stroke>? = null
     /** 보정 펜: 보조선(지수·로그·탄젠트·쌍곡선의 점근선, 사인·코사인의 축)을 그리는 방식 */
     var shapeGuide = GuideStyle.NONE
+    /** 보정 펜: 화살표·길이 표시의 몸통을 점선으로 (화살촉은 늘 실선) */
+    var shapeDashed = false
     /**
      * 미리 보기는 따로 도는 스레드에서 맞춘다 (무거운 도형도 필기가 멈추지 않도록).
      * 하나가 도는 동안 들어온 요청은 끝난 뒤 마지막 획으로 한 번만. 획이 바뀌면 shapeGen이 늘어 늦게 온 결과를 버린다
@@ -1821,10 +1823,11 @@ class DocumentView @JvmOverloads constructor(
         val gen = shapeGen
         val kind = shapeKind
         val guide = shapeGuide
+        val dashed = shapeDashed
         shapeFitting = true
         shapePending = false
         shapeWorker.execute {
-            val r = try { fitShape(copy, kind, guide, quick = true) } catch (e: Exception) { null }
+            val r = try { fitShape(copy, kind, guide, dashed, quick = true) } catch (e: Exception) { null }
             post {
                 shapeFitting = false
                 if (gen == shapeGen) {
@@ -1841,7 +1844,8 @@ class DocumentView @JvmOverloads constructor(
      * 쌍곡선은 두 가지, 보조선(점근선·축)을 켜 두었으면 그 획이 더 붙는다. quick은 그리는 동안의 미리 보기 (덜 다듬음)
      */
     private fun fitShape(
-        raw: Stroke, kind: ShapeKind = shapeKind, guide: GuideStyle = shapeGuide, quick: Boolean = false,
+        raw: Stroke, kind: ShapeKind = shapeKind, guide: GuideStyle = shapeGuide, dashed: Boolean = shapeDashed,
+        quick: Boolean = false,
     ): List<Stroke>? {
         val fitted = ShapeFit.fit(kind, raw, quick) ?: return null
         var pSum = 0f
@@ -1852,7 +1856,9 @@ class DocumentView @JvmOverloads constructor(
             Stroke(Tool.PEN, raw.color, raw.width, dashed, if (dashed) PenStyle.FELT else penStyle).apply {
             for (i in 0 until pts.size / 2) add(pts[i * 2], pts[i * 2 + 1], pAvg)
         }
-        val out = fitted.curves.map { toStroke(it, false) }.toMutableList()
+        // 화살표·길이 표시는 몸통을 고른 대로 실선·점선, 화살촉은 실선
+        val out = fitted.curves.map { toStroke(it, dashed && kind.isGuideLine) }.toMutableList()
+        fitted.heads.mapTo(out) { toStroke(it, false) }
         if (guide != GuideStyle.NONE) fitted.guides.mapTo(out) { toStroke(it, guide == GuideStyle.DASHED) }
         return out
     }

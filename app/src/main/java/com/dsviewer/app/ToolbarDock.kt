@@ -30,7 +30,7 @@ enum class ToolbarSide {
 }
 
 /**
- * 툴바 붙이기. 맨 앞 손잡이를 끌면 툴바 모양이 손가락을 따라오고,
+ * 툴바 붙이기 (손잡이를 톡 누르면 [onTap]). 맨 앞 손잡이를 끌면 툴바 모양이 손가락을 따라오고,
  * 위·아래·왼쪽·오른쪽 가장자리 가까이 가면 붙을 자리가 파랗게 보이며, 놓으면 그쪽에 착 붙는다.
  * 왼쪽·오른쪽에 붙이면 툴바를 세로로 세운다 (가로 스크롤 → 세로 스크롤, 안의 칸들의 가로·세로를 맞바꿈).
  *
@@ -46,6 +46,8 @@ class ToolbarDock(
     private val scrollH: HorizontalScrollView,
     private val content: LinearLayout,
     private val onDocked: (ToolbarSide) -> Unit,
+    /** 손잡이를 끌지 않고 톡 누름 (도구 보이기·숨기기 창) */
+    private val onTap: () -> Unit = {},
 ) {
     var side = ToolbarSide.BOTTOM
         private set
@@ -156,12 +158,40 @@ class ToolbarDock(
     private var target: ToolbarSide? = null
     private val rootLoc = IntArray(2)
 
+    /** 손잡이를 누른 자리 (조금 넘게 움직여야 끌기를 시작한다. 그 전에 떼면 톡 누름) */
+    private var downX = 0f
+    private var downY = 0f
+    private var dragging = false
+    private val slop = android.view.ViewConfiguration.get(root.context).scaledTouchSlop
+
     private fun onHandleTouch(ev: MotionEvent): Boolean {
         when (ev.actionMasked) {
-            MotionEvent.ACTION_DOWN -> startDrag(ev)
-            MotionEvent.ACTION_MOVE -> moveDrag(ev)
-            MotionEvent.ACTION_UP -> endDrag(drop = true)
-            MotionEvent.ACTION_CANCEL -> endDrag(drop = false)
+            MotionEvent.ACTION_DOWN -> {
+                downX = ev.rawX
+                downY = ev.rawY
+                dragging = false
+                handle.isPressed = true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (!dragging && kotlin.math.hypot(ev.rawX - downX, ev.rawY - downY) > slop) {
+                    dragging = true
+                    startDrag(ev)
+                } else if (dragging) moveDrag(ev)
+            }
+            MotionEvent.ACTION_UP -> {
+                handle.isPressed = false
+                if (dragging) endDrag(drop = true)
+                else {
+                    handle.playSoundEffect(android.view.SoundEffectConstants.CLICK)
+                    onTap()
+                }
+                dragging = false
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                handle.isPressed = false
+                if (dragging) endDrag(drop = false)
+                dragging = false
+            }
         }
         return true
     }

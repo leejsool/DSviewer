@@ -13,6 +13,14 @@ import kotlin.math.sqrt
 
 /** 보정 펜으로 그릴 수 있는 도형 */
 enum class ShapeKind(val label: String) {
+    /** 보조선: 끝에 화살촉. 직선 */
+    ARROW("직선 화살표"),
+    /** 부드러운 포물선(많이 휘면 3차 베지어) */
+    ARROW_CURVE("곡선 화살표"),
+    /** 가다가 고리를 한 번 감는 선 */
+    ARROW_PIGTAIL("돼지꼬리 화살표"),
+    /** 두 점을 잇는 원호, 가운데를 비워 길이를 쓴다 */
+    LENGTH_MARK("길이 표시"),
     LINE("직선"),
     QUADRATIC("이차"),
     CUBIC("삼차"),
@@ -43,14 +51,18 @@ enum class ShapeKind(val label: String) {
     QUAD_EXP("이차×지수"),
     SINE("사인·코사인"),
     /** 한 획에 한 가지 (점근선 사이) */
-    TANGENT("탄젠트"),
+    TANGENT("탄젠트");
+
+    /** 보조선(화살표·길이 표시): 실선·점선을 고를 수 있다 */
+    val isGuideLine get() = this == ARROW || this == ARROW_CURVE || this == ARROW_PIGTAIL || this == LENGTH_MARK
 }
 
 /**
  * 보정 결과: 곡선들(쌍곡선은 두 가지)과 보조선들 (좌표는 [x0, y0, x1, y1, ...]).
- * 보조선은 지수·로그·이차×지수·탄젠트·쌍곡선의 점근선, 사인·코사인의 축(가운데 가로선)
+ * 보조선은 지수·로그·이차×지수·탄젠트·쌍곡선의 점근선, 사인·코사인의 축(가운데 가로선).
+ * heads는 화살표의 화살촉 (몸통을 점선으로 그려도 늘 실선)
  */
-class Fitted(val curves: List<FloatArray>, val guides: List<FloatArray> = emptyList())
+class Fitted(val curves: List<FloatArray>, val guides: List<FloatArray> = emptyList(), val heads: List<FloatArray> = emptyList())
 
 /** 보조선(점근선·축)을 그리는 방식 */
 enum class GuideStyle { NONE, DASHED, SOLID }
@@ -74,6 +86,8 @@ object ShapeFit {
             ShapeKind.SEMICIRCLE -> return ShapeCurves.semicircle(p, quick)
             ShapeKind.SINE -> return ShapeCurves.sine(p)
             ShapeKind.TANGENT -> return ShapeCurves.tangent(p)
+            ShapeKind.ARROW, ShapeKind.ARROW_CURVE, ShapeKind.ARROW_PIGTAIL -> return ShapeGuides.arrow(kind, p, st.width)
+            ShapeKind.LENGTH_MARK -> return ShapeGuides.lengthMark(p)
             else -> {}
         }
         val one = when (kind) {
@@ -305,7 +319,7 @@ object ShapeFit {
     }
 
     /** 천천히 그린 곳에 점이 몰리지 않도록 길이 기준으로 고르게 다시 뽑는다 */
-    private fun resample(st: Stroke): Pair<DoubleArray, DoubleArray>? {
+    internal fun resample(st: Stroke): Pair<DoubleArray, DoubleArray>? {
         if (st.count < 3) return null
         var len = 0.0
         for (i in 1 until st.count) len += hypot((st.x(i) - st.x(i - 1)).toDouble(), (st.y(i) - st.y(i - 1)).toDouble())
@@ -336,7 +350,7 @@ object ShapeFit {
     }
 
     /** 주성분 방향의 직선. 수평·수직·45° 근처(4° 안)면 딱 맞춘다 */
-    private fun line(p: Pair<DoubleArray, DoubleArray>): FloatArray? {
+    internal fun line(p: Pair<DoubleArray, DoubleArray>): FloatArray? {
         val (xs, ys) = p
         val n = xs.size
         val mx = xs.average(); val my = ys.average()

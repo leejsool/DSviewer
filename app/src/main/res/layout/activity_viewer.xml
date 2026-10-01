@@ -169,6 +169,7 @@
                  툴바가 왼쪽·오른쪽이면 shapeRow를 코드에서 만든 세로 줄로 옮긴다 (ViewerActivity.placeOverlays) -->
             <HorizontalScrollView
                 android:id="@+id/shapeBar"
+                android:fillViewport="true"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:background="?attr/colorSurfaceContainer"
@@ -179,7 +180,7 @@
                     android:id="@+id/shapeRow"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
+                    android:gravity="center"
                     android:orientation="horizontal"
                     android:paddingHorizontal="8dp"
                     android:paddingTop="6dp"
@@ -190,6 +191,7 @@
                  툴바가 왼쪽·오른쪽이면 formatRow를 코드에서 만든 세로 줄로 옮긴다 (ViewerActivity.placeOverlays) -->
             <HorizontalScrollView
                 android:id="@+id/formatBar"
+                android:fillViewport="true"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:background="?attr/colorSurfaceContainer"
@@ -200,7 +202,7 @@
                     android:id="@+id/formatRow"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
+                    android:gravity="center"
                     android:orientation="horizontal"
                     android:paddingHorizontal="8dp"
                     android:paddingVertical="4dp" />
@@ -210,6 +212,7 @@
                  툴바가 왼쪽·오른쪽이면 toolOptions를 코드에서 만든 세로 줄로 옮긴다 -->
             <HorizontalScrollView
                 android:id="@+id/toolOptionBar"
+                android:fillViewport="true"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:background="?attr/colorSurfaceContainer"
@@ -220,7 +223,7 @@
                     android:id="@+id/toolOptions"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
+                    android:gravity="center"
                     android:orientation="horizontal"
                     android:paddingHorizontal="8dp"
                     android:paddingTop="6dp"
@@ -349,10 +352,10 @@
             android:id="@+id/toolbarHandle"
             android:layout_width="28dp"
             android:layout_height="56dp"
-            android:contentDescription="툴바 옮기기 (끌어서 위·아래·왼쪽·오른쪽에 붙이기)"
+            android:contentDescription="툴바 손잡이 (누르면 보일 도구 고르기, 끌어서 위·아래·왼쪽·오른쪽에 붙이기)"
             android:scaleType="center"
             android:src="@drawable/ic_drag_handle"
-            android:tooltipText="끌어서 툴바 옮기기" />
+            android:tooltipText="누르면 보일 도구 고르기, 끌면 툴바 옮기기" />
 
     <HorizontalScrollView
         android:id="@+id/toolScrollH"
