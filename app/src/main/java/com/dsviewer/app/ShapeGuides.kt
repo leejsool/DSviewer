@@ -44,6 +44,13 @@ object ShapeGuides {
         val n = xs.size
         val len = hypot(xs[n - 1] - xs[0], ys[n - 1] - ys[0])
         if (len < MIN_LEN) return null
+        return smoothCurve(xs, ys)
+    }
+
+    /** 처음·끝 점을 지나는 포물선 조각 (많이 어긋나면 3차 베지어)을 64칸으로 */
+    private fun smoothCurve(xs: DoubleArray, ys: DoubleArray): DoubleArray {
+        val n = xs.size
+        val len = hypot(xs[n - 1] - xs[0], ys[n - 1] - ys[0])
         var best = fitBezier(xs, ys, 2)
         if (best.err > len * 0.03) {
             val cubic = fitBezier(xs, ys, 3)
@@ -136,13 +143,18 @@ object ShapeGuides {
     private const val PIG_B = 11.0
     /** 고리 하나가 차지하는 길이 (b의 배수, 이웃 고리와 사이 포함) */
     private const val PIG_PITCH = 4.6
-    /** 고리들이 차지할 수 있는 선 길이의 비율 (앞뒤는 곧게) */
+    /** 고리에서 원을 도는 가장 빠른 빠르기 (앞으로 가는 빠르기의 배수) */
+    private const val PIG_SPIN = 3.6
+    /** 고리 쪽에서 원이 커지는 비율 (0이면 바깥 휨과 고리 반지름이 같다) */
+    private const val PIG_GROW = 0.5
+    /** 고리들이 차지할 수 있는 선 길이의 비율 */
     private const val PIG_COVER = 0.62
 
     /**
-     * 처음 점에서 끝 점까지 곧게 가다가 고리를 감는 선. 고리 수는 선이 길수록 많아진다 (고리 크기는 그대로).
-     * 고리를 그렸으면 그 크기·감은 방향·자리를 따르고, 적어도 그린 만큼은 감는다.
-     * 안 그렸으면 가운데에, 휜 쪽(곧으면 화면 위쪽)으로
+     * 그린 획을 따라 부드럽게 휘며 고리를 감는 선. 바탕은 그린 획에 맞춘 부드러운 곡선(곡선 화살표와 같은 맞춤)이고,
+     * 그 위에서 반지름 b인 원을 돌린다: 고리 앞뒤로는 바깥쪽으로 휘어 나갔다가 고리에서 안쪽으로 감는다.
+     * 고리를 그렸으면 그 수·크기·감은 방향·자리를 따른다. 안 그렸으면 선이 길수록 고리가 많아지고 (크기는 그대로)
+     * 가운데에서 휜 획의 안쪽으로 (곧으면 화면 위쪽으로) 감는다
      */
     private fun pigtail(p: Pair<DoubleArray, DoubleArray>, width: Float): DoubleArray? {
         val (xs, ys) = p
@@ -159,6 +171,12 @@ object ShapeGuides {
         var b: Double
         val side: Double
         val centers = drawn.map { (i, j) -> (i + 1..j).sumOf { along[it] } / (j - i) / len }
+        // 바탕 곡선: 그린 고리 부분을 뺀 점들로 맞춘다
+        val inLoop = BooleanArray(n)
+        for ((i, j) in drawn) for (k in i + 1..j) inLoop[k] = true
+        val keep = (0 until n).filter { !inLoop[it] }
+        val base = if (keep.size >= 6) smoothCurve(DoubleArray(keep.size) { xs[keep[it]] }, DoubleArray(keep.size) { ys[keep[it]] })
+        else doubleArrayOf(sx, sy, xs[n - 1], ys[n - 1])
         if (drawn.isNotEmpty()) {
             var areaSum = 0.0
             var size = 0.0
@@ -177,57 +195,96 @@ object ShapeGuides {
             // 맞춘 선의 닫힌 고리가 그린 고리만 하게
             b = size / drawn.size / LOOP_SIZE
         } else {
+            // 바탕 곡선이 휜 쪽의 반대(안쪽)로 감는다. 거의 곧으면 화면 위쪽으로 (옆쪽 축 (−uy, ux)의 y가 ux)
             var sum = 0.0
-            for (k in 0 until n) sum += across[k]
-            // 거의 곧게 그었으면 화면 위쪽으로 감는다 (옆쪽 축 (−uy, ux)의 y가 ux)
-            side = if (abs(sum / n) > len * 0.02) Math.signum(sum) else if (ux >= 0) -1.0 else 1.0
+            for (k in 0 until base.size / 2) sum += -(base[k * 2] - sx) * uy + (base[k * 2 + 1] - sy) * ux
+            val mean = sum / (base.size / 2)
+            side = if (abs(mean) > len * 0.02) -Math.signum(mean) else if (ux >= 0) -1.0 else 1.0
             b = PIG_B + width * 1.5
         }
         b = b.coerceIn(3.0, len * 0.2)
-        val loops = max(drawn.size, (len * PIG_COVER / (PIG_PITCH * b)).toInt()).coerceIn(1, 40)
+        // 고리를 그렸으면 그린 수만큼, 안 그렸으면 길이에 따라
+        val loops = (if (drawn.isNotEmpty()) drawn.size else (len * PIG_COVER / (PIG_PITCH * b)).toInt()).coerceIn(1, 40)
         // 그린 만큼 감으면 그린 고리 사이 간격대로
         val pitch = if (loops == drawn.size && loops >= 2) (centers.last() - centers.first()) / (loops - 1) else 0.0
-        return pigtailPoints(sx, sy, xs[n - 1], ys[n - 1], t0, b, side, loops, pitch)
+        return pigtailAlong(base, t0, b, side, loops, pitch)
     }
 
-    /**
-     * 돼지꼬리 선의 점들: 곧은 선 위에 반지름 b인 원을 [loops]바퀴 (바퀴마다 부드럽게 빨라졌다 느려지며) 더한다.
-     * 원의 꼭대기에서는 뒤로 가므로 바퀴마다 고리가 생긴다. t0은 고리들 가운데 자리(0..1), side는 고리가 놓일 쪽(±1).
-     * [pitch]는 고리 가운데 사이 간격 (매개변수, 0이면 고리 폭 + 조금). 다 안 들어가면 고리를 줄인다
-     */
+    /** 곧은 바탕 위의 돼지꼬리 선 (아이콘·크기 재기용) */
     fun pigtailPoints(
         sx: Double, sy: Double, ex: Double, ey: Double, t0: Double, b0: Double, side: Double, loops: Int = 1,
         pitch: Double = 0.0,
+    ) = pigtailAlong(doubleArrayOf(sx, sy, ex, ey), t0, b0, side, loops, pitch)
+
+    /**
+     * 돼지꼬리 선의 점들: 바탕 곡선 [base]를 따라가며, 그 자리의 앞 방향 T·옆 방향 N으로
+     * 반지름 b인 원 b·(sin φ·T − side·cos φ·N)을 더한다. 원의 크기는 처음과 끝에서 0으로 줄어
+     * 처음·끝 점은 바탕 곡선 그대로다. φ는 고리 자리에서만 한 바퀴씩 (부드럽게 빨라졌다 느려지며) 돌고,
+     * 그 밖에서는 0이라 선이 옆(바깥)으로 b만큼 휘어 나가 있다. 원의 안쪽 끝에서는 뒤로 가므로 고리가 생긴다.
+     * t0은 고리들 가운데 자리(0..1), side는 고리가 놓일 쪽(±1), [pitch]는 고리 가운데 사이 간격 (0이면 고리 폭 + 조금)
+     */
+    private fun pigtailAlong(
+        base: DoubleArray, t0: Double, b0: Double, side: Double, loops: Int, pitch: Double,
     ): DoubleArray {
-        val len = hypot(ex - sx, ey - sy)
-        val ux = (ex - sx) / len; val uy = (ey - sy) / len
+        val m = max(240, loops * 90)
+        val pts = resampleEven(base, m)
+        val len = pathLength(base).coerceAtLeast(1e-6)
         var b = b0
-        // 고리 하나의 반폭 w (매개변수): 가장 빠를 때 원을 도는 빠르기가 앞으로 가는 빠르기의 2.5배.
-        // 고리 사이는 적어도 반폭의 0.4배만큼 곧게
-        var w = 0.6 * PI * b / len
+        // 고리 하나의 반폭 w (매개변수): 가장 빠를 때 원을 도는 빠르기가 앞으로 가는 빠르기의 [PIG_SPIN]배
+        // (클수록 고리가 동그랗게 크다). 고리 사이는 적어도 반폭의 0.4배
+        var w = 1.5 * PI * b / (PIG_SPIN * len)
         var step = max(pitch, w * 2.4)
-        val room = 0.84
+        val room = 0.7
         val span = (loops - 1) * step + 2 * w
         if (span > room) {
             b *= room / span; w *= room / span; step *= room / span
         }
-        val gap = step - 2 * w
         val total = (loops - 1) * step + 2 * w
-        val start = t0.coerceIn(total / 2 + 0.06, 1 - total / 2 - 0.06) - total / 2
-        val m = max(240, loops * 90)
+        // 고리는 원이 거의 다 커진 곳(앞뒤 14% 안쪽)에
+        val lo = total / 2 + 0.14
+        val hi = 1 - total / 2 - 0.14
+        val start = (if (lo < hi) t0.coerceIn(lo, hi) else 0.5) - total / 2
         val out = DoubleArray((m + 1) * 2)
         for (k in 0..m) {
             val t = k / m.toDouble()
             var phi = 0.0
             for (i in 0 until loops) {
-                val s = ((t - (start + i * (2 * w + gap))) / (2 * w)).coerceIn(0.0, 1.0)
+                val s = ((t - (start + i * step)) / (2 * w)).coerceIn(0.0, 1.0)
                 phi += 2 * PI * s * s * (3 - 2 * s)
             }
-            val a = len * t + b * sin(phi)
-            val q = side * b * (1 - cos(phi))
-            // across 축은 (−uy, ux)
-            out[k * 2] = sx + a * ux - q * uy
-            out[k * 2 + 1] = sy + a * uy + q * ux
+            // 앞 방향 (이웃 점으로)
+            val k0 = max(0, k - 1); val k1 = min(m, k + 1)
+            var tx = pts[k1 * 2] - pts[k0 * 2]; var ty = pts[k1 * 2 + 1] - pts[k0 * 2 + 1]
+            val tl = hypot(tx, ty).takeIf { it > 1e-9 } ?: 1.0
+            tx /= tl; ty /= tl
+            // 옆 방향은 (−ty, tx)
+            val nx = -ty; val ny = tx
+            // 원 크기: 처음·끝에서 0, 가운데 대부분은 거의 1
+            val sn = sin(PI * t)
+            // 고리 쪽(φ = π)으로 갈수록 원이 조금 커진다: 바깥으로 휘는 폭보다 고리가 크게
+            val r = b * (1 - (1 - sn) * (1 - sn)) * (1 + PIG_GROW * (1 - cos(phi)) / 2)
+            val a = r * sin(phi)
+            val q = -side * r * cos(phi)
+            out[k * 2] = pts[k * 2] + a * tx + q * nx
+            out[k * 2 + 1] = pts[k * 2 + 1] + a * ty + q * ny
+        }
+        return out
+    }
+
+    /** 꺾은선을 길이 기준 고르게 m칸 (점 m+1개)으로 */
+    private fun resampleEven(p: DoubleArray, m: Int): DoubleArray {
+        val n = p.size / 2
+        val cum = DoubleArray(n)
+        for (i in 1 until n) cum[i] = cum[i - 1] + hypot(p[i * 2] - p[i * 2 - 2], p[i * 2 + 1] - p[i * 2 - 1])
+        val out = DoubleArray((m + 1) * 2)
+        var j = 0
+        for (k in 0..m) {
+            val target = cum[n - 1] * k / m
+            while (j < n - 2 && cum[j + 1] < target) j++
+            val seg = cum[j + 1] - cum[j]
+            val f = if (seg > 0) ((target - cum[j]) / seg).coerceIn(0.0, 1.0) else 0.0
+            out[k * 2] = p[j * 2] + (p[j * 2 + 2] - p[j * 2]) * f
+            out[k * 2 + 1] = p[j * 2 + 1] + (p[j * 2 + 3] - p[j * 2 + 1]) * f
         }
         return out
     }

@@ -39,10 +39,11 @@ class ShapeGuidesTest {
         return xs to ys
     }
 
-    private fun save(name: String, raw: Pair<DoubleArray, DoubleArray>, f: Fitted) {
+    private fun save(name: String, raw: Pair<DoubleArray, DoubleArray>, f: Fitted, zoom: Double = 1.0) {
         val img = BufferedImage(500, 400, BufferedImage.TYPE_INT_RGB)
         val g = img.createGraphics()
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+        g.scale(zoom, zoom)
         g.color = Color.WHITE
         g.fillRect(0, 0, 500, 400)
         fun path(xs: List<Double>, ys: List<Double>) = Path2D.Double().apply {
@@ -52,7 +53,7 @@ class ShapeGuidesTest {
         g.stroke = BasicStroke(2f)
         g.draw(path(raw.first.toList(), raw.second.toList()))
         g.color = Color.BLACK
-        g.stroke = BasicStroke(2.5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
+        g.stroke = BasicStroke((2.5 / zoom).toFloat(), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
         for (c in f.curves + f.heads) {
             g.draw(path((0 until c.size / 2).map { c[it * 2].toDouble() }, (0 until c.size / 2).map { c[it * 2 + 1].toDouble() }))
         }
@@ -120,9 +121,9 @@ class ShapeGuidesTest {
             save("arrow_pigtail_${if (up) "up" else "down"}", raw, f)
             val c = f.curves[0]
             val n = c.size / 2
-            val ys = (0 until n).map { c[it * 2 + 1] }
-            // 고리가 그린 쪽에, 그린 고리(높이 약 45)만 하게
-            if (up) assertTrue(ys.min() < 220 - 45) else assertTrue(ys.max() > 220 + 45)
+            // 고리(뒤로 가는 곳)가 그린 쪽에
+            val back = (1 until n).filter { c[it * 2] < c[it * 2 - 2] - 0.5f }.map { c[it * 2 + 1] }
+            if (up) assertTrue(back.average() < 215) else assertTrue(back.average() > 225)
             // 고리가 있다: x가 뒤로 가는 구간
             assertTrue((1 until n).any { c[it * 2] < c[it * 2 - 2] - 0.5f })
             // 처음·끝은 그린 자리
@@ -147,7 +148,10 @@ class ShapeGuidesTest {
         for (rightward in listOf(true, false)) {
             val raw = drawn { t -> (if (rightward) 60 + 380 * t else 440 - 380 * t) to 220.0 }
             val c = ShapeGuides.arrow(ShapeKind.ARROW_PIGTAIL, raw, 1.2f)!!.curves[0]
-            assertTrue((0 until c.size / 2).minOf { c[it * 2 + 1] } < 205)
+            // 고리(앞으로 가던 방향의 반대로 가는 곳)가 위쪽에
+            val back = (1 until c.size / 2).filter { (c[it * 2] - c[it * 2 - 2]) * (if (rightward) 1 else -1) < -0.5f }
+            assertTrue(back.isNotEmpty())
+            assertTrue(back.map { c[it * 2 + 1] }.average() < 215)
         }
     }
 
@@ -189,7 +193,45 @@ class ShapeGuidesTest {
         assertEquals(3, loopCount(f.curves[0]))
         // 위쪽으로
         val c = f.curves[0]
-        assertTrue((0 until c.size / 2).minOf { c[it * 2 + 1] } < 205)
+        assertTrue((1 until c.size / 2).filter { c[it * 2] < c[it * 2 - 2] - 0.5f }.map { c[it * 2 + 1] }.average() < 215)
+    }
+
+    /** 사용자가 그린 예: 왼쪽 아래에서 오른쪽 위로, 왼쪽 위로 볼록하게 휜 획 (고리 없이) */
+    @Test
+    fun pigtailFollowsCurvedStroke() {
+        val raw = drawn { t ->
+            val x = 80 + 340 * t; val y = 330 - 190 * t
+            // 볼록: 옆으로 (−0.49, −0.87) 방향(왼쪽 위)으로 최대 55
+            val bump = 55 * sin(PI * t)
+            (x - 0.49 * bump) to (y - 0.87 * bump)
+        }
+        val f = ShapeGuides.arrow(ShapeKind.ARROW_PIGTAIL, raw, 1.2f)!!
+        save("arrow_pigtail_curved", raw, f)
+        val c = f.curves[0]
+        val n = c.size / 2
+        assertEquals(80f, c[0], 0.5f); assertEquals(330f, c[1], 0.5f)
+        assertEquals(420f, c[(n - 1) * 2], 0.5f); assertEquals(140f, c[(n - 1) * 2 + 1], 0.5f)
+        // 곧은 부분이 없다: 처음 1/5 구간도 시작점-끝점 직선에서 꽤 벗어나 휜다
+        val dx = 340.0; val dy = -190.0; val l = hypot(dx, dy)
+        fun off(i: Int) = ((c[i * 2] - 80) * dy - (c[i * 2 + 1] - 330) * dx) / l
+        assertTrue(abs(off(n / 5)) > 20)
+        // 고리가 있다: 직선 방향으로 뒤로 가는 구간
+        assertTrue((1 until n).any { i -> (c[i * 2] - c[i * 2 - 2]) * dx + (c[i * 2 + 1] - c[i * 2 - 1]) * dy < -1 })
+    }
+
+    @Test
+    fun pigtailRenderSamples() {
+        // 사용자가 태블릿에 그린 크기 그대로 (약 120pt, 0.71 굵기), 3.3배로 키워 그림
+        val user = drawn(noise = 0.3) { t ->
+            val x = 15 + 105 * t; val y = 105 - 58 * t
+            val bump = 14 * sin(PI * t)
+            (x - 0.48 * bump) to (y - 0.88 * bump)
+        }
+        save("arrow_pigtail_user", user, ShapeGuides.arrow(ShapeKind.ARROW_PIGTAIL, user, 0.71f)!!, zoom = 3.3)
+        for ((name, len) in listOf("p150" to 150.0, "p300" to 300.0)) {
+            val raw = drawn { t -> (60 + len * t) to (250 - 40 * sin(PI * t)) }
+            save("arrow_pigtail_$name", raw, ShapeGuides.arrow(ShapeKind.ARROW_PIGTAIL, raw, 1.2f)!!)
+        }
     }
 
     @Test
