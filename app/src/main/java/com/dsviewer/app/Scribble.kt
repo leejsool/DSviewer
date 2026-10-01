@@ -43,36 +43,64 @@ class ScribbleRegion private constructor(
     }
 
     companion object {
-        /** 꺾임이 이만큼 (코사인) 되돌아가면 왕복의 끝 (약 135°보다 크게 꺾임) */
-        private const val REVERSE_COS = -0.7f
         /** 적어도 이만큼 되돌아가야 긁기로 본다 (네 번 넘게 오감) */
         private const val MIN_REVERSALS = 3
+        /** 한 번 오가는 길이가 곧은 거리의 이만큼보다 길면 (동그라미처럼 돈 것) 긁기가 아니다 */
+        private const val MAX_BEND = 1.4f
 
         /**
          * 획이 마구 긁은 모양이면 그 영역, 아니면 null. [unit]은 1dp가 쪽 좌표로 얼마인지.
-         * 꺾인 점 대부분이 거의 반대로 되돌아가야 한다 (지그재그·용수철처럼 비스듬히 꺾인 선은 아님)
+         * 꺾인 각도 대신 '앞으로 간 만큼에서 얼마나 되돌아왔는지'로 왕복을 센다.
+         * 넓게 긁어 한 번 긋는 선이 활처럼 휘거나 끝에서 둥글게 돌아도 한 번으로 센다
          */
         fun detect(st: Stroke, unit: Float): ScribbleRegion? {
             if (st.count < 8) return null
-            val v = simplify(st, 2.5f * unit)
-            if (v.size < 2 + MIN_REVERSALS) return null
-            // 꺾인 점마다 되돌아가는지
+            val minStart = 3f * unit
+            // 되돌아간 점(한 번 오간 끝)들
             val turns = ArrayList<Int>()
-            var corners = 0
-            for (k in 1 until v.size - 1) {
-                val a = v[k - 1]; val b = v[k]; val c = v[k + 1]
-                val ux = st.x(b) - st.x(a); val uy = st.y(b) - st.y(a)
-                val wx = st.x(c) - st.x(b); val wy = st.y(c) - st.y(b)
-                val lu = hypot(ux, uy); val lw = hypot(wx, wy)
-                if (lu == 0f || lw == 0f) continue
-                corners++
-                if ((ux * wx + uy * wy) / (lu * lw) < REVERSE_COS) turns.add(b)
+            var s = 0       // 이번에 긋기 시작한 점
+            var e = -1      // 이번에 가장 멀리 간 점 (아직 방향이 없으면 -1)
+            for (i in 1 until st.count) {
+                val x = st.x(i)
+                val y = st.y(i)
+                if (e < 0) {
+                    if (hypot(x - st.x(s), y - st.y(s)) >= minStart) e = i
+                    continue
+                }
+                val ex = st.x(e) - st.x(s)
+                val ey = st.y(e) - st.y(s)
+                val far = hypot(ex, ey)
+                // 시작점에서 가장 먼 점 쪽으로 지금 점이 얼마나 갔는지 (방향은 먼 점을 따라가 휜 선도 됨)
+                val along = ((x - st.x(s)) * ex + (y - st.y(s)) * ey) / far
+                if (along >= far) {
+                    e = i
+                } else if (far - along > max(3f * unit, 0.3f * far)) {
+                    // 간 길의 30% 넘게 되돌아왔다: 한 번 오감
+                    turns.add(e)
+                    s = e
+                    e = if (hypot(x - st.x(s), y - st.y(s)) >= minStart) i else -1
+                }
             }
-            if (turns.size < MIN_REVERSALS || turns.size < corners * 0.6f) return null
-            val pts = ArrayList<Int>().apply { add(0); addAll(turns); add(st.count - 1) }
-            // 한 번 오가는 길이가 너무 짧으면 (점을 콕콕 찍은 것) 긁기가 아니다
-            val lens = (1 until pts.size).map { hypot(st.x(pts[it]) - st.x(pts[it - 1]), st.y(pts[it]) - st.y(pts[it - 1])) }.sorted()
-            if (lens[lens.size / 2] < 5f * unit) return null
+            if (turns.size < MIN_REVERSALS) return null
+            val pts = ArrayList<Int>().apply { add(0); addAll(turns) }
+            // 오간 길마다: 곧은 거리, 실제로 지나간 길이
+            val chords = ArrayList<Float>()
+            val bends = ArrayList<Float>()
+            for (k in 1 until pts.size) {
+                val a = pts[k - 1]
+                val b = pts[k]
+                val chord = hypot(st.x(b) - st.x(a), st.y(b) - st.y(a))
+                var path = 0f
+                for (i in a + 1..b) path += hypot(st.x(i) - st.x(i - 1), st.y(i) - st.y(i - 1))
+                chords.add(chord)
+                bends.add(if (chord > 0f) path / chord else 99f)
+            }
+            chords.sort()
+            bends.sort()
+            // 점을 콕콕 찍은 것 / 동그라미를 여러 번 돈 것(답에 동그라미 치기)은 긁기가 아니다
+            if (chords[chords.size / 2] < 5f * unit) return null
+            if (bends[bends.size / 2] > MAX_BEND) return null
+            pts.add(st.count - 1)
             val tris = FloatArray((pts.size - 2) * 6)
             for (k in 0 until pts.size - 2) {
                 for (j in 0..2) {
@@ -81,31 +109,6 @@ class ScribbleRegion private constructor(
                 }
             }
             return ScribbleRegion(tris, st, st.halfWidth + 1.5f * unit)
-        }
-
-        /** 더글라스-포이커로 줄인 점 번호들 (처음·끝 포함) */
-        private fun simplify(st: Stroke, tol: Float): List<Int> {
-            val keep = BooleanArray(st.count)
-            keep[0] = true
-            keep[st.count - 1] = true
-            val stack = ArrayDeque<Pair<Int, Int>>()
-            stack.add(0 to st.count - 1)
-            val tol2 = tol * tol
-            while (stack.isNotEmpty()) {
-                val (a, b) = stack.removeLast()
-                var best = -1
-                var bestD = tol2
-                for (i in a + 1 until b) {
-                    val d = segDist2(st.x(i), st.y(i), st.x(a), st.y(a), st.x(b), st.y(b))
-                    if (d > bestD) { bestD = d; best = i }
-                }
-                if (best >= 0) {
-                    keep[best] = true
-                    stack.add(a to best)
-                    stack.add(best to b)
-                }
-            }
-            return keep.indices.filter { keep[it] }
         }
 
         private fun inTriangle(px: Float, py: Float, ax: Float, ay: Float, bx: Float, by: Float, cx: Float, cy: Float): Boolean {
