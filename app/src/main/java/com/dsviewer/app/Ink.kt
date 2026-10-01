@@ -448,7 +448,20 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
     fun withHole(x: Float, y: Float, r: Float): Stroke? {
         val n = holes.size
         if (n >= 3 && hypot(holes[n - 3] - x, holes[n - 2] - y) < r * 0.25f && abs(holes[n - 1] - r) < r * 0.1f) return null
-        return copy().also { it.holes = holes + floatArrayOf(x, y, r) }
+        // 이미 뚫린 구멍 안에 다 들어가면 더 뚫을 것이 없다
+        for (i in 0 until n step 3) if (hypot(holes[i] - x, holes[i + 1] - y) + r <= holes[i + 2]) return null
+        val child = copy().also { it.holes = holes + floatArrayOf(x, y, r) }
+        // 지금 영역에서 새 구멍만 빼서 넘겨준다 (구멍이 쌓여도 지울 때마다 모든 구멍을 처음부터 다시 빼지 않게)
+        val base = cachedShape?.takeIf { cachedShapeVersion == version }
+        if (base != null) {
+            val cut = Path().apply { addCircle(x, y, r, Path.Direction.CW) }
+            val next = Path()
+            if (next.op(base, cut, Path.Op.DIFFERENCE)) {
+                child.cachedShape = next
+                child.cachedShapeVersion = child.version
+            }
+        }
+        return child
     }
 
     /** 다른 테이프의 구멍들을 그대로 가져온다 (파일에서 읽을 때) */
@@ -564,7 +577,10 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
     }
 
     /** 채우기가 (px, py)를 덮는지 (짝홀 규칙, 지우개 구멍 자리는 아님) */
-    fun fillContains(px: Float, py: Float): Boolean {
+    fun fillContains(px: Float, py: Float): Boolean = insideOutline(px, py) && !inHole(px, py)
+
+    /** 채우기 윤곽 안인지 (지우개 구멍은 따지지 않음) */
+    private fun insideOutline(px: Float, py: Float): Boolean {
         if (fill == null) return false
         var inside = false
         forEachContour { from, to ->
@@ -575,21 +591,22 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
                 j = i
             }
         }
-        if (!inside) return false
-        for (i in holes.indices step 3) if (hypot(holes[i] - px, holes[i + 1] - py) <= holes[i + 2]) return false
-        return true
+        return inside
     }
 
-    /** 채우기의 안이거나 윤곽에서 r 안인지 */
+    /**
+     * 채우기의 윤곽 안이거나 윤곽에서 r 안인지. 지우개 구멍 자리도 닿은 것으로 본다
+     * (영역 지우개가 앞 구멍 안에서 다음 구멍을 바로 이어 뚫도록. 더 뚫을 것이 없으면 withHole이 거른다)
+     */
     private fun fillHit(px: Float, py: Float, r: Float): Boolean {
-        if (fillContains(px, py)) return true
+        if (insideOutline(px, py)) return true
         val r2 = r * r
         var hit = false
         forEachContour { from, to ->
             if (hit) return@forEachContour
             var j = to
             for (i in from..to) {
-                if (segDist2(px, py, x(j), y(j), x(i), y(i)) <= r2 && !inHole(px, py)) { hit = true; break }
+                if (segDist2(px, py, x(j), y(j), x(i), y(i)) <= r2) { hit = true; break }
                 j = i
             }
         }
