@@ -2006,17 +2006,25 @@ class DocumentView @JvmOverloads constructor(
         val gone = ArrayList<Pair<Int, Stroke>>()
         val added = ArrayList<Pair<Int, Stroke>>()
         val step = 0.75f * density / scale
+        // 먼저 잘라 보기만 한다 (뒤에서부터라 고칠 때 앞 번호가 안 밀림)
+        val cuts = ArrayList<Triple<Int, Stroke, List<Stroke>>>()
+        var crossed = 0
         for (k in list.indices.reversed()) {
             val s = list[k]
             if (s.isBox || s.tape != null) continue
             val hw = s.halfWidth
             val rest = s.cutWhere(step) { x, y -> region.contains(x, y, hw) } ?: continue
+            cuts.add(Triple(k, s, rest))
+            if (crossed < SCRIBBLE_CROSSINGS) crossed += crossings(st, s, SCRIBBLE_CROSSINGS - crossed)
+        }
+        // 정말 긁었으면 아래 글씨를 여러 번 가로지른다. 옆 글자에 살짝 닿은 것 ('ㅗㅇ'을 이어 쓰다 'ㅇ'에 닿음)은 아님
+        if (crossed < SCRIBBLE_CROSSINGS) return false
+        for ((k, s, rest) in cuts) {
             list.removeAt(k)
             list.addAll(k, rest)
             gone.add(page to s)
             rest.forEach { added.add(page to it) }
         }
-        if (gone.isEmpty()) return false
         inkDoc.erased(gone, added)
         performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
         return true
@@ -2682,6 +2690,8 @@ class DocumentView @JvmOverloads constructor(
         private const val TAP_MS = 500L
         /** 손바닥: 보통 손가락보다 이만큼 넓게 닿으면 */
         private const val PALM_RATIO = 2.5f
+        /** 긁어서 지우기: 긁은 선이 아래 필기를 적어도 이만큼 가로질러야 지운다 */
+        private const val SCRIBBLE_CROSSINGS = 3
         /** 손바닥: 처음 닿고 이 안에 손가락 셋 넘게 닿으면 (ms) */
         private const val PALM_GATHER_MS = 250L
         private const val PALM_MIN_DP = 24f

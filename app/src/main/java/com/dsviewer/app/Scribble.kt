@@ -43,8 +43,12 @@ class ScribbleRegion private constructor(
     }
 
     companion object {
-        /** 적어도 이만큼 되돌아가야 긁기로 본다 (네 번 넘게 오감) */
-        private const val MIN_REVERSALS = 3
+        /** 적어도 이만큼 오가야 긁기로 본다 */
+        private const val MIN_PASSES = 4
+        /** 이어진 두 번이 이만큼 (코사인) 정반대여야 (약 127°보다 크게 되돌아감) */
+        private const val REVERSE_COS = -0.6f
+        /** 이어진 두 번의 길이가 짧은 쪽이 긴 쪽의 이만큼은 되어야 */
+        private const val MIN_RATIO = 0.4f
         /** 한 번 오가는 길이가 곧은 거리의 이만큼보다 길면 (동그라미처럼 돈 것) 긁기가 아니다 */
         private const val MAX_BEND = 1.4f
 
@@ -81,25 +85,35 @@ class ScribbleRegion private constructor(
                     e = if (hypot(x - st.x(s), y - st.y(s)) >= minStart) i else -1
                 }
             }
-            if (turns.size < MIN_REVERSALS) return null
+            if (turns.size < MIN_PASSES) return null
             val pts = ArrayList<Int>().apply { add(0); addAll(turns) }
-            // 오간 길마다: 곧은 거리, 실제로 지나간 길이
-            val chords = ArrayList<Float>()
-            val bends = ArrayList<Float>()
-            for (k in 1 until pts.size) {
-                val a = pts[k - 1]
-                val b = pts[k]
-                val chord = hypot(st.x(b) - st.x(a), st.y(b) - st.y(a))
+            // 오간 길마다: 곧은 방향, 곧은 거리, 휨(지나간 길이 / 곧은 거리)
+            val n = pts.size - 1
+            val vx = FloatArray(n)
+            val vy = FloatArray(n)
+            val chords = FloatArray(n)
+            val bends = FloatArray(n)
+            for (k in 0 until n) {
+                val a = pts[k]
+                val b = pts[k + 1]
+                vx[k] = st.x(b) - st.x(a)
+                vy[k] = st.y(b) - st.y(a)
+                chords[k] = hypot(vx[k], vy[k])
                 var path = 0f
                 for (i in a + 1..b) path += hypot(st.x(i) - st.x(i - 1), st.y(i) - st.y(i - 1))
-                chords.add(chord)
-                bends.add(if (chord > 0f) path / chord else 99f)
+                bends[k] = if (chords[k] > 0f) path / chords[k] else 99f
             }
-            chords.sort()
-            bends.sort()
-            // 점을 콕콕 찍은 것 / 동그라미를 여러 번 돈 것(답에 동그라미 치기)은 긁기가 아니다
-            if (chords[chords.size / 2] < 5f * unit) return null
-            if (bends[bends.size / 2] > MAX_BEND) return null
+            // 점을 콕콕 찍은 것은 긁기가 아니다
+            if (chords.sorted()[n / 2] < 5f * unit) return null
+            // 긁기는 거의 같은 자리를 비슷한 길이로 정반대로 오간다. 이어진 두 번이 그런지 센다
+            // (한 획으로 이어 쓴 글자 'ㅗㅇ'·동그라미 치기는 방향·길이가 들쭉날쭉하다)
+            var good = 0
+            for (k in 1 until n) {
+                val cos = (vx[k] * vx[k - 1] + vy[k] * vy[k - 1]) / (chords[k] * chords[k - 1])
+                val ratio = minOf(chords[k], chords[k - 1]) / maxOf(chords[k], chords[k - 1])
+                if (cos < REVERSE_COS && ratio >= MIN_RATIO && bends[k] <= MAX_BEND && bends[k - 1] <= MAX_BEND) good++
+            }
+            if (good < MIN_PASSES - 1 || good < (n - 1) * 0.75f) return null
             pts.add(st.count - 1)
             val tris = FloatArray((pts.size - 2) * 6)
             for (k in 0 until pts.size - 2) {
@@ -159,4 +173,23 @@ fun Stroke.cutWhere(step: Float, inside: (Float, Float) -> Boolean): List<Stroke
     }
     cur?.let { if (it.count >= 2 && it.length() >= max(0.5f, width * 0.3f)) pieces.add(it) }
     return if (hit) pieces else null
+}
+
+/** 두 획이 서로 가로지르는 횟수 ([limit]에 이르면 그만 셈) */
+fun crossings(a: Stroke, b: Stroke, limit: Int): Int {
+    var n = 0
+    for (i in 1 until a.count) {
+        val ax = a.x(i - 1); val ay = a.y(i - 1); val bx = a.x(i); val by = a.y(i)
+        for (j in 1 until b.count) {
+            val cx = b.x(j - 1); val cy = b.y(j - 1); val dx = b.x(j); val dy = b.y(j)
+            val d1 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+            val d2 = (bx - ax) * (dy - ay) - (by - ay) * (dx - ax)
+            if ((d1 > 0f) == (d2 > 0f)) continue
+            val d3 = (dx - cx) * (ay - cy) - (dy - cy) * (ax - cx)
+            val d4 = (dx - cx) * (by - cy) - (dy - cy) * (bx - cx)
+            if ((d3 > 0f) == (d4 > 0f)) continue
+            if (++n >= limit) return n
+        }
+    }
+    return n
 }

@@ -96,4 +96,30 @@ class ScribbleTest {
         val far = stroke(listOf(-60f to 300f, 220f to 300f))
         assertNull(far.cutWhere(0.75f) { x, y -> region.contains(x, y, far.halfWidth) })
     }
+
+    /** 'ㅗㅇ'을 한 획으로: ㅗ 세로, 가로(왼쪽으로 갔다 오른쪽으로), 아래 ㅇ 한 바퀴 */
+    private fun ohIeung(): Stroke {
+        val pts = arrayListOf(50f to 0f, 50f to 18f, 22f to 20f, 78f to 20f, 50f to 32f)
+        for (d in 0..360 step 10) {
+            val a = d * PI / 180 - PI / 2
+            pts.add((50 + 15 * cos(a)).toFloat() to (47 + 15 * sin(a)).toFloat())
+        }
+        return stroke(pts)
+    }
+
+    @Test
+    fun ohIeungIsNotScribble() {
+        assertNull(ScribbleRegion.detect(ohIeung(), 1f))
+    }
+
+    @Test
+    fun scribbleCrossesWordManyTimes() {
+        // 긁은 선은 아래 세로획들을 여러 번 가로지른다
+        val sc = scribble(160f, 8, 5f, 18f, 12f)
+        val word = stroke(listOf(40f to -5f, 40f to 50f, 80f to 50f, 80f to -5f, 120f to -5f, 120f to 50f))
+        assertEquals(3, crossings(sc, word, 3))
+        // 옆 글자에 살짝 닿기만 하면 거의 안 가로지른다
+        val beside = stroke(listOf(0f to 0f, 0f to 30f))
+        assertTrue(crossings(ohIeung(), beside, 3) < 3)
+    }
 }
