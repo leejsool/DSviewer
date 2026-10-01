@@ -58,6 +58,7 @@ class ToolbarDock(
 
     private val scrollV = ScrollView(root.context).apply {
         isVerticalScrollBarEnabled = false
+        isFillViewport = true
         overScrollMode = scrollH.overScrollMode
     }
 
@@ -73,6 +74,7 @@ class ToolbarDock(
         toolbar.orientation = if (v) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
 
         // 가로면 가로 스크롤, 세로면 세로 스크롤에 담는다
+        scrollH.isFillViewport = true
         val scroll = if (v) scrollV else scrollH
         if (content.parent !== scroll) {
             (content.parent as? ViewGroup)?.removeView(content)
@@ -85,8 +87,10 @@ class ToolbarDock(
         content.layoutParams = if (v) FrameLayout.LayoutParams(thickness, ViewGroup.LayoutParams.WRAP_CONTENT)
         else FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, thickness)
         content.orientation = if (v) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
-        content.gravity = if (v) Gravity.CENTER_HORIZONTAL else Gravity.CENTER_VERTICAL
-        content.setPadding(0, 0, if (v) 0 else dp(8f), if (v) dp(8f) else 0)
+        // 스크롤할 내용이 뷰포트보다 짧을 때도 아이콘 묶음을 스크롤 축 가운데에 둔다.
+        content.gravity = Gravity.CENTER
+        if (v) content.setPadding(0, dp(8f), 0, dp(8f))
+        else content.setPadding(dp(8f), 0, dp(8f), 0)
         for (i in 0 until content.childCount) orient(content.getChildAt(i), v)
 
         // 손잡이: 가로 툴바는 왼쪽 끝, 세로 툴바는 위쪽 끝

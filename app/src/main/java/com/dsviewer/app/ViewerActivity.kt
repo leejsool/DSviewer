@@ -46,6 +46,7 @@ import com.google.android.material.button.MaterialButton
 import com.google.android.material.color.MaterialColors
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.dsviewer.app.conv.DocConvert
+import com.dsviewer.app.conv.ImagePdf
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -144,9 +145,15 @@ class ViewerActivity : AppCompatActivity() {
     }
 
     /** 그림 넣기: 갤러리·파일에서 그림 고르기 */
+    private var imageImportMode = ImageImportMode.IN_PAGE
     private val pickImage = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) insertImageFrom(uri)
+        if (uri != null) {
+            if (imageImportMode == ImageImportMode.NEW_PAGE) insertImagePageFrom(uri)
+            else insertImageFrom(uri)
+        }
     }
+
+    private enum class ImageImportMode { IN_PAGE, NEW_PAGE }
 
     private val backCallback = object : OnBackPressedCallback(true) {
         override fun handleOnBackPressed() = goBack()
@@ -932,6 +939,7 @@ class ViewerActivity : AppCompatActivity() {
     /** 읽기 모드: 툴바와 도구 줄을 숨기고, 펜으로도 넘기기·확대만 한다 */
     private fun setReadMode(on: Boolean) {
         if (on) {
+            docView.clearLaser()
             textEditor.commit()
             hideOptionBar()
             closeFlyout()
@@ -1004,7 +1012,8 @@ class ViewerActivity : AppCompatActivity() {
     /** 삽입 ▾: 그림 / PDF */
     private fun showInsertMenu(anchor: View) {
         val popup = PopupMenu(this, anchor)
-        popup.menu.add(0, 1, 0, "그림").setIcon(R.drawable.ic_image)
+        popup.menu.add(0, 1, 0, "그림을 현재 쪽에 넣기").setIcon(R.drawable.ic_image)
+        popup.menu.add(0, 3, 1, "스크린샷/그림을 새 쪽으로").setIcon(R.drawable.ic_image)
         // PDF ▸ 넣을 자리
         val page = docView.currentPage().coerceAtLeast(0) + 1
         val pdf = popup.menu.addSubMenu(0, 2, 1, "PDF")
@@ -1021,7 +1030,10 @@ class ViewerActivity : AppCompatActivity() {
                 else -> null
             }
             when {
-                item.itemId == 1 -> pickImage.launch("image/*")
+                item.itemId == 1 || item.itemId == 3 -> {
+                    imageImportMode = if (item.itemId == 3) ImageImportMode.NEW_PAGE else ImageImportMode.IN_PAGE
+                    pickImage.launch("image/*")
+                }
                 at != null -> {
                     pdfInsertAt = at
                     pickPdf.launch(arrayOf("application/pdf"))
@@ -1095,6 +1107,41 @@ class ViewerActivity : AppCompatActivity() {
             // 넣은 그림을 바로 옮기거나 크기를 바꿀 수 있게 선택 도구로
             selectTool(Tool.LASSO)
             if (!docView.insertImage(img)) Toast.makeText(this@ViewerActivity, "그림을 넣지 못했습니다.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** 고른 스크린샷/그림을 한 쪽짜리 PDF로 만들어 현재 쪽 뒤에 넣는다. */
+    private fun insertImagePageFrom(uri: Uri) {
+        val t = current ?: return
+        val d = t.pdf ?: return
+        val inkDoc = t.ink ?: return
+        if (t.pagesBusy) return
+        val index = docView.currentPage().coerceIn(0, d.pageCount - 1) + 1
+        lifecycleScope.launch {
+            progress.visibility = View.VISIBLE
+            try {
+                val imagePdf = withContext(Dispatchers.IO) {
+                    val name = FileUtil.displayName(this@ViewerActivity, uri)
+                    val source = FileUtil.copyToCache(this@ViewerActivity, uri, name)
+                    val output = FileUtil.tempFile(this@ViewerActivity, "image_page", "pdf")
+                    val mime = contentResolver.getType(uri).orEmpty()
+                    ImagePdf.make(source, output, isJpeg = mime == "image/jpeg", photo = mime != "image/png")
+                    output
+                }
+                if (current !== t) return@launch
+                editPages(t, { src, out -> PdfPages.insertPdf(src, out, index, imagePdf) },
+                    onDone = { toast("스크린샷을 ${index + 1}쪽으로 넣었습니다. 바로 필기할 수 있어요.") }) { pages ->
+                    pages.add(index, mutableListOf())
+                    index
+                }
+            } catch (e: Exception) {
+                MaterialAlertDialogBuilder(this@ViewerActivity)
+                    .setMessage("스크린샷을 새 쪽으로 넣지 못했습니다.\n${e.message ?: e.javaClass.simpleName}")
+                    .setPositiveButton("확인", null)
+                    .show()
+            } finally {
+                if (current === t && !t.pagesBusy) progress.visibility = View.GONE
+            }
         }
     }
 

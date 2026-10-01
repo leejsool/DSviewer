@@ -943,9 +943,10 @@ class DocumentView @JvmOverloads constructor(
         }
     }
 
-    private fun clearLaser() {
+    fun clearLaser() {
         holdLaser()
         laserStrokes.clear()
+        invalidate()
     }
 
     private fun reportPage(count: Int) {
@@ -1218,7 +1219,9 @@ class DocumentView @JvmOverloads constructor(
     private fun barVisible() = barAlpha > 0.05f
 
     private fun noteScrolled(dy: Float) {
-        if (dy == 0f || contentH() <= height * 1.05f) return
+        if (dy == 0f) return
+        clearLaser()
+        if (contentH() <= height * 1.05f) return
         fadeBar(1f)
         removeCallbacks(hideBarRunnable)
         postDelayed(hideBarRunnable, 2000)
