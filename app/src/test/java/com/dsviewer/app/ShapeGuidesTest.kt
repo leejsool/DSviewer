@@ -151,6 +151,47 @@ class ShapeGuidesTest {
         }
     }
 
+    /** 오른쪽으로 가는 선에서 뒤로(왼쪽으로) 가는 구간 수 = 고리 수 */
+    private fun loopCount(c: FloatArray): Int {
+        var count = 0
+        var back = false
+        for (i in 1 until c.size / 2) {
+            val b = c[i * 2] < c[i * 2 - 2]
+            if (b && !back) count++
+            back = b
+        }
+        return count
+    }
+
+    @Test
+    fun pigtailLoopsGrowWithLength() {
+        val counts = listOf(120.0, 250.0, 400.0, 600.0, 900.0).map { len ->
+            val raw = drawn { t -> (20 + len * t) to 300.0 }
+            val f = ShapeGuides.arrow(ShapeKind.ARROW_PIGTAIL, raw, 1.2f)!!
+            if (len == 400.0) save("arrow_pigtail_long", raw, f)
+            loopCount(f.curves[0])
+        }
+        println("고리 수: $counts")
+        assertEquals(1, counts[0])
+        for (i in 1 until counts.size) assertTrue("$counts", counts[i] >= counts[i - 1])
+        assertTrue("$counts", counts.last() >= 6)
+    }
+
+    @Test
+    fun pigtailKeepsDrawnLoopCount() {
+        // 짧은 선에 고리 세 개를 그림
+        val raw = drawn(400) { t ->
+            val phi = 2 * PI * 3 * t
+            (60 + 260 * t + 22 * sin(phi)) to (220 - 16 * (1 - cos(phi)))
+        }
+        val f = ShapeGuides.arrow(ShapeKind.ARROW_PIGTAIL, raw, 1.2f)!!
+        save("arrow_pigtail_three", raw, f)
+        assertEquals(3, loopCount(f.curves[0]))
+        // 위쪽으로
+        val c = f.curves[0]
+        assertTrue((0 until c.size / 2).minOf { c[it * 2 + 1] } < 205)
+    }
+
     @Test
     fun lengthMarkFitsArcWithGap() {
         // 반지름 250, 중심 (250, 380)인 원의 위쪽 호: (70, 206.6) ~ (430, 206.6)

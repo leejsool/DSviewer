@@ -26,7 +26,7 @@ object ShapeGuides {
         val body = when (kind) {
             ShapeKind.ARROW -> ShapeFit.line(p)?.let { l -> DoubleArray(4) { l[it].toDouble() } }
             ShapeKind.ARROW_CURVE -> curve(p)
-            ShapeKind.ARROW_PIGTAIL -> pigtail(p)
+            ShapeKind.ARROW_PIGTAIL -> pigtail(p, width)
             else -> null
         } ?: return null
         if (pathLength(body) < MIN_LEN) return null
@@ -132,11 +132,19 @@ object ShapeGuides {
 
     // ---------- 돼지꼬리 화살표 ----------
 
+    /** 저절로 정하는 고리 크기 b (pt): 그린 고리가 없을 때. 닫힌 고리는 b의 약 [LOOP_SIZE]배 */
+    private const val PIG_B = 11.0
+    /** 고리 하나가 차지하는 길이 (b의 배수, 이웃 고리와 사이 포함) */
+    private const val PIG_PITCH = 4.6
+    /** 고리들이 차지할 수 있는 선 길이의 비율 (앞뒤는 곧게) */
+    private const val PIG_COVER = 0.62
+
     /**
-     * 처음 점에서 끝 점까지 곧게 가다가 고리를 한 번 감는 선.
-     * 고리를 그렸으면 그 자리·크기·감은 방향대로, 안 그렸으면 가운데에 휜 쪽으로
+     * 처음 점에서 끝 점까지 곧게 가다가 고리를 감는 선. 고리 수는 선이 길수록 많아진다 (고리 크기는 그대로).
+     * 고리를 그렸으면 그 크기·감은 방향·자리를 따르고, 적어도 그린 만큼은 감는다.
+     * 안 그렸으면 가운데에, 휜 쪽(곧으면 화면 위쪽)으로
      */
-    private fun pigtail(p: Pair<DoubleArray, DoubleArray>): DoubleArray? {
+    private fun pigtail(p: Pair<DoubleArray, DoubleArray>, width: Float): DoubleArray? {
         val (xs, ys) = p
         val n = xs.size
         val sx = xs[0]; val sy = ys[0]
@@ -146,56 +154,75 @@ object ShapeGuides {
         val along = DoubleArray(n) { (xs[it] - sx) * ux + (ys[it] - sy) * uy }
         val across = DoubleArray(n) { -(xs[it] - sx) * uy + (ys[it] - sy) * ux }
 
-        val (bi, bj) = findLoop(along, across)
+        val drawn = findLoops(along, across)
         var t0 = 0.5
         var b: Double
         val side: Double
-        if (bi >= 0) {
-            var area = 0.0
-            var cAlong = 0.0
-            var lo = Double.MAX_VALUE; var hi = -Double.MAX_VALUE
-            var lo2 = Double.MAX_VALUE; var hi2 = -Double.MAX_VALUE
-            for (k in bi + 1..bj) {
-                val k2 = if (k == bj) bi + 1 else k + 1
-                area += along[k] * across[k2] - along[k2] * across[k]
-                cAlong += along[k]
-                lo = min(lo, across[k]); hi = max(hi, across[k])
-                lo2 = min(lo2, along[k]); hi2 = max(hi2, along[k])
+        val centers = drawn.map { (i, j) -> (i + 1..j).sumOf { along[it] } / (j - i) / len }
+        if (drawn.isNotEmpty()) {
+            var areaSum = 0.0
+            var size = 0.0
+            for ((i, j) in drawn) {
+                var area = 0.0
+                for (k in i + 1..j) {
+                    val k2 = if (k == j) i + 1 else k + 1
+                    area += along[k] * across[k2] - along[k2] * across[k]
+                }
+                areaSum += area
+                size += loopExtent(along, across, i, j)
             }
             // 위로 갔다 뒤로 넘어오며 감은 방향 (넓이의 부호)이 고리가 놓일 쪽
-            side = if (area >= 0) 1.0 else -1.0
-            t0 = cAlong / (bj - bi) / len
+            side = if (areaSum >= 0) 1.0 else -1.0
+            t0 = (centers.first() + centers.last()) / 2
             // 맞춘 선의 닫힌 고리가 그린 고리만 하게
-            b = max(hi - lo, hi2 - lo2) / LOOP_SIZE
+            b = size / drawn.size / LOOP_SIZE
         } else {
             var sum = 0.0
             for (k in 0 until n) sum += across[k]
             // 거의 곧게 그었으면 화면 위쪽으로 감는다 (옆쪽 축 (−uy, ux)의 y가 ux)
             side = if (abs(sum / n) > len * 0.02) Math.signum(sum) else if (ux >= 0) -1.0 else 1.0
-            b = len * 0.09
+            b = PIG_B + width * 1.5
         }
-        b = b.coerceIn(len * 0.05, len * 0.2).coerceAtLeast(min(3.0, len * 0.2))
-        return pigtailPoints(sx, sy, xs[n - 1], ys[n - 1], t0, b, side)
+        b = b.coerceIn(3.0, len * 0.2)
+        val loops = max(drawn.size, (len * PIG_COVER / (PIG_PITCH * b)).toInt()).coerceIn(1, 40)
+        // 그린 만큼 감으면 그린 고리 사이 간격대로
+        val pitch = if (loops == drawn.size && loops >= 2) (centers.last() - centers.first()) / (loops - 1) else 0.0
+        return pigtailPoints(sx, sy, xs[n - 1], ys[n - 1], t0, b, side, loops, pitch)
     }
 
     /**
-     * 돼지꼬리 선의 점들: 곧은 선 위에 반지름 b인 원을 한 바퀴 (부드럽게 빨라졌다 느려지며) 더한다.
-     * 원의 꼭대기에서는 뒤로 가므로 고리가 생긴다. t0은 고리 가운데 자리(0..1), side는 고리가 놓일 쪽(±1)
+     * 돼지꼬리 선의 점들: 곧은 선 위에 반지름 b인 원을 [loops]바퀴 (바퀴마다 부드럽게 빨라졌다 느려지며) 더한다.
+     * 원의 꼭대기에서는 뒤로 가므로 바퀴마다 고리가 생긴다. t0은 고리들 가운데 자리(0..1), side는 고리가 놓일 쪽(±1).
+     * [pitch]는 고리 가운데 사이 간격 (매개변수, 0이면 고리 폭 + 조금). 다 안 들어가면 고리를 줄인다
      */
-    fun pigtailPoints(sx: Double, sy: Double, ex: Double, ey: Double, t0: Double, b0: Double, side: Double): DoubleArray {
+    fun pigtailPoints(
+        sx: Double, sy: Double, ex: Double, ey: Double, t0: Double, b0: Double, side: Double, loops: Int = 1,
+        pitch: Double = 0.0,
+    ): DoubleArray {
         val len = hypot(ex - sx, ey - sy)
         val ux = (ex - sx) / len; val uy = (ey - sy) / len
         var b = b0
-        // 고리 구간 반폭 w (매개변수): 가장 빠를 때 원을 도는 빠르기가 앞으로 가는 빠르기의 2.5배
+        // 고리 하나의 반폭 w (매개변수): 가장 빠를 때 원을 도는 빠르기가 앞으로 가는 빠르기의 2.5배.
+        // 고리 사이는 적어도 반폭의 0.4배만큼 곧게
         var w = 0.6 * PI * b / len
-        if (w > 0.42) { w = 0.42; b = w * len / (0.6 * PI) }
-        val c = t0.coerceIn(w + 0.06, 1 - w - 0.06)
-        val m = 240
+        var step = max(pitch, w * 2.4)
+        val room = 0.84
+        val span = (loops - 1) * step + 2 * w
+        if (span > room) {
+            b *= room / span; w *= room / span; step *= room / span
+        }
+        val gap = step - 2 * w
+        val total = (loops - 1) * step + 2 * w
+        val start = t0.coerceIn(total / 2 + 0.06, 1 - total / 2 - 0.06) - total / 2
+        val m = max(240, loops * 90)
         val out = DoubleArray((m + 1) * 2)
         for (k in 0..m) {
             val t = k / m.toDouble()
-            val s = ((t - (c - w)) / (2 * w)).coerceIn(0.0, 1.0)
-            val phi = 2 * PI * s * s * (3 - 2 * s)
+            var phi = 0.0
+            for (i in 0 until loops) {
+                val s = ((t - (start + i * (2 * w + gap))) / (2 * w)).coerceIn(0.0, 1.0)
+                phi += 2 * PI * s * s * (3 - 2 * s)
+            }
             val a = len * t + b * sin(phi)
             val q = side * b * (1 - cos(phi))
             // across 축은 (−uy, ux)
@@ -205,27 +232,44 @@ object ShapeGuides {
         return out
     }
 
-    /** 스스로 가로지르는 두 선분 (i, j) 중 사이가 가장 먼 것 (고리가 없으면 (-1, -1)) */
-    private fun findLoop(a: DoubleArray, c: DoubleArray): Pair<Int, Int> {
-        var bi = -1; var bj = -1
+    /**
+     * 그린 고리들 (스스로 가로지르는 두 선분 i < j). 앞에서부터 가장 먼저 닫히는 고리를 찾고 그 뒤에서 다시 찾는다.
+     * 손떨림으로 생긴 아주 작은 고리는 뺀다
+     */
+    private fun findLoops(a: DoubleArray, c: DoubleArray): List<Pair<Int, Int>> {
+        val out = ArrayList<Pair<Int, Int>>()
         val n = a.size
-        for (i in 0 until n - 1) for (j in i + 2 until n - 1) {
-            if (j - i <= bj - bi) continue
-            if (segmentsCross(a, c, i, j)) { bi = i; bj = j }
+        var i = 0
+        while (i < n - 1) {
+            var found = -1
+            for (j in i + 2 until n - 1) if (segmentsCross(a, c, i, j)) { found = j; break }
+            if (found >= 0 && found - i >= 4 && loopExtent(a, c, i, found) >= 3.0) {
+                out.add(i to found)
+                i = found + 1
+            } else i++
         }
-        return bi to bj
+        return out
     }
 
-    /** 반지름 1인 돼지꼬리 선의 닫힌 고리 크기 (가로·세로 중 긴 쪽). 고리 모양은 b에 비례한다 */
+    /** 고리 (i, j)의 크기: 가로·세로 폭 중 긴 쪽 */
+    private fun loopExtent(a: DoubleArray, c: DoubleArray, i: Int, j: Int): Double {
+        var lo = Double.MAX_VALUE; var hi = -Double.MAX_VALUE
+        var lo2 = Double.MAX_VALUE; var hi2 = -Double.MAX_VALUE
+        for (k in i + 1..j) {
+            lo = min(lo, c[k]); hi = max(hi, c[k])
+            lo2 = min(lo2, a[k]); hi2 = max(hi2, a[k])
+        }
+        return max(hi - lo, hi2 - lo2)
+    }
+
+    /** 반지름 1인 돼지꼬리 선의 닫힌 고리 크기. 고리 모양은 b에 비례한다 */
     private val LOOP_SIZE: Double by lazy {
         // 반지름 10, 길이 100으로 만들어 재고 10으로 나눈다 (고리 구간에 점이 넉넉하게)
         val pts = pigtailPoints(0.0, 0.0, 100.0, 0.0, 0.5, 10.0, 1.0)
         val m = pts.size / 2
         val a = DoubleArray(m) { pts[it * 2] }
         val c = DoubleArray(m) { pts[it * 2 + 1] }
-        val (i, j) = findLoop(a, c)
-        if (i < 0) 1.2
-        else max((i + 1..j).maxOf { a[it] } - (i + 1..j).minOf { a[it] }, (i + 1..j).maxOf { c[it] } - (i + 1..j).minOf { c[it] }) / 10.0
+        findLoops(a, c).firstOrNull()?.let { (i, j) -> loopExtent(a, c, i, j) / 10.0 } ?: 1.2
     }
 
     private fun segmentsCross(a: DoubleArray, c: DoubleArray, i: Int, j: Int): Boolean {
