@@ -1,0 +1,11 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- 칠하기(페인트 통) 버튼: 기울인 통과 손잡이 (안의 물감·떨어지는 방울은 ic_fill_mark) -->
+    <path android:strokeColor="?attr/colorControlNormal" android:strokeWidth="1.6"
+        android:strokeLineJoin="round"
+        android:pathData="M10,3.6L17,10.6L11,16.6L4,9.6Z" />
+    <path android:strokeColor="?attr/colorControlNormal" android:strokeWidth="1.6"
+        android:strokeLineCap="round"
+        android:pathData="M8.4,5.2L5.2,2" />
+</vector>

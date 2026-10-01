@@ -1,0 +1,15 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- 칠하기: 페인트 통 (옵션 줄) -->
+    <path android:fillColor="?attr/colorControlNormal" android:fillAlpha="0.45"
+        android:pathData="M5.4,10.6H15.6L11,15.2Z" />
+    <path android:strokeColor="?attr/colorControlNormal" android:strokeWidth="1.6"
+        android:strokeLineJoin="round"
+        android:pathData="M10,3.6L17,10.6L11,16.6L4,9.6Z" />
+    <path android:strokeColor="?attr/colorControlNormal" android:strokeWidth="1.6"
+        android:strokeLineCap="round"
+        android:pathData="M8.4,5.2L5.2,2" />
+    <path android:fillColor="?attr/colorControlNormal"
+        android:pathData="M19.3,13.4c0,0 -2.4,3 -2.4,4.6a2.4,2.4 0,0 0,4.8 0c0,-1.6 -2.4,-4.6 -2.4,-4.6z" />
+</vector>

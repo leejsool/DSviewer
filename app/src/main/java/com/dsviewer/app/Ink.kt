@@ -180,6 +180,10 @@ fun drawInkStroke(c: Canvas, paint: Paint, st: Stroke, alphaMul: Float = 1f) {
         drawInkTape(c, st, alphaMul)
         return
     }
+    if (st.fill != null) {
+        drawInkFill(c, st, alphaMul)
+        return
+    }
     paint.color = st.color
     if (st.tool == Tool.HIGHLIGHTER) {
         paint.alpha = (PdfInk.HL_ALPHA * 255).roundToInt()
@@ -211,9 +215,10 @@ fun drawInkStroke(c: Canvas, paint: Paint, st: Stroke, alphaMul: Float = 1f) {
 /**
  * SHAPE = 보정 펜 (그린 결과는 PEN 획으로 저장), LASER = 잠깐 보였다 사라지는 레이저 (저장하지 않음),
  * TEXT = 누른 자리에 글 넣기 (글은 [Stroke.text]가 있는 PEN 획으로 저장),
- * TAPE = 내용을 가리는 테이프 (누르면 보였다 가려졌다 한다. [Stroke.tape]가 있는 TAPE 획)
+ * TAPE = 내용을 가리는 테이프 (누르면 보였다 가려졌다 한다. [Stroke.tape]가 있는 TAPE 획),
+ * FILL = 영역 채우기 ([Stroke.fill]이 있는 FILL 획. 점들은 윤곽들이고, 필압 자리 1이 윤곽의 첫 점)
  */
-enum class Tool { PEN, SHAPE, HIGHLIGHTER, ERASER, LASSO, LASER, TEXT, TAPE }
+enum class Tool { PEN, SHAPE, HIGHLIGHTER, ERASER, LASSO, LASER, TEXT, TAPE, FILL }
 
 /** STROKE = 닿은 획을 통째로, AREA = 지우개가 지나간 부분만 */
 enum class EraserMode { STROKE, AREA }
@@ -241,7 +246,10 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
 
     /** 테이프면 그 모양·무늬 */
     var tape: TapeStyle? = null
-    /** 테이프에서 영역 지우개로 뚫은 구멍들 (x, y, 반지름)을 이어 붙인 것 */
+    /** 채우기면 그 무늬. 점들은 윤곽 여러 개 (짝홀 규칙: 바깥 윤곽과 구멍), 필압 자리가 1인 점에서 새 윤곽이 시작한다 */
+    var fill: FillStyle? = null
+
+    /** 테이프·채우기에서 영역 지우개로 뚫은 구멍들 (x, y, 반지름)을 이어 붙인 것 */
     var holes = FloatArray(0)
         private set
 
@@ -427,6 +435,7 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
         s.image = image
         s.text = text
         s.tape = tape
+        s.fill = fill
         s.holes = holes.copyOf()
         s.data = data.copyOf(count * 3)
         s.count = count
@@ -448,9 +457,9 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
         version++
     }
 
-    /** 구멍을 뚫다 보니 테이프가 거의(1pt 조각도) 남지 않았는지 */
+    /** 구멍을 뚫다 보니 테이프(채우기)가 거의(1pt 조각도) 남지 않았는지 */
     fun tapeGone(): Boolean {
-        val shape = tapeShape()
+        val shape = if (fill != null) fillShape() else tapeShape()
         val b = RectF()
         shape.computeBounds(b, true)
         val clip = Region(floor(b.left).toInt() - 1, floor(b.top).toInt() - 1, ceil(b.right).toInt() + 1, ceil(b.bottom).toInt() + 1)
@@ -517,8 +526,9 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
         return list
     }
 
-    /** (px, py)에서 반지름 r 안에 이 획이 지나가는지. 네모 테이프는 안쪽도 */
+    /** (px, py)에서 반지름 r 안에 이 획이 지나가는지. 네모 테이프·채우기는 안쪽도 */
     fun hitTest(px: Float, py: Float, r: Float): Boolean {
+        if (fill != null) return fillHit(px, py, r)
         val rr = r + halfWidth
         val rr2 = rr * rr
         if (count == 1) return dist2(px, py, x(0), y(0)) <= rr2
@@ -540,6 +550,76 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
             j = i
         }
         return inside
+    }
+
+    /** 채우기 윤곽마다 (첫 점 번호, 끝 점 번호) */
+    inline fun forEachContour(block: (from: Int, to: Int) -> Unit) {
+        var start = 0
+        for (i in 1..count) {
+            if (i == count || p(i) >= 0.5f) {
+                if (i - start >= 3) block(start, i - 1)
+                start = i
+            }
+        }
+    }
+
+    /** 채우기가 (px, py)를 덮는지 (짝홀 규칙, 지우개 구멍 자리는 아님) */
+    fun fillContains(px: Float, py: Float): Boolean {
+        if (fill == null) return false
+        var inside = false
+        forEachContour { from, to ->
+            var j = to
+            for (i in from..to) {
+                val xi = x(i); val yi = y(i); val xj = x(j); val yj = y(j)
+                if ((yi > py) != (yj > py) && px < (xj - xi) * (py - yi) / (yj - yi) + xi) inside = !inside
+                j = i
+            }
+        }
+        if (!inside) return false
+        for (i in holes.indices step 3) if (hypot(holes[i] - px, holes[i + 1] - py) <= holes[i + 2]) return false
+        return true
+    }
+
+    /** 채우기의 안이거나 윤곽에서 r 안인지 */
+    private fun fillHit(px: Float, py: Float, r: Float): Boolean {
+        if (fillContains(px, py)) return true
+        val r2 = r * r
+        var hit = false
+        forEachContour { from, to ->
+            if (hit) return@forEachContour
+            var j = to
+            for (i in from..to) {
+                if (segDist2(px, py, x(j), y(j), x(i), y(i)) <= r2 && !inHole(px, py)) { hit = true; break }
+                j = i
+            }
+        }
+        return hit
+    }
+
+    private fun inHole(px: Float, py: Float): Boolean {
+        for (i in holes.indices step 3) if (hypot(holes[i] - px, holes[i + 1] - py) <= holes[i + 2]) return true
+        return false
+    }
+
+    /** 채우기 영역 (쪽 좌표, 짝홀 규칙). 지우개 구멍은 뺀다 */
+    fun fillShape(): Path {
+        cachedShape?.let { if (cachedShapeVersion == version) return it }
+        val out = Path()
+        out.fillType = Path.FillType.EVEN_ODD
+        forEachContour { from, to ->
+            out.moveTo(x(from), y(from))
+            for (i in from + 1..to) out.lineTo(x(i), y(i))
+            out.close()
+        }
+        if (holes.isNotEmpty()) {
+            val cut = Path()
+            for (i in holes.indices step 3) cut.addCircle(holes[i], holes[i + 1], holes[i + 2], Path.Direction.CW)
+            val rest = Path()
+            if (rest.op(out, cut, Path.Op.DIFFERENCE)) out.set(rest)
+        }
+        cachedShape = out
+        cachedShapeVersion = version
+        return out
     }
 
     /** 테이프가 (px, py)를 덮고 있는지 (지우개로 뚫은 구멍 자리는 아님) */

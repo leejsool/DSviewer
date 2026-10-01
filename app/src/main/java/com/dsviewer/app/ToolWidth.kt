@@ -63,7 +63,7 @@ enum class WidthKind(val min: Float, val max: Float, val step: Float, val defaul
             Tool.ERASER -> ERASER
             Tool.LASER -> LASER
             Tool.TAPE -> TAPE
-            Tool.LASSO, Tool.TEXT -> error("선택·글 도구에는 굵기가 없습니다")
+            Tool.LASSO, Tool.TEXT, Tool.FILL -> error("선택·글·채우기 도구에는 굵기가 없습니다")
         }
     }
 }

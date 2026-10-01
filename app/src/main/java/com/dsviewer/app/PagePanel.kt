@@ -937,8 +937,7 @@ class PagePanel(
             val strokes = ink?.pages?.getOrNull(page)
             if (!strokes.isNullOrEmpty()) {
                 // 그림을 먼저, 필기를 그 위에
-                for (st in strokes) if (st.image != null) drawInkStroke(canvas, inkPaint, st)
-                for (st in strokes) if (st.image == null) drawInkStroke(canvas, inkPaint, st)
+                for (st in strokes.sortedBy { inkLayer(it) }) drawInkStroke(canvas, inkPaint, st)
             }
             canvas.restore()
         }

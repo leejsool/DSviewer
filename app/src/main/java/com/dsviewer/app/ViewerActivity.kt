@@ -240,6 +240,13 @@ class ViewerActivity : AppCompatActivity() {
 
             override fun onPullAddPage() = appendBlankPage()
 
+            override fun onFillFailed() {
+                Toast.makeText(
+                    this@ViewerActivity, "닫힌 영역을 찾지 못했어요. 도형 안을 누르거나, 선이 끊긴 곳을 이어 그려 주세요.",
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+
             override fun onShapeFailed(kind: ShapeKind) {
                 Toast.makeText(this@ViewerActivity, "${withRo(kind.label)} 맞추지 못했어요. 조금 더 크게 그려 보세요.", Toast.LENGTH_SHORT).show()
             }
@@ -1641,7 +1648,7 @@ class ViewerActivity : AppCompatActivity() {
         val c = Canvas(bmp)
         c.scale(scale, scale)
         val paint = inkPaint()
-        inkDoc.pages.getOrNull(p)?.sortedBy { if (it.image != null) 0 else 1 }?.forEach { drawInkStroke(c, paint, it) }
+        inkDoc.pages.getOrNull(p)?.sortedBy { inkLayer(it) }?.forEach { drawInkStroke(c, paint, it) }
         return bmp
     }
 
@@ -2164,7 +2171,7 @@ class ViewerActivity : AppCompatActivity() {
 
     /** 툴바 도구 차례와 이름 (보이기·숨기기 창) */
     private val toolNames = listOf(
-        Tool.PEN to "펜", Tool.SHAPE to "보정 펜", Tool.HIGHLIGHTER to "형광펜", Tool.TAPE to "테이프",
+        Tool.PEN to "펜", Tool.SHAPE to "보정 펜", Tool.HIGHLIGHTER to "형광펜", Tool.FILL to "채우기", Tool.TAPE to "테이프",
         Tool.TEXT to "글 넣기", Tool.ERASER to "지우개", Tool.LASSO to "선택", Tool.LASER to "레이저 포인터",
     )
 
@@ -2353,6 +2360,33 @@ class ViewerActivity : AppCompatActivity() {
                 addOptionSeparator()
                 addOption(R.drawable.ic_eraser_page, if (hl) "쪽 형광펜 모두 지우기" else "쪽 전체 지우기", false) {
                     confirmClearPage()
+                }
+            }
+            Tool.FILL -> {
+                val erasing = docView.fillErasing
+                val free = docView.fillMode == FillMode.FREE
+                addOption(R.drawable.ic_fill_bucket, "칠하기", !erasing && !free) { setFillMode(FillMode.BUCKET) }
+                addOption(R.drawable.ic_fill_free, "자유 영역", !erasing && free) { setFillMode(FillMode.FREE) }
+                // 채우기만 지우는 지우개: 누르면 획 지우개 / 영역 지우개가 펼쳐진다
+                addOption(tapeEraserIcon(docView.fillEraseMode), "지우개 ▾", erasing, closeBar = false) { showFillEraserPopup(it) }
+                addOptionSeparator()
+                if (!erasing && free) {
+                    // 자유 영역만: 손떨림 보정 단계, 다각형 보정 켜고 끄기
+                    addOption(R.drawable.ic_stabilizer, "손떨림 보정 ▾", docView.fillSmoothing > 0, closeBar = false) {
+                        showFillSmoothingPopup(it)
+                    }
+                    addOption(R.drawable.ic_fill_polygon, "다각형 보정", docView.fillPolygon) {
+                        docView.fillPolygon = !docView.fillPolygon
+                        prefs.edit().putBoolean("fillPolygon", docView.fillPolygon).apply()
+                        toast(if (docView.fillPolygon) "거의 곧게 그린 변을 곧게 폅니다." else "그린 모양 그대로 채웁니다.")
+                    }
+                    addOptionSeparator()
+                }
+                if (!erasing) {
+                    // 무늬: 한 칸에 지금 무늬만 보이고, 누르면 모두 펼쳐진다
+                    val p = docView.fillPattern
+                    addOption(FillPatternDrawable(p, docView.fillColor, resources.displayMetrics.density), "${p.label} ▾", false,
+                        closeBar = false) { showFillPatternPopup(it) }
                 }
             }
             Tool.TAPE -> {
@@ -2559,6 +2593,88 @@ class ViewerActivity : AppCompatActivity() {
             docView.tapePattern = p
             prefs.edit().putString("tapePattern", p.name).apply()
         }
+    }
+
+    // ----- 채우기 -----
+
+    /** 칠하기 / 자유 영역. 채우기 지우개는 끈다 */
+    private fun setFillMode(m: FillMode) {
+        docView.fillMode = m
+        docView.fillErasing = false
+        prefs.edit().putString("fillMode", m.name).putBoolean("fillErasing", false).apply()
+        updateFillIcon()
+        buildColors()
+        toast(if (m == FillMode.BUCKET) "도형 안을 누르면 그 안을 채웁니다." else "닫힌 곡선을 그리면 가장 바깥 선 안을 모두 채웁니다.")
+    }
+
+    /** 채우기만 지우는 지우개로 (획 / 영역) */
+    private fun setFillEraser(mode: EraserMode) {
+        docView.fillErasing = true
+        docView.fillEraseMode = mode
+        prefs.edit().putBoolean("fillErasing", true).putString("fillEraseMode", mode.name).apply()
+        updateFillIcon()
+        applyToolWidth(Tool.FILL)
+        buildColors()  // 지우개는 색 칸 없이 크기 칸
+    }
+
+    private fun showFillEraserPopup(anchor: View) {
+        val erasing = docView.fillErasing
+        val modes = listOf(EraserMode.STROKE to "획 지우개", EraserMode.AREA to "영역 지우개")
+        showFlyout(anchor, modes.map { (m, label) ->
+            Triple(tapeEraserIcon(m), label, erasing && docView.fillEraseMode == m)
+        }) { i -> setFillEraser(modes[i].first) }
+    }
+
+    private fun showFillSmoothingPopup(anchor: View) {
+        showFlyout(anchor, PenSmoothing.labels.mapIndexed { i, label ->
+            Triple(getDrawable(R.drawable.ic_stabilizer)!!, label, docView.fillSmoothing == i)
+        }, title = "손떨림\n보정") { i ->
+            docView.fillSmoothing = i
+            prefs.edit().putInt("fillSmoothing", i).apply()
+            toast(if (i == 0) "손떨림 보정을 껐습니다." else "손떨림 보정: ${PenSmoothing.labels[i]}")
+        }
+    }
+
+    /** 채우기 무늬 고르기: 색(꽉 채움)과 무늬들이 펼쳐진다 */
+    private fun showFillPatternPopup(anchor: View) {
+        val d = resources.displayMetrics.density
+        showFlyout(anchor, FillPattern.entries.map { p ->
+            Triple(FillPatternDrawable(p, docView.fillColor, d), p.label, p == docView.fillPattern)
+        }, separatorBefore = setOf(1)) { i ->
+            val p = FillPattern.entries[i]
+            docView.fillPattern = p
+            prefs.edit().putString("fillPattern", p.name).apply()
+            updateFillIcon()
+        }
+    }
+
+    /**
+     * 채우기 버튼: 칠하기면 페인트 통, 자유 영역이면 닫힌 곡선 (색 자국은 지금 채우기 색).
+     * 채우기 지우개면 오른쪽 아래에 작은 지우개를 겹친다
+     */
+    private fun updateFillIcon() {
+        val button = toolButtons.getValue(Tool.FILL)
+        val free = docView.fillMode == FillMode.FREE
+        val layers = mutableListOf(
+            getDrawable(if (free) R.drawable.ic_fill_free_mark else R.drawable.ic_fill_mark)!!,
+            getDrawable(if (free) R.drawable.ic_fill_free_body else R.drawable.ic_fill_body)!!,
+        )
+        if (docView.fillErasing) layers.add(getDrawable(R.drawable.ic_eraser_body)!!)
+        val icon = LayerDrawable(layers.toTypedArray())
+        icon.setId(0, R.id.tool_mark)
+        if (docView.fillErasing) {
+            val d = resources.displayMetrics.density
+            icon.setLayerInset(0, 0, 0, (5 * d).toInt(), (5 * d).toInt())
+            icon.setLayerInset(1, 0, 0, (5 * d).toInt(), (5 * d).toInt())
+            icon.setLayerInset(2, (11 * d).toInt(), (11 * d).toInt(), 0, 0)
+        }
+        button.setImageDrawable(icon)
+        button.contentDescription = when {
+            docView.fillErasing -> if (docView.fillEraseMode == EraserMode.AREA) "채우기 영역 지우개" else "채우기 획 지우개"
+            free -> "자유 영역 채우기"
+            else -> "칠하기"
+        }
+        updateToolMarks()
     }
 
     // ----- 펼침 창 (롤오버) -----
@@ -2810,6 +2926,10 @@ class ViewerActivity : AppCompatActivity() {
     private val hlDefaults = intArrayOf(
         0xFFFFEB3B.toInt(), 0xFF9CFF57.toInt(), 0xFFFF8AB8.toInt(), 0xFF7FD8FF.toInt(), 0xFFFFB74D.toInt()
     )
+    /** 채우기: 도형을 칠하는 옅은 색들 (곱하기로 칠해 선·글자가 비친다) */
+    private val fillDefaults = intArrayOf(
+        0xFFFFE082.toInt(), 0xFFA5D6A7.toInt(), 0xFF90CAF9.toInt(), 0xFFF8BBD0.toInt(), 0xFFCE93D8.toInt()
+    )
     /** 테이프: 마스킹 테이프 같은 옅은 색들 */
     private val tapeDefaults = intArrayOf(
         0xFFF6C744.toInt(), 0xFF7FC8F8.toInt(), 0xFFF48FB1.toInt(), 0xFF81C784.toInt(), 0xFFB0B0B0.toInt()
@@ -2828,9 +2948,11 @@ class ViewerActivity : AppCompatActivity() {
     private lateinit var hlSlots: ColorSlots
     private lateinit var laserSlots: ColorSlots
     private lateinit var tapeSlots: ColorSlots
+    private lateinit var fillSlots: ColorSlots
 
     private fun slotsOf(t: Tool) = when (t) {
         Tool.HIGHLIGHTER -> hlSlots
+        Tool.FILL -> fillSlots
         Tool.LASER -> laserSlots
         Tool.TAPE -> tapeSlots
         else -> penSlots
@@ -2861,6 +2983,11 @@ class ViewerActivity : AppCompatActivity() {
         when (t) {
             Tool.HIGHLIGHTER -> docView.hlColor = hlSlots.color
             Tool.LASER -> docView.laserColor = laserSlots.color
+            Tool.FILL -> {
+                docView.fillColor = fillSlots.color
+                // 무늬 칸이 떠 있으면 새 색으로
+                if (optionTool == Tool.FILL) showOptionBar(Tool.FILL)
+            }
             Tool.TAPE -> {
                 docView.tapeColor = tapeSlots.color
                 // 무늬 칸이 떠 있으면 새 색으로
@@ -2906,15 +3033,24 @@ class ViewerActivity : AppCompatActivity() {
             Tool.LASER to findViewById(R.id.toolLaser),
             Tool.TEXT to findViewById(R.id.toolText),
             Tool.TAPE to findViewById(R.id.toolTape),
+            Tool.FILL to findViewById(R.id.toolFill),
         )
         penSlots = loadSlots("pen", penDefaults)
         hlSlots = loadSlots("hl", hlDefaults)
         laserSlots = loadSlots("laser", laserDefaults)
         tapeSlots = loadSlots("tape", tapeDefaults)
+        fillSlots = loadSlots("fill", fillDefaults)
         applyToolColor(Tool.PEN)
         applyToolColor(Tool.HIGHLIGHTER)
         applyToolColor(Tool.LASER)
         applyToolColor(Tool.TAPE)
+        applyToolColor(Tool.FILL)
+        docView.fillMode = if (prefs.getString("fillMode", null) == FillMode.FREE.name) FillMode.FREE else FillMode.BUCKET
+        docView.fillPattern = FillPattern.of(prefs.getString("fillPattern", null))
+        docView.fillSmoothing = prefs.getInt("fillSmoothing", 2)
+        docView.fillPolygon = prefs.getBoolean("fillPolygon", true)
+        docView.fillErasing = prefs.getBoolean("fillErasing", false)
+        docView.fillEraseMode = if (prefs.getString("fillEraseMode", null) == EraserMode.AREA.name) EraserMode.AREA else EraserMode.STROKE
         docView.tapeRect = prefs.getBoolean("tapeRect", false)
         docView.tapeErasing = prefs.getBoolean("tapeErasing", false)
         docView.tapeEraseMode = if (prefs.getString("tapeEraseMode", null) == EraserMode.AREA.name) EraserMode.AREA else EraserMode.STROKE
@@ -2944,6 +3080,7 @@ class ViewerActivity : AppCompatActivity() {
         updateLassoIcon()
         updateHighlighterIcon()
         updateTapeIcon()
+        updateFillIcon()
         updatePenIcon()
         toolButtons.forEach { (t, b) ->
             b.setOnClickListener {
@@ -2965,10 +3102,14 @@ class ViewerActivity : AppCompatActivity() {
                             toast("펜을 한 번 더 누르면 펜 종류(만년필·붓펜·연필 등)와 손떨림 보정을 고를 수 있습니다.")
                         }
                     }
-                } else if (t == Tool.ERASER || t == Tool.TAPE) {
-                    // 테이프·지우개는 누를 때마다 옵션 줄을 열고, 열려 있으면 닫는다
+                } else if (t == Tool.ERASER || t == Tool.TAPE || t == Tool.FILL) {
+                    // 테이프·채우기·지우개는 누를 때마다 옵션 줄을 열고, 열려 있으면 닫는다
                     if (t == Tool.TAPE && docView.tool != Tool.TAPE) {
                         toast("테이프를 누르면 가린 내용이 보이고, 다시 누르면 가려집니다. 손가락으로는 어느 도구에서나 됩니다.")
+                    }
+                    if (t == Tool.FILL && docView.tool != Tool.FILL && !docView.fillErasing) {
+                        toast(if (docView.fillMode == FillMode.BUCKET) "도형 안을 누르면 그 안을 채웁니다."
+                            else "닫힌 곡선을 그리면 가장 바깥 선 안을 모두 채웁니다.")
                     }
                     val showing = optionTool == t
                     selectTool(t)
@@ -3183,6 +3324,7 @@ class ViewerActivity : AppCompatActivity() {
     private fun widthTool(t: Tool) = when {
         t == Tool.SHAPE -> Tool.PEN
         t == Tool.TAPE && docView.tapeErasing -> Tool.ERASER
+        t == Tool.FILL && docView.fillErasing -> Tool.ERASER
         else -> t
     }
 
@@ -3197,7 +3339,7 @@ class ViewerActivity : AppCompatActivity() {
             Tool.ERASER -> docView.eraserRadiusDp = v
             Tool.LASER -> docView.laserWidthDp = v
             Tool.TAPE -> docView.tapeWidth = v
-            Tool.LASSO, Tool.TEXT -> {}
+            Tool.LASSO, Tool.TEXT, Tool.FILL -> {}
         }
     }
 
@@ -3206,6 +3348,7 @@ class ViewerActivity : AppCompatActivity() {
         Tool.HIGHLIGHTER -> docView.hlColor
         Tool.LASER -> docView.laserColor
         Tool.TAPE -> docView.tapeColor
+        Tool.FILL -> docView.fillColor
         Tool.ERASER, Tool.LASSO -> Color.BLACK
     }
 
@@ -3264,7 +3407,10 @@ class ViewerActivity : AppCompatActivity() {
 
     /** 펜 아래 S자 곡선과 형광펜 아래 줄을 지금 고른 색으로 칠한다 */
     private fun updateToolMarks() {
-        for ((t, color) in listOf(Tool.PEN to docView.penColor, Tool.HIGHLIGHTER to docView.hlColor, Tool.LASER to docView.laserColor, Tool.TAPE to docView.tapeColor)) {
+        for ((t, color) in listOf(
+            Tool.PEN to docView.penColor, Tool.HIGHLIGHTER to docView.hlColor, Tool.LASER to docView.laserColor,
+            Tool.TAPE to docView.tapeColor, Tool.FILL to docView.fillColor,
+        )) {
             val button = toolButtons[t] ?: continue
             val layers = button.drawable?.mutate() as? LayerDrawable ?: continue
             layers.findDrawableByLayerId(R.id.tool_mark)?.mutate()?.setTint(color)
@@ -3278,7 +3424,8 @@ class ViewerActivity : AppCompatActivity() {
         buildWidths()
         colorRow.removeAllViews()
         val t = docView.tool
-        val noColor = t == Tool.ERASER || t == Tool.LASSO || (t == Tool.TAPE && docView.tapeErasing)
+        val noColor = t == Tool.ERASER || t == Tool.LASSO || (t == Tool.TAPE && docView.tapeErasing) ||
+            (t == Tool.FILL && docView.fillErasing)
         colorSep.visibility = if (noColor) View.GONE else View.VISIBLE
         lassoRow.visibility = if (t == Tool.LASSO) View.VISIBLE else View.GONE
         pasteButton.visibility = if (docView.hasClipboard) View.VISIBLE else View.GONE

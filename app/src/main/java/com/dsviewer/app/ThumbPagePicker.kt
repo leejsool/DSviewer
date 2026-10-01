@@ -197,7 +197,7 @@ class ThumbPagePicker(
                     strokes?.getOrNull(position)?.let { list ->
                         val c = Canvas(bmp)
                         c.scale(scale, scale)
-                        list.sortedBy { if (it.image != null) 0 else 1 }.forEach { drawInkStroke(c, paint, it) }
+                        list.sortedBy { inkLayer(it) }.forEach { drawInkStroke(c, paint, it) }
                     }
                     cache.put(position, bmp)
                     if (holder.page == position) holder.image.setImageBitmap(bmp)

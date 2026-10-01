@@ -124,14 +124,15 @@ object PdfInk {
                     val list: MutableList<PDAnnotation> =
                         page.annotations.filterTo(ArrayList()) { !it.cosObject.containsKey(KEY_NAME) }
                     if (i < pages.size) {
-                        // 그림을 먼저 (다른 앱에서도 필기가 그림 위에 보이게)
-                        for (s in pages[i].sortedBy { if (it.image != null) 0 else 1 }) {
+                        // 그림, 채우기를 먼저 (다른 앱에서도 필기가 그 위에 보이게)
+                        for (s in pages[i].sortedBy { inkLayer(it) }) {
                             if (s.count == 0) continue
                             list.add(
                                 when {
                                     s.image != null -> makeImageAnnotation(doc, page, s)
                                     s.text != null -> makeTextAnnotation(doc, page, s, texts!!)
                                     s.tape != null -> makeTapeAnnotation(doc, page, s)
+                                    s.fill != null -> makeFillAnnotation(doc, page, s)
                                     else -> makeAnnotation(doc, page, s)
                                 }
                             )
@@ -467,9 +468,119 @@ object PdfInk {
         return annot
     }
 
+    /** 경로를 잘게 나눈 다각형들 (사용자 좌표) */
+    private fun pathPolys(path: android.graphics.Path, box: PDRectangle, rot: Int): List<FloatArray> {
+        val polys = ArrayList<FloatArray>()
+        val tmpX = FloatArray(1)
+        val tmpY = FloatArray(1)
+        fun addPoly(xs: List<Float>) {
+            if (xs.size < 6) return
+            val out = FloatArray(xs.size)
+            for (i in 0 until xs.size / 2) {
+                toUser(xs[i * 2], xs[i * 2 + 1], box, rot, tmpX, tmpY, 0)
+                out[i * 2] = tmpX[0]
+                out[i * 2 + 1] = tmpY[0]
+            }
+            polys.add(out)
+        }
+        // 곡선을 잘게 나눈 점들 (분수, x, y). 윤곽이 끊기는 곳은 같은 분수가 두 번 나온다
+        val a = path.approximate(0.2f)
+        val cur = ArrayList<Float>()
+        var i = 0
+        while (i + 2 < a.size) {
+            if (i > 0 && a[i] == a[i - 3] && (a[i + 1] != a[i - 2] || a[i + 2] != a[i - 1])) {
+                addPoly(cur)
+                cur.clear()
+            }
+            cur.add(a[i + 1]); cur.add(a[i + 2])
+            i += 3
+        }
+        addPoly(cur)
+        return polys
+    }
+
+    /**
+     * 채우기 주석(Stamp): 외형에 영역을 곱하기로 칠한다 (아래 PDF의 선·글자가 그대로 보이게).
+     * 무늬는 바탕 없이 무늬만 (타일 무늬)
+     */
+    private fun makeFillAnnotation(doc: PDDocument, page: PDPage, s: Stroke): PDAnnotation {
+        val style = s.fill!!
+        val box = page.cropBox
+        val rot = ((page.rotation % 360) + 360) % 360
+        val polys = ArrayList<FloatArray>()
+        if (s.holes.isEmpty()) {
+            // 윤곽 그대로 (짝홀 규칙)
+            val tx = FloatArray(1)
+            val ty = FloatArray(1)
+            s.forEachContour { from, to ->
+                val out = FloatArray((to - from + 1) * 2)
+                for (k in from..to) {
+                    toUser(s.x(k), s.y(k), box, rot, tx, ty, 0)
+                    out[(k - from) * 2] = tx[0]
+                    out[(k - from) * 2 + 1] = ty[0]
+                }
+                polys.add(out)
+            }
+        } else polys.addAll(pathPolys(s.fillShape(), box, rot))
+        var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE; var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
+        for (pl in polys) for (k in 0 until pl.size / 2) {
+            minX = min(minX, pl[k * 2]); maxX = max(maxX, pl[k * 2])
+            minY = min(minY, pl[k * 2 + 1]); maxY = max(maxY, pl[k * 2 + 1])
+        }
+        if (polys.isEmpty()) { minX = 0f; minY = 0f; maxX = 1f; maxY = 1f }
+        val rect = PDRectangle(minX - 1f, minY - 1f, maxX - minX + 2f, maxY - minY + 2f)
+
+        val ap = PDAppearanceStream(doc)
+        ap.bBox = rect
+        ap.resources = PDResources()
+        val gs = PDExtendedGraphicsState()
+        gs.blendMode = BlendMode.MULTIPLY
+        val gsName = ap.resources.add(gs)
+        val sb = StringBuilder()
+        fun n(v: Float) = String.format(java.util.Locale.US, "%.3f", v)
+        val c = s.color
+        sb.append("q\n/").append(gsName.name).append(" gs\n")
+        if (style.pattern == FillPattern.SOLID) {
+            sb.append(n(Color.red(c) / 255f)).append(' ').append(n(Color.green(c) / 255f)).append(' ')
+                .append(n(Color.blue(c) / 255f)).append(" rg\n")
+        } else {
+            val anchorX = FloatArray(1)
+            val anchorY = FloatArray(1)
+            toUser(s.x(0), s.y(0), box, rot, anchorX, anchorY, 0)
+            val pat = tilePattern(FillTile.shapes(style.pattern), FillTile.PERIOD, FillTile.inkColor(c), anchorX[0], anchorY[0])
+            val name = ap.resources.add(pat)
+            sb.append("/Pattern cs /").append(name.name).append(" scn\n")
+        }
+        for (pl in polys) {
+            sb.append(n(pl[0])).append(' ').append(n(pl[1])).append(" m\n")
+            for (k in 1 until pl.size / 2) sb.append(n(pl[k * 2])).append(' ').append(n(pl[k * 2 + 1])).append(" l\n")
+            sb.append("h\n")
+        }
+        sb.append("f*\nQ\n")
+        ap.cosObject.createOutputStream(COSName.FLATE_DECODE).use { it.write(sb.toString().toByteArray(Charsets.US_ASCII)) }
+
+        val dict = COSDictionary()
+        dict.setItem(COSName.TYPE, COSName.ANNOT)
+        dict.setItem(COSName.SUBTYPE, COSName.getPDFName("Stamp"))
+        val annot = PDAnnotation.createAnnotation(dict)
+        annot.rectangle = rect
+        annot.isPrinted = true
+        annot.annotationName = UUID.randomUUID().toString()
+        annot.setModifiedDate(Calendar.getInstance())
+        annot.page = page
+        dict.setString(KEY_NAME, encode(s))
+        val apd = PDAppearanceDictionary()
+        apd.setNormalAppearance(ap)
+        annot.appearance = apd
+        return annot
+    }
+
     /** 테이프 무늬 한 칸 (TapeTile.shapes)을 PDF 타일 무늬로. 무늬는 테이프의 첫 점 (x0, y0)에 붙인다 */
-    private fun tilePattern(p: TapePattern, base: Int, x0: Float, y0: Float): PDTilingPattern {
-        val s = TapeTile.PERIOD
+    private fun tilePattern(p: TapePattern, base: Int, x0: Float, y0: Float): PDTilingPattern =
+        tilePattern(TapeTile.shapes(p), TapeTile.PERIOD, TapeTile.patternColor(base), x0, y0)
+
+    /** 무늬 한 칸 ([shapes], 한 변 [s] pt)을 [c] 색의 PDF 타일 무늬로. 무늬는 (x0, y0)에 붙인다 */
+    private fun tilePattern(shapes: List<TapeTile.Shape>, s: Float, c: Int, x0: Float, y0: Float): PDTilingPattern {
         val pat = PDTilingPattern()
         pat.paintType = PDTilingPattern.PAINT_COLORED
         pat.tilingType = PDTilingPattern.TILING_CONSTANT_SPACING
@@ -479,11 +590,10 @@ object PdfInk {
         pat.cosObject.setItem(COSName.MATRIX, COSArray().apply {
             floatArrayOf(1f, 0f, 0f, 1f, x0, y0).forEach { add(COSFloat(it)) }
         })
-        val c = TapeTile.patternColor(base)
         PDPatternContentStream(pat).use { cs ->
             cs.setNonStrokingColor(Color.red(c) / 255f, Color.green(c) / 255f, Color.blue(c) / 255f)
             // 칸 좌표는 아래로 갈수록 y가 커지므로 위아래를 뒤집어 넣는다
-            for (sh in TapeTile.shapes(p)) when (sh) {
+            for (sh in shapes) when (sh) {
                 is TapeTile.Box -> cs.addRect(sh.l, s - sh.b, sh.r - sh.l, sh.b - sh.t)
                 is TapeTile.Dot -> {
                     // 원: 베지어 네 개
@@ -540,12 +650,14 @@ object PdfInk {
     // 다른 펜 종류는 PenStyle.code: B 볼펜, F 만년필, R 붓펜, C 연필, G 캘리그래피 (예전 버전은 모르는 글자를 사인펜으로 읽는다)
     // 글은 굵기 자리에 글자 크기, 끝에 |글(UTF-8 Base64)|줄 바꾸는 폭|서식(JSON, UTF-8 Base64)을 붙인다
     // 테이프는 끝에 |R(네모) 또는 P(펜)|무늬 이름, 지우개로 뚫은 구멍이 있으면 |x,y,r;x,y,r;... 을 붙인다
+    // 채우기(A)는 점들이 윤곽들 (필압 1이 윤곽의 첫 점), 끝에 |무늬 이름, 구멍이 있으면 |x,y,r;... 을 붙인다
     private fun encode(s: Stroke): String {
         val sb = StringBuilder(s.count * 16 + 32)
         val kind = when {
             s.image != null -> 'I'
             s.text != null -> 'T'
             s.tape != null -> 'K'
+            s.fill != null -> 'A'
             s.tool == Tool.HIGHLIGHTER -> 'H'
             s.dashed -> 'D'
             else -> s.pen.code
@@ -562,15 +674,21 @@ object PdfInk {
             if (it.wrap < InkText.NO_WRAP || rich) sb.append('|').append(r2(it.wrap))
             if (rich) sb.append('|').append(Base64.encodeToString(it.rich.toJson().toByteArray(), Base64.NO_WRAP))
         }
+        fun holes() {
+            if (s.holes.isEmpty()) return
+            sb.append('|')
+            for (i in s.holes.indices step 3) {
+                if (i > 0) sb.append(';')
+                sb.append(r2(s.holes[i])).append(',').append(r2(s.holes[i + 1])).append(',').append(r2(s.holes[i + 2]))
+            }
+        }
         s.tape?.let {
             sb.append('|').append(if (it.rect) 'R' else 'P').append('|').append(it.pattern.name)
-            if (s.holes.isNotEmpty()) {
-                sb.append('|')
-                for (i in s.holes.indices step 3) {
-                    if (i > 0) sb.append(';')
-                    sb.append(r2(s.holes[i])).append(',').append(r2(s.holes[i + 1])).append(',').append(r2(s.holes[i + 2]))
-                }
-            }
+            holes()
+        }
+        s.fill?.let {
+            sb.append('|').append(it.pattern.name)
+            holes()
         }
         return sb.toString()
     }
@@ -582,6 +700,7 @@ object PdfInk {
             val tool = when (parts[1]) {
                 "H" -> Tool.HIGHLIGHTER
                 "K" -> Tool.TAPE
+                "A" -> Tool.FILL
                 else -> Tool.PEN
             }
             val color = parts[2].toLong(16).toInt()
@@ -595,6 +714,13 @@ object PdfInk {
             if (tool == Tool.TAPE) {
                 s.tape = TapeStyle(TapePattern.of(parts.getOrNull(6)), parts.getOrNull(5) == "R")
                 parts.getOrNull(7)?.split(';')?.forEach { h ->
+                    val v = h.split(',')
+                    if (v.size == 3) s.withHole(v[0].toFloat(), v[1].toFloat(), v[2].toFloat())?.let { s.copyHolesFrom(it) }
+                }
+            }
+            if (tool == Tool.FILL) {
+                s.fill = FillStyle(FillPattern.of(parts.getOrNull(5)))
+                parts.getOrNull(6)?.split(';')?.forEach { h ->
                     val v = h.split(',')
                     if (v.size == 3) s.withHole(v[0].toFloat(), v[1].toFloat(), v[2].toFloat())?.let { s.copyHolesFrom(it) }
                 }

@@ -1,0 +1,10 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- 자유 영역: 그린 닫힌 곡선 안을 채움 (옵션 줄) -->
+    <path android:fillColor="?attr/colorControlNormal" android:fillAlpha="0.35"
+        android:pathData="M12,4C17.6,4 20.8,6.8 20,11C19.2,15.2 14.6,14 12,16.8C9.4,19.6 4.2,18.6 3.4,14C2.6,9.4 6.4,4 12,4Z" />
+    <path android:strokeColor="?attr/colorControlNormal" android:strokeWidth="1.6"
+        android:strokeLineJoin="round"
+        android:pathData="M12,4C17.6,4 20.8,6.8 20,11C19.2,15.2 14.6,14 12,16.8C9.4,19.6 4.2,18.6 3.4,14C2.6,9.4 6.4,4 12,4Z" />
+</vector>

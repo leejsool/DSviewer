@@ -67,6 +67,8 @@ class DocumentView @JvmOverloads constructor(
         fun onViewportChanged() {}
         /** 마지막 쪽 아래로 끝까지 끌어 올렸다가 놓음 → 맨 뒤에 빈 쪽 붙이기 */
         fun onPullAddPage() {}
+        /** 칠하기: 누른 자리를 둘러싼 닫힌 영역을 찾지 못함 */
+        fun onFillFailed() {}
     }
 
     var listener: Listener? = null
@@ -170,6 +172,34 @@ class DocumentView @JvmOverloads constructor(
     private var tapDownTime = 0L
     private var tapDownSx = 0f
     private var tapDownSy = 0f
+
+    // ---- 채우기 ----
+    var fillColor = 0xFFFFE082.toInt()
+    var fillPattern = FillPattern.SOLID
+    var fillMode = FillMode.BUCKET
+    /** 자유 영역: 손떨림 보정 단계 (0 끔 ~ 3 강하게) */
+    var fillSmoothing = 2
+    /** 자유 영역: 거의 곧게 그린 변을 곧게 펴 다각형으로 */
+    var fillPolygon = true
+    /** true면 채우기 도구가 채우기만 지우는 지우개 */
+    var fillErasing = false
+    var fillEraseMode = EraserMode.STROKE
+    /** 칠하기: 누른 자리 (쪽, x, y). 떼기 전에 많이 움직이면 취소 */
+    private var fillTap: Triple<Int, Float, Float>? = null
+    private var fillPressing = false
+    /** 영역을 찾는 중인 자유 영역들 (쪽, 그린 획): 끝날 때까지 흐리게 보여 준다 */
+    private val fillPending = ArrayList<Pair<Int, Stroke>>()
+    /** 칠하기 영역을 찾는 중 (끝날 때까지 다음 칠하기는 받지 않는다) */
+    private var bucketJob: Job? = null
+    /** 일반 지우개가 이번 획에서 채우기도 지울지: 처음 닿은 것이 채우기뿐이면 true, 다른 필기면 false (null = 아직) */
+    private var eraseFills: Boolean? = null
+    private val fillDraftPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { blendMode = BlendMode.MULTIPLY }
+    private val fillDraftLine = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeJoin = Paint.Join.ROUND
+        strokeCap = Paint.Cap.ROUND
+    }
+    private val fillDraftPath = Path()
 
     /** 글 도구: 누른 자리 (쪽, x, y). 떼기 전에 많이 움직이면 취소 */
     private var textTap: Triple<Int, Float, Float>? = null
@@ -649,9 +679,11 @@ class DocumentView @JvmOverloads constructor(
             // 찾은 글자: 형광펜처럼 글자 아래에 비치게
             searchHits[i]?.forEach { canvas.drawRect(it, hitPaint) }
             val dragging = (moving || resizing || rotating) && selPage == i
-            // 그림을 먼저, 필기를 그 위에
-            for (st in inkDoc.pages[i]) if (st.image != null && (!dragging || st !in selSet)) drawStroke(canvas, st)
-            for (st in inkDoc.pages[i]) if (st.image == null && st !== hiddenStroke && (!dragging || st !in selSet)) drawStroke(canvas, st)
+            // 그림을 먼저, 채우기를 그 위에, 나머지 필기는 맨 위에
+            for (layer in 0..2) for (st in inkDoc.pages[i]) {
+                if (inkLayer(st) == layer && st !== hiddenStroke && (!dragging || st !in selSet)) drawStroke(canvas, st)
+            }
+            for ((p, st) in fillPending) if (p == i) drawFillDraft(canvas, st)
             if (dragging) {
                 // 옮기거나 크기를 바꾸는 중인 획은 손을 뗄 때까지 그림만 바꿔 그린다
                 canvas.save()
@@ -664,6 +696,7 @@ class DocumentView @JvmOverloads constructor(
             for ((p, st) in laserStrokes) if (p == i) drawLaser(canvas, st, laserAlpha)
             if (curPage == i) curStroke?.let {
                 if (it.tool == Tool.LASER) drawLaser(canvas, it, 1f)
+                else if (it.tool == Tool.FILL) drawFillDraft(canvas, it)
                 else if (tool == Tool.SHAPE) {
                     // 보정 펜: 내 획은 흐리게, 맞춘 도형은 조금 더 진하게 미리 보기
                     drawStroke(canvas, it, 0.3f)
@@ -1177,6 +1210,10 @@ class DocumentView @JvmOverloads constructor(
         override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
             // 글 도구: 손가락으로 톡 눌러도 글을 넣거나 고친다 (손가락 필기를 꺼 두었을 때)
             if (tool == Tool.TEXT && !readOnly) hitPage(e.x, e.y)?.let { tapText(it.first, it.second, it.third) }
+            // 칠하기: 손가락으로 톡 눌러도 칠한다
+            else if (tool == Tool.FILL && fillMode == FillMode.BUCKET && !fillErasing && !readOnly) {
+                hitPage(e.x, e.y)?.let { bucketFill(it.first, it.second, it.third) }
+            }
             // 다른 도구에서는 손가락으로 테이프를 톡 누르면 보였다 가려졌다
             else toggleTapeAt(e.x, e.y)
             return true
@@ -1439,7 +1476,7 @@ class DocumentView @JvmOverloads constructor(
                 fingersBlocked = stylus
                 penPointerId = ev.getPointerId(idx)
                 penIsFinger = fingerPen
-                penErasing = tool == Tool.ERASER || (tool == Tool.TAPE && tapeErasing) ||
+                penErasing = tool == Tool.ERASER || (tool == Tool.TAPE && tapeErasing) || (tool == Tool.FILL && fillErasing) ||
                     (stylus && isEraserInput(ev, idx, samsungButton))
                 penMaxMajor = if (fingerPen) ev.getTouchMajor(idx) else 0f
                 startPen(ev.getX(idx), ev.getY(idx), pressure(ev, idx), ev.eventTime)
@@ -1647,6 +1684,7 @@ class DocumentView @JvmOverloads constructor(
         tapDownTime = System.currentTimeMillis()
         tapDownSx = sx
         tapDownSy = sy
+        eraseFills = null
         if (tool == Tool.LASSO && !penErasing) {
             startLasso(sx, sy)
             return
@@ -1656,6 +1694,11 @@ class DocumentView @JvmOverloads constructor(
             textTap = hitPage(sx, sy)
             textTapSx = sx
             textTapSy = sy
+            return
+        }
+        if (tool == Tool.FILL && !penErasing && fillMode == FillMode.BUCKET) {
+            fillPressing = true
+            fillTap = hitPage(sx, sy)
             return
         }
         if (penErasing) clearSelection()
@@ -1670,6 +1713,8 @@ class DocumentView @JvmOverloads constructor(
                 Tool.TAPE -> Stroke(Tool.TAPE, tapeColor, if (tapeRect) 0f else tapeWidth).also {
                     it.tape = TapeStyle(tapePattern, tapeRect)
                 }
+                // 자유 영역: 그리는 동안은 선만 (다 그리면 바깥 윤곽 안을 채운 획으로 바꾼다)
+                Tool.FILL -> Stroke(Tool.FILL, fillColor, 0f)
                 // 보정 펜은 그린 획을 맞춘 도형으로 바꾸므로 그리는 동안은 사인펜
                 Tool.PEN -> Stroke(Tool.PEN, penColor, penWidth, pen = penStyle)
                 else -> Stroke(Tool.PEN, penColor, penWidth)
@@ -1678,6 +1723,9 @@ class DocumentView @JvmOverloads constructor(
             if (tool == Tool.PEN) {
                 penInput.begin(penStyle, penWidth, penSmoothing, hit.second, hit.third, p, t)
                 st.add(penInput.x, penInput.y, penInput.p)
+            } else if (tool == Tool.FILL) {
+                penInput.begin(PenStyle.FELT, 1f, fillSmoothing, hit.second, hit.third, p, t)
+                st.add(penInput.x, penInput.y, 0f)
             } else st.add(hit.second, hit.third, p)
             curStroke = st
         }
@@ -1695,6 +1743,10 @@ class DocumentView @JvmOverloads constructor(
         if (tapCandidate && hypot(sx - tapDownSx, sy - tapDownSy) > TAP_SLOP_DP * density) tapCandidate = false
         if (textPressing) {
             if (hypot(sx - textTapSx, sy - textTapSy) > TAP_SLOP_DP * density) textTap = null
+            return
+        }
+        if (fillPressing) {
+            if (hypot(sx - tapDownSx, sy - tapDownSy) > TAP_SLOP_DP * density) fillTap = null
             return
         }
         if (rotating) {
@@ -1806,6 +1858,15 @@ class DocumentView @JvmOverloads constructor(
             invalidate()
             return
         }
+        if (st.tool == Tool.FILL) {
+            // 자유 영역: 손떨림 보정한 점
+            if (!penInput.move(px, py, p, t, scale / density, minDist, st.x(last), st.y(last))) return
+            st.add(penInput.x, penInput.y, 0f)
+            lastSx = sx
+            lastSy = sy
+            invalidate()
+            return
+        }
         if (hypot(px - st.x(last), py - st.y(last)) < minDist) return
         lastPressure = lastPressure * 0.5f + p * 0.5f
         st.add(px, py, lastPressure)
@@ -1868,40 +1929,66 @@ class DocumentView @JvmOverloads constructor(
         val r = radiusPx / scale
         val list = inkDoc.pages[page]
         var removed = false
-        // 테이프 도구의 지우개는 테이프만 (보이게 한 테이프도) 지운다
+        // 테이프 도구의 지우개는 테이프만 (보이게 한 테이프도), 채우기 도구의 지우개는 채우기만 지운다
         val tapesOnly = tool == Tool.TAPE && tapeErasing && !palmErasing
+        val fillsOnly = tool == Tool.FILL && fillErasing && !palmErasing
         // 손바닥은 늘 닿은 부분만 지운다
-        val mode = if (palmErasing) EraserMode.AREA else if (tapesOnly) tapeEraseMode else eraserMode
+        val mode = if (palmErasing) EraserMode.AREA else if (tapesOnly) tapeEraseMode else if (fillsOnly) fillEraseMode else eraserMode
         val hlOnly = eraseHlOnly && !palmErasing
+        /** k번째 획을 지우거나 (영역 지우개면) 닿은 부분만 잘라 낸다. 바뀐 것이 없으면 false */
+        fun eraseOne(k: Int, st: Stroke): Boolean {
+            val rest = when {
+                mode == EraserMode.STROKE -> emptyList()
+                // 테이프·채우기는 지우개가 지나간 동그라미만큼 구멍을 뚫는다
+                st.tape != null || st.fill != null ->
+                    st.withHole(px, py, r)?.let { if (it.tapeGone()) emptyList() else listOf(it) } ?: return false
+                else -> st.cut(px, py, r) ?: return false
+            }
+            list.removeAt(k)
+            list.addAll(k, rest)
+            // 이번에 잘라 넣은 조각을 다시 자르면 조각 목록에서만 뺀다 (원래 획이 아니므로)
+            if (!pieces.removeAll { it.second === st }) erased.add(page to st)
+            rest.forEach { pieces.add(page to it) }
+            return true
+        }
+        // 일반 지우개가 닿은 채우기: 이번 획에서 채우기를 지울지 정해진 뒤에 지운다
+        val fillHits = ArrayList<Stroke>()
+        var hitOther = false
         // 가린 테이프 아래(먼저 그린 획)는 보이지 않으므로 지우지 않는다
         var covered = false
         for (k in list.indices.reversed()) {
             val st = list[k]
             if (st.isBox) continue  // 그림·글은 선택해서 삭제
             val isTape = st.tape != null
-            if (tapesOnly) {
+            val isFill = st.fill != null
+            if (fillsOnly) {
+                if (!isFill) continue
+            } else if (tapesOnly) {
                 if (!isTape) continue
             } else if (isTape && st.revealed) continue  // 보이게 한 테이프는 투명한 셈이라 지우개가 그대로 지나간다
             if (covered) break
             val coversHere = isTape && !st.revealed && st.tapeContains(px, py)
-            if (!tapesOnly && hlOnly && st.tool != Tool.HIGHLIGHTER) {
+            if (!tapesOnly && !fillsOnly && hlOnly && st.tool != Tool.HIGHLIGHTER) {
                 if (coversHere) covered = true
                 continue
             }
             if (!st.hitTest(px, py, r)) continue
-            val rest = when {
-                mode == EraserMode.STROKE -> emptyList()
-                // 테이프는 지우개가 지나간 동그라미만큼 구멍을 뚫는다
-                isTape -> st.withHole(px, py, r)?.let { if (it.tapeGone()) emptyList() else listOf(it) } ?: continue
-                else -> st.cut(px, py, r) ?: continue
+            if (isFill && !fillsOnly && eraseFills != true) {
+                // 채운 도형 안의 선을 지우다가 채우기까지 지우지 않게
+                fillHits.add(st)
+                continue
             }
+            if (!isFill) hitOther = true
+            if (!eraseOne(k, st)) continue
             if (coversHere) covered = true
-            list.removeAt(k)
-            list.addAll(k, rest)
-            // 이번에 잘라 넣은 조각을 다시 자르면 조각 목록에서만 뺀다 (원래 획이 아니므로)
-            if (!pieces.removeAll { it.second === st }) erased.add(page to st)
-            rest.forEach { pieces.add(page to it) }
             removed = true
+        }
+        if (!fillsOnly && eraseFills == null) {
+            if (hitOther) eraseFills = false else if (fillHits.isNotEmpty()) eraseFills = true
+        }
+        if (eraseFills == true) for (st in fillHits) {
+            val k = list.indexOf(st)
+            if (k >= 0 && eraseOne(k, st)) removed = true
         }
         if (removed) invalidate()
     }
@@ -1918,6 +2005,16 @@ class DocumentView @JvmOverloads constructor(
             penPointerId = -1
             penErasing = false
             if (commit && hit != null) tapText(hit.first, hit.second, hit.third)
+            return
+        }
+        if (fillPressing) {
+            fillPressing = false
+            val hit = fillTap
+            fillTap = null
+            penPointerId = -1
+            penErasing = false
+            tapCandidate = false
+            if (commit && hit != null) bucketFill(hit.first, hit.second, hit.third)
             return
         }
         if (rotating) {
@@ -1969,6 +2066,8 @@ class DocumentView @JvmOverloads constructor(
                         else if (st.count > 2) listener?.onShapeFailed(shapeKind)
                     } else if (st.tool == Tool.TAPE) {
                         if (finishTape(curPage, st)) inkDoc.add(curPage, st)
+                    } else if (st.tool == Tool.FILL) {
+                        finishFreeFill(curPage, st)
                     } else if (st.tool == Tool.LASER) {
                         // 레이저: 필기에 넣지 않고 잠깐 보였다가 사라진다
                         laserStrokes.add(curPage to st)
@@ -2017,7 +2116,7 @@ class DocumentView @JvmOverloads constructor(
         var crossed = 0
         for (k in list.indices.reversed()) {
             val s = list[k]
-            if (s.isBox || s.tape != null) continue
+            if (s.isBox || s.tape != null || s.fill != null) continue
             val hw = s.halfWidth
             val rest = s.cutWhere(step) { x, y -> region.contains(x, y, hw) } ?: continue
             cuts.add(Triple(k, s, rest))
@@ -2151,7 +2250,8 @@ class DocumentView @JvmOverloads constructor(
             minY = min(minY, lasso[k * 2 + 1]); maxY = max(maxY, lasso[k * 2 + 1])
         }
         if (max(maxX - minX, maxY - minY) * scale < 10 * density) {
-            (boxAt(lassoPage, lasso[0], lasso[1]) ?: tapeAt(lassoPage, lasso[0], lasso[1]))?.let { select(lassoPage, listOf(it)) }
+            (boxAt(lassoPage, lasso[0], lasso[1]) ?: tapeAt(lassoPage, lasso[0], lasso[1]) ?: fillAt(lassoPage, lasso[0], lasso[1]))
+                ?.let { select(lassoPage, listOf(it)) }
             return
         }
         if (lassoRect || lassoTap) {
@@ -2198,12 +2298,14 @@ class DocumentView @JvmOverloads constructor(
         val tol = TAP_SELECT_DP * density / scale
         list.lastOrNull { st ->
             when {
-                st.image != null -> false
+                st.image != null || st.fill != null -> false
                 st.isBox -> st.count >= 4 && boxContains(st, x, y)
                 st.tool == Tool.TAPE && st.tapeContains(x, y) -> true
                 else -> strokeNear(st, x, y, tol)
             }
         }?.let { return it }
+        // 채우기는 선 아래에 깔리므로 선 다음에 본다
+        fillAt(page, x, y)?.let { return it }
         return list.lastOrNull { it.image != null && it.count >= 4 && boxContains(it, x, y) }
     }
 
@@ -2385,7 +2487,7 @@ class DocumentView @JvmOverloads constructor(
             // 필기·그림·글도 (다른 테이프는 빼고)
             val paint = inkPaint()
             for (s in inkDoc.pages[page]) if (s.image != null) drawInkStroke(c, paint, s)
-            for (s in inkDoc.pages[page]) if (s.image == null && s.tape == null) drawInkStroke(c, paint, s)
+            for (s in inkDoc.pages[page]) if (s.image == null && s.tape == null && s.fill == null) drawInkStroke(c, paint, s)
             bmp.getPixels(px, 0, bw, 0, 0, bw, bh)
         } finally {
             bmp.recycle()
@@ -2504,6 +2606,139 @@ class DocumentView @JvmOverloads constructor(
         clearSelection()
         inkDoc.remove(page, targets)
         return targets.size
+    }
+
+    // ================= 채우기 =================
+
+    /** 쪽 좌표 (x, y)를 덮고 있는 맨 위 채우기 */
+    private fun fillAt(page: Int, x: Float, y: Float): Stroke? =
+        ink?.pages?.getOrNull(page)?.lastOrNull { it.fillContains(x, y) }
+
+    /** 그리는 중인 (또는 영역을 찾는 중인) 자유 영역: 그린 선을 닫아 옅게 채우고 선을 그 색으로 */
+    private fun drawFillDraft(c: Canvas, st: Stroke) {
+        if (st.count < 2) return
+        fillDraftPath.rewind()
+        fillDraftPath.moveTo(st.x(0), st.y(0))
+        for (i in 1 until st.count) fillDraftPath.lineTo(st.x(i), st.y(i))
+        fillDraftPath.close()
+        fillDraftPath.fillType = Path.FillType.WINDING
+        fillDraftPaint.color = st.color or (0xFF shl 24)
+        fillDraftPaint.alpha = 110
+        c.drawPath(fillDraftPath, fillDraftPaint)
+        fillDraftLine.color = FillTile.inkColor(st.color)
+        fillDraftLine.strokeWidth = 1.5f * density / scale
+        c.drawPath(fillDraftPath, fillDraftLine)
+    }
+
+    /** 찾은 윤곽들로 채우기 획을 만든다 (윤곽마다 첫 점의 필압 자리가 1) */
+    private fun fillStroke(contours: List<FloatArray>, color: Int, pattern: FillPattern): Stroke? {
+        val st = Stroke(Tool.FILL, color, 0f).also { it.fill = FillStyle(pattern) }
+        // 바깥 윤곽을 먼저 (무늬가 첫 점에 붙는다)
+        for (c in contours.sortedByDescending { FillRegion.signedArea(it) }) {
+            if (c.size < 6) continue
+            for (i in 0 until c.size / 2) st.add(c[i * 2], c[i * 2 + 1], if (i == 0) 1f else 0f)
+        }
+        return if (st.count >= 3) st else null
+    }
+
+    private fun bounds(st: Stroke, out: RectF): RectF {
+        out.set(Float.MAX_VALUE, Float.MAX_VALUE, -Float.MAX_VALUE, -Float.MAX_VALUE)
+        for (i in 0 until st.count) {
+            out.left = min(out.left, st.x(i)); out.right = max(out.right, st.x(i))
+            out.top = min(out.top, st.y(i)); out.bottom = max(out.bottom, st.y(i))
+        }
+        return out
+    }
+
+    /**
+     * 칠하기: 쪽 그림(PDF + 필기, 채우기·형광펜은 빼고)에서 (x, y)를 둘러싼 닫힌 영역을 찾아 채운다.
+     * 같은 영역이 이미 채워져 있으면 그 채우기를 새 색·무늬로 바꾼다 (그림판처럼). 실행 취소 가능
+     */
+    private fun bucketFill(page: Int, x: Float, y: Float) {
+        val d = doc ?: return
+        val inkDoc = ink ?: return
+        if (bucketJob?.isActive == true || page !in sizes.indices) return
+        val list = inkDoc.pages[page]
+        val strokes = list.filter { it.fill == null && it.tool != Tool.HIGHLIGHTER && it.tool != Tool.LASER }
+        val pw = sizes[page].width
+        val ph = sizes[page].height
+        val k = min(FILL_MAX_K, sqrt(FILL_MAX_PX / (pw * ph)))
+        val w = max(1, (pw * k).toInt())
+        val h = max(1, (ph * k).toInt())
+        val color = fillColor
+        val pattern = fillPattern
+        bucketJob = scope.launch {
+            val result = try {
+                val bmp = withContext(d.dispatcher) { d.render(page, k, 0f, 0f, w, h) }
+                withContext(Dispatchers.Default) {
+                    try {
+                        val c = Canvas(bmp)
+                        c.scale(k, k)
+                        val paint = inkPaint()
+                        for (s in strokes.sortedBy { inkLayer(it) }) drawInkStroke(c, paint, s)
+                        val px = IntArray(w * h)
+                        bmp.getPixels(px, 0, w, 0, 0, w, h)
+                        FillRegion.bucket(px, w, h, k, (x * k).toInt(), (y * k).toInt())
+                    } finally {
+                        bmp.recycle()
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                Log.w(TAG, "칠하기 실패", e)
+                null
+            }
+            // 찾는 사이 문서·쪽이 바뀌었으면 버린다
+            if (ink !== inkDoc || inkDoc.pages.getOrNull(page) !== list) return@launch
+            if (result == null) {
+                listener?.onFillFailed()
+                return@launch
+            }
+            val st = fillStroke(result.contours, color, pattern) ?: return@launch
+            val nb = bounds(st, RectF())
+            val ob = RectF()
+            val old = list.lastOrNull {
+                it.fill != null && it.fillContains(x, y) && bounds(it, ob).let { b ->
+                    abs(b.left - nb.left) < 3f && abs(b.top - nb.top) < 3f && abs(b.right - nb.right) < 3f && abs(b.bottom - nb.bottom) < 3f
+                }
+            }
+            if (old != null) inkDoc.replace(page, old, st) else inkDoc.add(page, st)
+            invalidate()
+        }
+    }
+
+    /**
+     * 자유 영역을 다 그림: 처음과 끝을 이어 닫고 가장 바깥 윤곽 안을 모두 채운다.
+     * 다각형 보정을 켜 두었으면 거의 곧은 변을 곧게 편다. 아주 작게 그렸으면 버린다
+     */
+    private fun finishFreeFill(page: Int, st: Stroke) {
+        val inkDoc = ink ?: return
+        if (st.count < 3) return
+        val b = bounds(st, RectF())
+        if (max(b.width(), b.height()) * scale < 12 * density) return
+        val xs = FloatArray(st.count) { st.x(it) }
+        val ys = FloatArray(st.count) { st.y(it) }
+        val color = fillColor
+        val pattern = fillPattern
+        val polygon = fillPolygon
+        val list = inkDoc.pages[page]
+        val pending = page to st
+        fillPending.add(pending)
+        scope.launch {
+            val outline = withContext(Dispatchers.Default) {
+                try {
+                    FillRegion.freeform(xs, ys)?.let { if (polygon) FillRegion.straighten(it) else it }
+                } catch (e: Throwable) {
+                    Log.w(TAG, "자유 영역 실패", e)
+                    null
+                }
+            }
+            fillPending.remove(pending)
+            invalidate()
+            if (outline == null || ink !== inkDoc || inkDoc.pages.getOrNull(page) !== list) return@launch
+            fillStroke(listOf(outline), color, pattern)?.let { inkDoc.add(page, it) }
+        }
     }
 
     // ================= 글 =================
@@ -2702,6 +2937,9 @@ class DocumentView @JvmOverloads constructor(
         private const val PALM_GATHER_MS = 250L
         private const val PALM_MIN_DP = 24f
         private const val PALM_MAX_DP = 220f
+        /** 칠하기: 쪽 그림을 이 픽셀 수 안에서, 1pt에 이 픽셀 넘지 않게 그려 영역을 찾는다 */
+        private const val FILL_MAX_PX = 4_500_000f
+        private const val FILL_MAX_K = 4f
         /** 테이프를 글자 크기에 맞출 때 가운데에서 위·아래로 찾는 범위 (pt) */
         private const val FIT_RANGE = 40f
         /** 회전 손잡이 반지름과 상자에서 떨어진 거리 */

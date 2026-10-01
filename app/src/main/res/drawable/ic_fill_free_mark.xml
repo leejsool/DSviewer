@@ -1,0 +1,7 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- 자유 영역 안을 채운 색. 색은 ViewerActivity에서 고른 채우기 색으로 칠한다 -->
+    <path android:fillColor="@android:color/white"
+        android:pathData="M12,3C17.6,3 20.8,5.8 20,10C19.2,14.2 14.6,13 12,15.8C9.4,18.6 4.2,17.6 3.4,13C2.6,8.4 6.4,3 12,3Z" />
+</vector>

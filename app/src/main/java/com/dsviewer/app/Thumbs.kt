@@ -191,7 +191,7 @@ object Thumbs {
                         val c = Canvas(bmp)
                         c.scale(scale, scale)
                         val paint = inkPaint()
-                        strokes.sortedBy { if (it.image != null) 0 else 1 }.forEach { drawInkStroke(c, paint, it) }
+                        strokes.sortedBy { inkLayer(it) }.forEach { drawInkStroke(c, paint, it) }
                     }
                     return bmp
                 }
