@@ -187,6 +187,19 @@ fun drawInkStroke(c: Canvas, paint: Paint, st: Stroke, alphaMul: Float = 1f) {
     } else {
         paint.blendMode = null
     }
+    if (st.outlined) {
+        // 굵기가 매끄럽게 바뀌는 펜: 외곽선을 채운다. 연필은 조금 옅게, 종이 결무늬를 입혀서
+        val pencil = st.pen == PenStyle.PENCIL
+        if (pencil) paint.alpha = (paint.alpha * PenStyle.PENCIL_ALPHA).roundToInt()
+        if (alphaMul < 1f) paint.alpha = (paint.alpha * alphaMul).roundToInt()
+        paint.pathEffect = null
+        paint.style = Paint.Style.FILL
+        if (pencil) paint.shader = PencilGrain.shader
+        c.drawPath(st.outline(), paint)
+        paint.shader = null
+        paint.style = Paint.Style.STROKE
+        return
+    }
     if (alphaMul < 1f) paint.alpha = (paint.alpha * alphaMul).roundToInt()
     paint.pathEffect = if (st.dashed) DashPathEffect(st.dashIntervals(), 0f) else null
     for ((w, path) in st.paths()) {
@@ -207,9 +220,9 @@ enum class EraserMode { STROKE, AREA }
 
 /**
  * 한 획. 좌표는 페이지 기준(단위: PDF 포인트, 원점은 화면에 보이는 페이지의 왼쪽 위).
- * 점마다 (x, y, 필압) 3개 값을 저장한다.
+ * 점마다 (x, y, 필압) 3개 값을 저장한다. [pen]은 펜 획의 펜 종류 (만년필·붓펜은 필압 자리에 속도·끝 가늘기를 넣은 값)
  */
-class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = false) {
+class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = false, val pen: PenStyle = PenStyle.FELT) {
     /** 선택 도구로 색·크기를 바꿀 수 있다 (바꿀 때는 InkDocument.edit으로 기록) */
     var color = color
         private set
@@ -238,12 +251,25 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
     /** 그림이나 글처럼 네 모서리로 된 상자인지 (지우개가 자르지 않고, 톡 눌러 고를 수 있다) */
     val isBox get() = image != null || text != null
 
+    /** 사인펜이 아닌 펜 획: 채운 외곽선으로 그린다 ([outline]) */
+    val outlined get() = tool == Tool.PEN && pen != PenStyle.FELT && !dashed && image == null && text == null
+
+    /** 선이 가운데에서 가장 멀리 닿는 거리 (가장 굵은 곳의 절반) */
+    val halfWidth get() = width * (if (tool == Tool.PEN && !dashed) pen.reach else 1f) / 2f
+
     private var cachedPaths: List<Pair<Float, Path>>? = null
     private var cachedVersion = -1
     private var cachedShape: Path? = null
     private var cachedShapeVersion = -1
     private var cachedOutline: Path? = null
     private var cachedOutlineVersion = -1
+    // 펜 외곽선: 점만 더해졌으면 새 조각만 덧붙인다 (쓰는 동안 매번 처음부터 만들지 않게)
+    private var appended = 0
+    private var penPath: Path? = null
+    private var penPathVersion = -1
+    private var penPathAppended = 0
+    private var penPathCount = 0
+    private var penPathKept = 0
 
     fun add(x: Float, y: Float, p: Float) {
         if (count * 3 + 3 > data.size) data = data.copyOf(data.size * 2)
@@ -252,6 +278,34 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
         data[count * 3 + 2] = p
         count++
         version++
+        appended++
+    }
+
+    /** i번째 점의 필압 값만 바꾼다 (만년필·붓펜 끝 가늘기) */
+    fun setPressure(i: Int, p: Float) {
+        data[i * 3 + 2] = p
+        version++
+    }
+
+    /** 펜 외곽선 (쪽 좌표, 채우기용). 쪽 미리보기가 다른 스레드에서 같이 그릴 수 있어 잠근다 */
+    fun outline(): Path {
+        synchronized(this) { return outlineLocked() }
+    }
+
+    private fun outlineLocked(): Path {
+        val old = penPath
+        if (old != null && penPathVersion == version) return old
+        if (old != null && count > penPathCount && version - penPathVersion == appended - penPathAppended) {
+            penPathKept = PenOutline.append(this, PathSink(old), penPathKept, penPathCount, forceLast = false)
+        } else {
+            val path = Path()
+            penPathKept = PenOutline.append(this, PathSink(path), 0, 0, forceLast = true)
+            penPath = path
+        }
+        penPathVersion = version
+        penPathAppended = appended
+        penPathCount = count
+        return penPath!!
     }
 
     /** 첫 점만 남긴다 (직선 형광펜: 끝점을 새로 정할 때) */
@@ -350,7 +404,7 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
     }
 
     fun copy(): Stroke {
-        val s = Stroke(tool, color, width, dashed)
+        val s = Stroke(tool, color, width, dashed, pen)
         s.image = image
         s.text = text
         s.tape = tape
@@ -446,7 +500,7 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
 
     /** (px, py)에서 반지름 r 안에 이 획이 지나가는지. 네모 테이프는 안쪽도 */
     fun hitTest(px: Float, py: Float, r: Float): Boolean {
-        val rr = r + width / 2f
+        val rr = r + halfWidth
         val rr2 = rr * rr
         if (count == 1) return dist2(px, py, x(0), y(0)) <= rr2
         val closed = tape?.rect == true && count >= 3
@@ -533,13 +587,13 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
      */
     fun cut(cx: Float, cy: Float, r: Float): List<Stroke>? {
         if (!hitTest(cx, cy, r)) return null
-        val rr = r + width / 2f
+        val rr = r + halfWidth
         val rr2 = rr * rr
         val pieces = ArrayList<Stroke>()
         var cur: Stroke? = null
         fun inside(i: Int) = dist2(x(i), y(i), cx, cy) <= rr2
         fun addPoint(i: Int, t: Float) {
-            val piece = cur ?: Stroke(tool, color, width, dashed).also { it.tape = tape; cur = it }
+            val piece = cur ?: Stroke(tool, color, width, dashed, pen).also { it.tape = tape; cur = it }
             if (t == 1f) piece.add(x(i), y(i), p(i))
             else piece.add(
                 x(i - 1) + (x(i) - x(i - 1)) * t, y(i - 1) + (y(i) - y(i - 1)) * t, p(i - 1) + (p(i) - p(i - 1)) * t

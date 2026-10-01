@@ -2108,6 +2108,13 @@ class ViewerActivity : AppCompatActivity() {
     private fun showOptionBar(t: Tool) {
         optionRow.removeAllViews()
         when (t) {
+            Tool.PEN -> {
+                for (style in PenStyle.entries) addOption(penIcon(style), style.label, docView.penStyle == style) { setPenStyle(style) }
+                addOptionSeparator()
+                // 손떨림 보정: 누르면 끔·약하게·보통·강하게가 펼쳐진다
+                val level = docView.penSmoothing
+                addOption(R.drawable.ic_stabilizer, "손떨림 보정 ▾", level > 0, closeBar = false) { showSmoothingPopup(it) }
+            }
             Tool.ERASER -> {
                 val hl = docView.eraseHlOnly
                 addOption(R.drawable.ic_eraser_stroke, "획 지우개", docView.eraserMode == EraserMode.STROKE) {
@@ -2179,6 +2186,40 @@ class ViewerActivity : AppCompatActivity() {
         optionTool = null
         optionBar.animate().cancel()
         optionBar.visibility = View.GONE
+    }
+
+    /** 펜 종류 아이콘: 그 펜의 몸통 + 지금 펜 색의 S자 곡선 (툴바 펜 버튼과 같은 모양) */
+    private fun penIcon(style: PenStyle): android.graphics.drawable.Drawable {
+        val mark = getDrawable(R.drawable.ic_pen_mark)!!.mutate()
+        mark.setTint(docView.penColor)
+        return LayerDrawable(arrayOf(mark, getDrawable(style.bodyIcon)!!)).apply { setId(0, R.id.tool_mark) }
+    }
+
+    /** 펜 버튼: 고른 펜 종류의 몸통 */
+    private fun updatePenIcon() {
+        val button = toolButtons.getValue(Tool.PEN)
+        button.setImageDrawable(penIcon(docView.penStyle))
+        button.contentDescription = docView.penStyle.label
+        updateToolMarks()
+    }
+
+    private fun setPenStyle(style: PenStyle) {
+        docView.penStyle = style
+        prefs.edit().putString("penStyle", style.name).apply()
+        applyToolWidth(Tool.PEN)
+        updatePenIcon()
+        buildColors()  // 굵기 칸이 그 펜 종류의 칸으로
+    }
+
+    /** 손떨림 보정 단계 고르기 */
+    private fun showSmoothingPopup(anchor: View) {
+        showFlyout(anchor, PenSmoothing.labels.mapIndexed { i, label ->
+            Triple(getDrawable(R.drawable.ic_stabilizer)!!, label, docView.penSmoothing == i)
+        }, title = "손떨림\n보정") { i ->
+            docView.penSmoothing = i
+            prefs.edit().putInt("penSmoothing", i).apply()
+            toast(if (i == 0) "손떨림 보정을 껐습니다." else "손떨림 보정: ${PenSmoothing.labels[i]}")
+        }
     }
 
     private fun setEraserMode(m: EraserMode) {
@@ -2653,8 +2694,11 @@ class ViewerActivity : AppCompatActivity() {
         docView.tapePattern = TapePattern.of(prefs.getString("tapePattern", null))
         docView.laserFadeMs = prefs.getLong("laserFadeMs", 2000L)
         docView.hlStraight = prefs.getBoolean("hlStraight", false)
-        widthSlots = listOf(Tool.PEN, Tool.HIGHLIGHTER, Tool.ERASER, Tool.LASER, Tool.TAPE).associateWith { loadWidths(WidthKind.of(it)) }
-        widthSlots.keys.forEach(::applySlotWidth)
+        docView.penStyle = PenStyle.named(prefs.getString("penStyle", null))
+        docView.penSmoothing = prefs.getInt("penSmoothing", 0)
+        widthSlots = listOf(Tool.HIGHLIGHTER, Tool.ERASER, Tool.LASER, Tool.TAPE).associateWith { loadWidths(WidthKind.of(it)) }
+        penWidthSlots = PenStyle.entries.associateWith { loadWidths(it.widthKind, it.widthKey, it.widthDefaults) }
+        (widthSlots.keys + Tool.PEN).forEach(::applySlotWidth)
         docView.fingerDrawing = if (prefs.contains("finger")) prefs.getBoolean("finger", false) else {
             // 처음 한 번만: 펜 입력이 없는 기기면 손가락 쓰기를 켜 두고 알려 준다 (이후엔 사용자가 메뉴에서 바꾼 값)
             val auto = !hasStylus()
@@ -2671,6 +2715,7 @@ class ViewerActivity : AppCompatActivity() {
         updateLassoIcon()
         updateHighlighterIcon()
         updateTapeIcon()
+        updatePenIcon()
         toolButtons.forEach { (t, b) ->
             b.setOnClickListener {
                 if (t == Tool.LASSO || t == Tool.LASER || t == Tool.HIGHLIGHTER) {
@@ -2678,6 +2723,19 @@ class ViewerActivity : AppCompatActivity() {
                     val reopen = !flyoutJustClosed(b)
                     selectTool(t)
                     if (reopen) showToolFlyout(t, b)
+                } else if (t == Tool.PEN) {
+                    // 펜: 처음 누르면 펜으로, 펜일 때 다시 누르면 펜 종류·손떨림 보정 줄을 열고 닫는다
+                    val wasPen = docView.tool == Tool.PEN
+                    val showing = optionTool == Tool.PEN
+                    selectTool(t)
+                    when {
+                        showing -> hideOptionBar()
+                        wasPen -> showOptionBar(Tool.PEN)
+                        !prefs.getBoolean("penHintShown", false) -> {
+                            prefs.edit().putBoolean("penHintShown", true).apply()
+                            toast("펜을 한 번 더 누르면 펜 종류(만년필·붓펜·연필 등)와 손떨림 보정을 고를 수 있습니다.")
+                        }
+                    }
                 } else if (t == Tool.ERASER || t == Tool.TAPE) {
                     // 테이프·지우개는 누를 때마다 옵션 줄을 열고, 열려 있으면 닫는다
                     if (t == Tool.TAPE && docView.tool != Tool.TAPE) {
@@ -2813,33 +2871,37 @@ class ViewerActivity : AppCompatActivity() {
 
     // ----- 굵기 칸 (굿노트처럼 3칸, 고른 칸을 다시 누르면 조절 창) -----
 
-    private class WidthSlots(val kind: WidthKind, val slots: FloatArray, var active: Int) {
+    private class WidthSlots(val kind: WidthKind, val key: String, val slots: FloatArray, var active: Int) {
         val value get() = slots[active]
     }
 
     private lateinit var widthSlots: Map<Tool, WidthSlots>
+    /** 펜은 펜 종류마다 굵기 칸을 따로 (붓펜·캘리그래피는 범위도 다르다) */
+    private lateinit var penWidthSlots: Map<PenStyle, WidthSlots>
 
-    private fun loadWidths(kind: WidthKind): WidthSlots {
-        val saved = prefs.getString("${kind.key}Slots", null)?.split(',')?.mapNotNull { it.toFloatOrNull() }
-        val slots = if (saved?.size == kind.defaults.size) saved.toFloatArray() else kind.defaults.copyOf()
-        var active = prefs.getInt("${kind.key}Active", -1)
+    private fun widthSlotsOf(k: Tool) = if (k == Tool.PEN) penWidthSlots[docView.penStyle] else widthSlots[k]
+
+    private fun loadWidths(kind: WidthKind, key: String = kind.key, defaults: FloatArray = kind.defaults): WidthSlots {
+        val saved = prefs.getString("${key}Slots", null)?.split(',')?.mapNotNull { it.toFloatOrNull() }
+        val slots = if (saved?.size == defaults.size) saved.toFloatArray() else defaults.copyOf()
+        var active = prefs.getInt("${key}Active", -1)
         if (active !in slots.indices) {
             // 칸 기능 이전 버전의 굵기를 가장 가까운 칸에 넣는다
             active = 1
-            if (prefs.contains(kind.key)) {
-                val legacy = prefs.getFloat(kind.key, slots[1]).coerceIn(kind.min, kind.max)
+            if (prefs.contains(key)) {
+                val legacy = prefs.getFloat(key, slots[1]).coerceIn(kind.min, kind.max)
                 active = slots.indices.minBy { abs(slots[it] - legacy) }
                 slots[active] = legacy
             }
         }
-        return WidthSlots(kind, slots, active)
+        return WidthSlots(kind, key, slots, active)
     }
 
     private fun saveWidths(s: WidthSlots) {
         prefs.edit()
-            .putString("${s.kind.key}Slots", s.slots.joinToString(","))
-            .putInt("${s.kind.key}Active", s.active)
-            .putFloat(s.kind.key, s.value)
+            .putString("${s.key}Slots", s.slots.joinToString(","))
+            .putInt("${s.key}Active", s.active)
+            .putFloat(s.key, s.value)
             .apply()
     }
 
@@ -2854,7 +2916,7 @@ class ViewerActivity : AppCompatActivity() {
 
     /** 굵기 칸 묶음(도구 [k]의 칸)에서 고른 굵기를 문서 화면에 넣는다 */
     private fun applySlotWidth(k: Tool) {
-        val v = widthSlots[k]?.value ?: return
+        val v = widthSlotsOf(k)?.value ?: return
         when (k) {
             Tool.PEN, Tool.SHAPE -> docView.penWidth = v
             Tool.HIGHLIGHTER -> docView.hlWidth = v
@@ -2877,7 +2939,7 @@ class ViewerActivity : AppCompatActivity() {
         widthRow.removeAllViews()
         val t = docView.tool
         // 네모 테이프는 끌어서 크기를 정하므로 굵기 칸이 없다
-        val s = if (t == Tool.TAPE && docView.tapeRect && !docView.tapeErasing) null else widthSlots[widthTool(t)]
+        val s = if (t == Tool.TAPE && docView.tapeRect && !docView.tapeErasing) null else widthSlotsOf(widthTool(t))
         widthRow.visibility = if (s == null) View.GONE else View.VISIBLE
         if (s == null) return
         val d = resources.displayMetrics.density
@@ -2917,7 +2979,7 @@ class ViewerActivity : AppCompatActivity() {
     }
 
     private fun openWidthPopup(t: Tool, anchor: View) {
-        val s = widthSlots.getValue(widthTool(t))
+        val s = widthSlotsOf(widthTool(t)) ?: return
         WidthPopup(this, s.kind, s.value, toolColor(t)) { w, done ->
             s.slots[s.active] = w
             applyToolWidth(t)

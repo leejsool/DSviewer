@@ -30,7 +30,11 @@ enum class WidthKind(val min: Float, val max: Float, val step: Float, val defaul
     /** 레이저는 확대와 상관없이 화면에서 늘 같은 굵기 (dp) */
     LASER(2f, 16f, 0.5f, floatArrayOf(4f, 7f, 11f), "laserWidth"),
     /** 펜 테이프 굵기 (pt) */
-    TAPE(4f, 40f, 0.5f, floatArrayOf(10f, 16f, 24f), "tapeWidth");
+    TAPE(4f, 40f, 0.5f, floatArrayOf(10f, 16f, 24f), "tapeWidth"),
+    /** 붓펜 굵기 (pt, 세게 누르면 이보다 굵어진다) */
+    BRUSH(0.5f, 12f, 0.1f, floatArrayOf(1.5f, 3f, 5f), "penWidth_BRUSH"),
+    /** 캘리그래피 펜촉 너비 (pt) */
+    NIB(1f, 14f, 0.1f, floatArrayOf(2f, 3.5f, 6f), "penWidth_CALLIGRAPHY");
 
     /** 범위 안에서의 위치 0..1 */
     fun t(v: Float) = ((v - min) / (max - min)).coerceIn(0f, 1f)

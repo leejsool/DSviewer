@@ -76,6 +76,11 @@ class DocumentView @JvmOverloads constructor(
         }
     var penColor = Color.BLACK
     var penWidth = 1.0f
+    /** 펜 종류 (사인펜·볼펜·만년필·붓펜·연필·캘리그래피) */
+    var penStyle = PenStyle.FELT
+    /** 손떨림 보정 단계 (0 끔 ~ 3 강하게) */
+    var penSmoothing = 0
+    private val penInput = PenInput()
     var hlColor = 0xFFFFEB3B.toInt()
     var hlWidth = 12f
     /** 줄자: 형광펜을 시작점에서 지금 점까지 곧은 선으로만 긋는다 */
@@ -1276,7 +1281,7 @@ class DocumentView @JvmOverloads constructor(
                 penIsFinger = fingerPen
                 penErasing = tool == Tool.ERASER || (tool == Tool.TAPE && tapeErasing) ||
                     (stylus && isEraserInput(ev, idx, samsungButton))
-                startPen(ev.getX(idx), ev.getY(idx), pressure(ev, idx))
+                startPen(ev.getX(idx), ev.getY(idx), pressure(ev, idx), ev.eventTime)
                 return true
             }
         }
@@ -1294,9 +1299,9 @@ class DocumentView @JvmOverloads constructor(
                     val idx = ev.findPointerIndex(penPointerId)
                     if (idx >= 0) {
                         for (h in 0 until ev.historySize) {
-                            movePen(ev.getHistoricalX(idx, h), ev.getHistoricalY(idx, h), pressure(ev, idx, h))
+                            movePen(ev.getHistoricalX(idx, h), ev.getHistoricalY(idx, h), pressure(ev, idx, h), ev.getHistoricalEventTime(h))
                         }
-                        movePen(ev.getX(idx), ev.getY(idx), pressure(ev, idx))
+                        movePen(ev.getX(idx), ev.getY(idx), pressure(ev, idx), ev.eventTime)
                     }
                 }
                 MotionEvent.ACTION_POINTER_UP -> {
@@ -1305,7 +1310,7 @@ class DocumentView @JvmOverloads constructor(
                 MotionEvent.ACTION_UP -> {
                     // 뗀 자리까지 획에 넣는다 (보정 펜에서 끝점이 잘리지 않게)
                     val idx = ev.findPointerIndex(penPointerId)
-                    if (idx >= 0) movePen(ev.getX(idx), ev.getY(idx), pressure(ev, idx))
+                    if (idx >= 0) movePen(ev.getX(idx), ev.getY(idx), pressure(ev, idx), ev.eventTime)
                     endPen(commit = true)
                     fingersBlocked = false
                 }
@@ -1343,7 +1348,7 @@ class DocumentView @JvmOverloads constructor(
         scaling = false
     }
 
-    private fun startPen(sx: Float, sy: Float, p: Float) {
+    private fun startPen(sx: Float, sy: Float, p: Float, t: Long) {
         listener?.onPenDown()
         scroller.forceFinished(true)
         zoomAnimator?.cancel()
@@ -1382,10 +1387,15 @@ class DocumentView @JvmOverloads constructor(
                 Tool.TAPE -> Stroke(Tool.TAPE, tapeColor, if (tapeRect) 0f else tapeWidth).also {
                     it.tape = TapeStyle(tapePattern, tapeRect)
                 }
+                // 보정 펜은 그린 획을 맞춘 도형으로 바꾸므로 그리는 동안은 사인펜
+                Tool.PEN -> Stroke(Tool.PEN, penColor, penWidth, pen = penStyle)
                 else -> Stroke(Tool.PEN, penColor, penWidth)
             }
             lastPressure = p
-            st.add(hit.second, hit.third, p)
+            if (tool == Tool.PEN) {
+                penInput.begin(penStyle, penWidth, penSmoothing, hit.second, hit.third, p, t)
+                st.add(penInput.x, penInput.y, penInput.p)
+            } else st.add(hit.second, hit.third, p)
             curStroke = st
         }
         invalidate()
@@ -1398,7 +1408,7 @@ class DocumentView @JvmOverloads constructor(
         return Math.toDegrees(kotlin.math.atan2((py - rotCy).toDouble(), (px - rotCx).toDouble())).toFloat()
     }
 
-    private fun movePen(sx: Float, sy: Float, p: Float) {
+    private fun movePen(sx: Float, sy: Float, p: Float, t: Long = 0L) {
         if (tapCandidate && hypot(sx - tapDownSx, sy - tapDownSy) > TAP_SLOP_DP * density) tapCandidate = false
         if (textPressing) {
             if (hypot(sx - textTapSx, sy - textTapSy) > TAP_SLOP_DP * density) textTap = null
@@ -1496,6 +1506,15 @@ class DocumentView @JvmOverloads constructor(
         }
         val last = st.count - 1
         val minDist = 0.8f / scale
+        if (tool == Tool.PEN && st.tool == Tool.PEN) {
+            // 펜: 손떨림 보정·펜 종류에 맞춰 다듬은 점
+            if (!penInput.move(px, py, p, t, scale / density, minDist, st.x(last), st.y(last))) return
+            st.add(penInput.x, penInput.y, penInput.p)
+            lastSx = sx
+            lastSy = sy
+            invalidate()
+            return
+        }
         if (hypot(px - st.x(last), py - st.y(last)) < minDist) return
         lastPressure = lastPressure * 0.5f + p * 0.5f
         st.add(px, py, lastPressure)
@@ -1539,7 +1558,9 @@ class DocumentView @JvmOverloads constructor(
         var pSum = 0f
         for (i in 0 until raw.count) pSum += raw.p(i)
         val pAvg = pSum / raw.count
-        fun toStroke(pts: FloatArray, dashed: Boolean) = Stroke(Tool.PEN, raw.color, raw.width, dashed).apply {
+        // 맞춘 도형은 지금 펜 종류로 (점선 보조선은 사인펜)
+        fun toStroke(pts: FloatArray, dashed: Boolean) =
+            Stroke(Tool.PEN, raw.color, raw.width, dashed, if (dashed) PenStyle.FELT else penStyle).apply {
             for (i in 0 until pts.size / 2) add(pts[i * 2], pts[i * 2 + 1], pAvg)
         }
         val out = fitted.curves.map { toStroke(it, false) }.toMutableList()
@@ -1652,7 +1673,10 @@ class DocumentView @JvmOverloads constructor(
                         laserStrokes.add(curPage to st)
                         removeCallbacks(laserFadeRunnable)
                         postDelayed(laserFadeRunnable, laserFadeMs)
-                    } else inkDoc.add(curPage, st)
+                    } else {
+                        if (st.tool == Tool.PEN) penInput.finish(st)
+                        inkDoc.add(curPage, st)
+                    }
                 }
             }
             shapePreview = null
@@ -1769,7 +1793,7 @@ class DocumentView @JvmOverloads constructor(
         // RectF.union은 넓이 0인 사각형을 무시하므로(굵기 0인 그림의 모서리) 직접 최소·최대를 잰다
         var l = Float.MAX_VALUE; var t = Float.MAX_VALUE; var r = -Float.MAX_VALUE; var b = -Float.MAX_VALUE
         for (st in picked) {
-            val half = st.width / 2
+            val half = st.halfWidth
             for (k in 0 until st.count) {
                 l = min(l, st.x(k) - half); r = max(r, st.x(k) + half)
                 t = min(t, st.y(k) - half); b = max(b, st.y(k) + half)

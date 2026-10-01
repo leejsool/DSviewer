@@ -195,7 +195,7 @@ object PdfInk {
             minX = min(minX, ux[i]); maxX = max(maxX, ux[i])
             minY = min(minY, uy[i]); maxY = max(maxY, uy[i])
         }
-        val pad = s.width + 2f
+        val pad = s.halfWidth * 2f + 2f
         val rect = PDRectangle(minX - pad, minY - pad, (maxX - minX) + pad * 2, (maxY - minY) + pad * 2)
         val color = PDColor(
             floatArrayOf(Color.red(s.color) / 255f, Color.green(s.color) / 255f, Color.blue(s.color) / 255f),
@@ -206,23 +206,55 @@ object PdfInk {
         val ap = PDAppearanceStream(doc)
         ap.bBox = rect
         ap.resources = PDResources()
-        PDPageContentStream(doc, ap).use { cs ->
+        // 압축해서 넣는다 (굵기가 바뀌는 펜은 구간이 많다)
+        PDPageContentStream(doc, ap, ap.stream.createOutputStream(COSName.FLATE_DECODE)).use { cs ->
             if (s.tool == Tool.HIGHLIGHTER) {
                 val gs = PDExtendedGraphicsState()
                 gs.strokingAlphaConstant = HL_ALPHA
                 gs.blendMode = BlendMode.MULTIPLY
                 cs.setGraphicsStateParameters(gs)
             }
-            cs.setStrokingColor(color)
-            if (s.dashed) cs.setLineDashPattern(s.dashIntervals(), 0f)
-            cs.setLineCapStyle(1)
-            cs.setLineJoinStyle(1)
-            s.forEachGroup { w, from, to ->
-                cs.setLineWidth(w)
-                cs.moveTo(ux[from], uy[from])
-                if (from == to) cs.lineTo(ux[from] + 0.01f, uy[from])
-                else for (k in from + 1..to) cs.lineTo(ux[k], uy[k])
-                cs.stroke()
+            if (s.pen == PenStyle.CALLIGRAPHY && s.outlined) {
+                // 캘리그래피: 화면과 같은 외곽선(펜촉 조각들)을 채운다
+                cs.setNonStrokingColor(color)
+                val tx = FloatArray(1)
+                val ty = FloatArray(1)
+                PenOutline.build(s, object : OutlineSink {
+                    override fun moveTo(x: Float, y: Float) {
+                        toUser(x, y, box, rot, tx, ty, 0); cs.moveTo(tx[0], ty[0])
+                    }
+                    override fun lineTo(x: Float, y: Float) {
+                        toUser(x, y, box, rot, tx, ty, 0); cs.lineTo(tx[0], ty[0])
+                    }
+                    override fun cubicTo(x1: Float, y1: Float, x2: Float, y2: Float, x3: Float, y3: Float) = lineTo(x3, y3)
+                    override fun close() = cs.closePath()
+                })
+                cs.fill()
+            } else if (s.outlined) {
+                // 굵기가 바뀌는 둥근 펜: 굵기를 잘게 나눈 구간마다 둥근 선으로 (화면의 외곽선과 거의 같고 파일이 작다).
+                // 연필의 옅기는 주석 전체의 /CA로 (구간이 겹친 곳이 진해지지 않게). 결무늬는 이 앱에서만
+                cs.setStrokingColor(color)
+                cs.setLineCapStyle(1)
+                cs.setLineJoinStyle(1)
+                PenOutline.forEachWidthGroup(s) { w, from, to ->
+                    cs.setLineWidth(w)
+                    cs.moveTo(ux[from], uy[from])
+                    if (from == to) cs.lineTo(ux[from] + 0.01f, uy[from])
+                    else for (k in from + 1..to) cs.lineTo(ux[k], uy[k])
+                    cs.stroke()
+                }
+            } else {
+                cs.setStrokingColor(color)
+                if (s.dashed) cs.setLineDashPattern(s.dashIntervals(), 0f)
+                cs.setLineCapStyle(1)
+                cs.setLineJoinStyle(1)
+                s.forEachGroup { w, from, to ->
+                    cs.setLineWidth(w)
+                    cs.moveTo(ux[from], uy[from])
+                    if (from == to) cs.lineTo(ux[from] + 0.01f, uy[from])
+                    else for (k in from + 1..to) cs.lineTo(ux[k], uy[k])
+                    cs.stroke()
+                }
             }
         }
 
@@ -253,6 +285,7 @@ object PdfInk {
         }
         dict.setItem(COSName.BS, bs)
         if (s.tool == Tool.HIGHLIGHTER) dict.setFloat(COSName.CA, HL_ALPHA)
+        if (s.outlined && s.pen == PenStyle.PENCIL) dict.setFloat(COSName.CA, PenStyle.PENCIL_ALPHA)
         dict.setString(KEY_NAME, encode(s))
 
         val apd = PDAppearanceDictionary()
@@ -503,7 +536,8 @@ object PdfInk {
         }
     }
 
-    // 형식: 1|P|ff000000|1.2|x,y,p;x,y,p;...  (도구: P 펜, H 형광펜, D 점선 펜, I 그림, T 글, K 테이프 — 그림·글은 네 모서리)
+    // 형식: 1|P|ff000000|1.2|x,y,p;x,y,p;...  (도구: P 펜(사인펜), H 형광펜, D 점선 펜, I 그림, T 글, K 테이프 — 그림·글은 네 모서리)
+    // 다른 펜 종류는 PenStyle.code: B 볼펜, F 만년필, R 붓펜, C 연필, G 캘리그래피 (예전 버전은 모르는 글자를 사인펜으로 읽는다)
     // 글은 굵기 자리에 글자 크기, 끝에 |글(UTF-8 Base64)|줄 바꾸는 폭|서식(JSON, UTF-8 Base64)을 붙인다
     // 테이프는 끝에 |R(네모) 또는 P(펜)|무늬 이름, 지우개로 뚫은 구멍이 있으면 |x,y,r;x,y,r;... 을 붙인다
     private fun encode(s: Stroke): String {
@@ -514,7 +548,7 @@ object PdfInk {
             s.tape != null -> 'K'
             s.tool == Tool.HIGHLIGHTER -> 'H'
             s.dashed -> 'D'
-            else -> 'P'
+            else -> s.pen.code
         }
         sb.append("1|").append(kind).append('|')
         sb.append(Integer.toHexString(s.color)).append('|').append(r2(s.text?.size ?: s.width)).append('|')
@@ -552,7 +586,8 @@ object PdfInk {
             }
             val color = parts[2].toLong(16).toInt()
             val isText = parts[1] == "T"
-            val s = Stroke(tool, color, if (isText) 0f else parts[3].toFloat(), dashed = parts[1] == "D")
+            val pen = if (tool == Tool.PEN && parts[1].length == 1) PenStyle.of(parts[1][0]) ?: PenStyle.FELT else PenStyle.FELT
+            val s = Stroke(tool, color, if (isText) 0f else parts[3].toFloat(), dashed = parts[1] == "D", pen = pen)
             for (pt in parts[4].split(';')) {
                 val v = pt.split(',')
                 if (v.size == 3) s.add(v[0].toFloat(), v[1].toFloat(), v[2].toFloat())
