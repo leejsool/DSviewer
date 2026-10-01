@@ -208,6 +208,8 @@ class ViewerActivity : AppCompatActivity() {
 
             override fun onViewportChanged() = textEditor.reposition()
 
+            override fun onPullAddPage() = appendBlankPage()
+
             override fun onShapeFailed(kind: ShapeKind) {
                 Toast.makeText(this@ViewerActivity, "${withRo(kind.label)} 맞추지 못했어요. 조금 더 크게 그려 보세요.", Toast.LENGTH_SHORT).show()
             }
@@ -1197,6 +1199,26 @@ class ViewerActivity : AppCompatActivity() {
         editPages(t, { src, out -> PdfPages.insert(src, out, at, paper, size.width, size.height) }) { pages ->
             pages.add(at, mutableListOf())
             at
+        }
+    }
+
+    /**
+     * 마지막 쪽 아래로 더 끌어 올렸을 때: 마지막 쪽과 같은 크기·바탕(흰 바탕·모눈·줄)의 빈 쪽을 맨 뒤에 붙인다
+     */
+    private fun appendBlankPage() {
+        val t = current ?: return
+        val d = t.pdf ?: return
+        if (t.pagesBusy || docView.readOnly) return
+        val last = d.pageCount - 1
+        val size = d.sizes[last]
+        var paper: Paper? = null
+        editPages(t, { src, out ->
+            // 원본에서 한 번 알아낸 바탕을 화면용 PDF에도 똑같이
+            val p = paper ?: runCatching { PdfPages.paperOf(src, last) }.getOrDefault(Paper.PLAIN).also { paper = it }
+            PdfPages.insert(src, out, last + 1, p, size.width, size.height)
+        }) { pages ->
+            pages.add(mutableListOf())
+            pages.size - 1
         }
     }
 

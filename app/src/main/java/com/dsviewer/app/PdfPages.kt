@@ -130,6 +130,27 @@ object PdfPages {
         }
     }
 
+    /**
+     * [src]의 [index]번째 쪽이 이 앱이 만든 모눈·줄 쪽이면 그 바탕, 아니면 흰 바탕.
+     * 필기는 주석으로 저장되어 쪽 내용은 그대로이므로, 같은 크기로 새로 그린 바탕과 내용이 똑같은지 본다
+     */
+    fun paperOf(src: File, index: Int): Paper {
+        PDDocument.load(src).use { doc ->
+            if (index !in 0 until doc.numberOfPages) return Paper.PLAIN
+            val page = doc.getPage(index)
+            val streams = page.contentStreams.asSequence().map { s -> s.createInputStream().use { it.readBytes() } }.toList()
+            if (streams.isEmpty()) return Paper.PLAIN
+            val box = page.mediaBox
+            for (paper in listOf(Paper.GRID, Paper.LINED)) {
+                val ref = PDDocument().use { tmp ->
+                    blankPage(tmp, paper, box.width, box.height).contentStreams.next().createInputStream().use { it.readBytes() }
+                }
+                if (streams.any { it.contentEquals(ref) }) return paper
+            }
+            return Paper.PLAIN
+        }
+    }
+
     private fun blankPage(doc: PDDocument, paper: Paper, w: Float, h: Float): PDPage {
         val page = PDPage(PDRectangle(w, h))
         if (paper == Paper.PLAIN) return page

@@ -17,6 +17,7 @@ import android.util.Log
 import android.util.LruCache
 import android.util.SizeF
 import android.view.GestureDetector
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
@@ -64,6 +65,8 @@ class DocumentView @JvmOverloads constructor(
         fun onTextTap(page: Int, x: Float, y: Float, existing: Stroke?) {}
         /** 화면을 다시 그림 (스크롤·확대가 바뀌었을 수 있다. 문서 위에 띄운 글 상자를 따라 옮길 때) */
         fun onViewportChanged() {}
+        /** 마지막 쪽 아래로 끝까지 끌어 올렸다가 놓음 → 맨 뒤에 빈 쪽 붙이기 */
+        fun onPullAddPage() {}
     }
 
     var listener: Listener? = null
@@ -234,6 +237,24 @@ class DocumentView @JvmOverloads constructor(
     private val pieces = ArrayList<Pair<Int, Stroke>>()
     private var zoomAnimator: ValueAnimator? = null
 
+    // ---- 마지막 쪽 아래로 끌어 올려 빈 쪽 붙이기 ----
+    /** 마지막 쪽 아래로 더 끌어 올린 거리 (화면 px). 그만큼 쪽들을 위로 밀어 그리고 아래에 새 쪽 자리를 보여 준다 */
+    private var pullPx = 0f
+    private var pullAnimator: ValueAnimator? = null
+    private val pullGoal get() = PULL_ADD_DP * density
+    private val pullFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+    private val pullLine = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 1.5f * resources.displayMetrics.density
+        val d = resources.displayMetrics.density
+        pathEffect = DashPathEffect(floatArrayOf(6f * d, 4f * d), 0f)
+    }
+    private val pullIcon = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val pullText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textSize = 14f * resources.displayMetrics.density
+        textAlign = Paint.Align.CENTER
+    }
+
     // ---- 올가미 선택 (좌표는 모두 해당 페이지 기준) ----
     private var selPage = -1
     private var selection: List<Stroke> = emptyList()
@@ -340,6 +361,8 @@ class DocumentView @JvmOverloads constructor(
         doc = d
         ink = inkDoc
         sizes = d.sizes
+        pullAnimator?.cancel()
+        pullPx = 0f
         layoutPages()
         zoom = 1f
         baseCache.evictAll()
@@ -574,6 +597,8 @@ class DocumentView @JvmOverloads constructor(
         val inkDoc = ink ?: return
         val range = visibleRange()
         val s = scale
+        canvas.save()
+        canvas.translate(0f, -pullPx)
         for (i in range) {
             val r = pageRect(i, tmpRect)
             canvas.drawRect(r, pagePaint)
@@ -619,6 +644,8 @@ class DocumentView @JvmOverloads constructor(
             }
             canvas.restore()
         }
+        canvas.restore()
+        if (pullPx > 0f) drawPullPage(canvas)
         drawSelection(canvas)
         if (!range.isEmpty()) {
             // 앞뒤 한 페이지 미리 그리기
@@ -632,6 +659,77 @@ class DocumentView @JvmOverloads constructor(
         drawScrollBar(canvas)
         listener?.onViewportChanged()
         reportPage(d.pageCount)
+    }
+
+    // ================= 끌어 올려 빈 쪽 붙이기 =================
+
+    private fun setPull(v: Float) {
+        val nv = v.coerceIn(0f, pullGoal * 1.6f)
+        if (nv == pullPx) return
+        // 놓으면 붙는 거리를 넘을 때 손에 톡 알려 준다
+        if (pullPx < pullGoal && nv >= pullGoal) performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+        pullAnimator?.cancel()
+        pullPx = nv
+        invalidate()
+    }
+
+    /** 손을 뗌: 충분히 끌어 올렸고 [add]면 빈 쪽을 붙이라고 알리고, 새 쪽 자리는 다시 접는다 */
+    private fun releasePull(add: Boolean) {
+        if (pullPx <= 0f) return
+        if (add && pullPx >= pullGoal) listener?.onPullAddPage()
+        pullAnimator?.cancel()
+        pullAnimator = ValueAnimator.ofFloat(pullPx, 0f).apply {
+            duration = 200
+            interpolator = DecelerateInterpolator()
+            addUpdateListener {
+                pullPx = it.animatedValue as Float
+                invalidate()
+            }
+            start()
+        }
+    }
+
+    /** 마지막 쪽 아래에 드러난 새 쪽 자리: 점선 쪽 테두리 + 가운데 ⊕와 안내 글 */
+    private fun drawPullPage(canvas: Canvas) {
+        val last = sizes.lastIndex
+        if (last < 0) return
+        val s = scale
+        val lastBottom = (tops[last] + sizes[last].height) * s - offY - pullPx
+        val top = lastBottom + gap * s
+        val bottom = height - bottomInset
+        if (bottom - top < 8f * density) return
+        val pw = sizes[last].width * s
+        val left = docW * s / 2f - pw / 2f - offX
+        val ready = pullPx >= pullGoal
+        val k = (pullPx / pullGoal).coerceIn(0f, 1f)
+        val accent = if (ready) SEL_COLOR else 0xFF888888.toInt()
+        tmpRect.set(left, top, left + pw, top + sizes[last].height * s)
+        pullFill.alpha = (110 + 145 * k).toInt()
+        canvas.drawRect(tmpRect, pullFill)
+        pullLine.color = accent
+        canvas.drawRect(tmpRect, pullLine)
+        // ⊕와 글은 드러난 부분의 가운데에
+        val r = 16f * density
+        val textH = pullText.textSize * 1.6f
+        if (bottom - top < r * 2 + textH + 8f * density) return
+        val label = if (ready) "놓으면 빈 쪽이 추가됩니다" else "더 올리면 빈 쪽 추가"
+        // 확대해서 쪽이 화면보다 넓으면 쪽 가운데가 화면 밖일 수 있다 → 화면에 보이는 부분의 가운데에.
+        // 글이 화면 가장자리에 잘리지 않게도
+        val half = pullText.measureText(label) / 2f + 8f * density
+        val visL = max(left, 0f)
+        val visR = min(left + pw, width.toFloat())
+        val cx = ((visL + visR) / 2f).let { if (width > half * 2) it.coerceIn(half, width - half) else width / 2f }
+        val cy = (top + bottom) / 2f - textH / 2f
+        pullIcon.style = if (ready) Paint.Style.FILL else Paint.Style.STROKE
+        pullIcon.strokeWidth = 2f * density
+        pullIcon.color = accent
+        canvas.drawCircle(cx, cy, r, pullIcon)
+        pullIcon.color = if (ready) Color.WHITE else accent
+        val arm = r * 0.5f
+        canvas.drawLine(cx - arm, cy, cx + arm, cy, pullIcon)
+        canvas.drawLine(cx, cy - arm, cx, cy + arm, pullIcon)
+        pullText.color = accent
+        canvas.drawText(label, cx, cy + r + textH * 0.8f, pullText)
     }
 
     /** 올가미 선과 선택 상자 (화면 좌표) */
@@ -953,6 +1051,7 @@ class DocumentView @JvmOverloads constructor(
             lastFx = detector.focusX
             lastFy = detector.focusY
             scaling = true
+            releasePull(add = false)
             return true
         }
 
@@ -985,9 +1084,19 @@ class DocumentView @JvmOverloads constructor(
         override fun onScroll(e1: MotionEvent?, e2: MotionEvent, distanceX: Float, distanceY: Float): Boolean {
             if (scaling) return true
             val before = offY
+            var dy = distanceY
+            // 끌어 올려 둔 새 쪽 자리가 있으면 내릴 때 그것부터 접는다
+            if (pullPx > 0f && dy < 0f) {
+                val back = min(pullPx, -dy)
+                setPull(pullPx - back)
+                dy += back
+            }
             offX += distanceX
-            offY += distanceY
+            offY += dy
+            val want = offY
             clamp()
+            // 마지막 쪽 끝에서 더 올리면 (뻑뻑하게) 새 쪽 자리를 끌어낸다
+            if (dy > 0f && want > offY + 0.5f && !readOnly) setPull(pullPx + (want - offY) * 0.5f)
             noteScrolled(offY - before)
             invalidate()
             return true
@@ -1333,6 +1442,7 @@ class DocumentView @JvmOverloads constructor(
         if (!penIsFinger || ev.pointerCount == 1 || !scaling) gestureDetector.onTouchEvent(ev)
         if (!fingerActive) {
             penIsFinger = false
+            releasePull(add = action == MotionEvent.ACTION_UP)
             scheduleDetail()
         }
         return true
@@ -1346,6 +1456,7 @@ class DocumentView @JvmOverloads constructor(
         cancel.recycle()
         fingerActive = false
         scaling = false
+        releasePull(add = false)
     }
 
     private fun startPen(sx: Float, sy: Float, p: Float, t: Long) {
@@ -2265,6 +2376,8 @@ class DocumentView @JvmOverloads constructor(
         /** 회전 손잡이 반지름과 상자에서 떨어진 거리 */
         private const val ROT_HANDLE_DP = 14f
         private const val ROT_OFFSET_DP = 34f
+        /** 마지막 쪽 아래로 이만큼(dp) 끌어 올렸다 놓으면 빈 쪽을 붙인다 */
+        private const val PULL_ADD_DP = 110f
         private const val SPEN_DOWN = 211
         private const val SPEN_UP = 212
         private const val SPEN_MOVE = 213
