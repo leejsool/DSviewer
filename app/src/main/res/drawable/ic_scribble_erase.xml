@@ -1,0 +1,8 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- 긁어 지우기: 글자 위를 좌우로 마구 긁은 선 -->
+    <path android:strokeColor="?attr/colorControlNormal" android:strokeWidth="1.6"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M3.5,7.5L20,6L4,10.5L20.5,9L4,13.5L20,12.5L4.5,16.5L19.5,16" />
+</vector>

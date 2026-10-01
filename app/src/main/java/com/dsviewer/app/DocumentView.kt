@@ -100,6 +100,10 @@ class DocumentView @JvmOverloads constructor(
     var eraseHlOnly = false
     /** true면 손가락 한 개로 필기, 두 손가락으로 이동/확대 */
     var fingerDrawing = false
+    /** 펜으로 (좌우든 위아래든) 마구 긁으면 긁은 자리를 영역 지우개로 지운다 */
+    var scribbleErase = true
+    /** 손가락 필기 중 손바닥처럼 넓게 닿아 문지르면 영역 지우개 */
+    var palmErase = true
     /** 읽기 모드: 펜도 손가락처럼 넘기고 확대만 한다 (필기·지우기·선택 없음) */
     var readOnly = false
         set(v) {
@@ -227,6 +231,14 @@ class DocumentView @JvmOverloads constructor(
     private var penPointerId = -1
     private var penIsFinger = false
     private var penErasing = false
+    /** 손바닥 지우기 중 (닿은 모든 손가락·손바닥의 가운데를 지운다) */
+    private var palmErasing = false
+    /** 손바닥 지우개 반지름 (화면 px) */
+    private var palmRadius = 0f
+    /** 이번 손가락 획에서 가장 넓게 닿은 크기 (손가락 크기를 익히는 데 씀) */
+    private var penMaxMajor = 0f
+    /** 최근 손가락 획들의 닿은 크기 (손바닥과 견줄 보통 손가락 크기) */
+    private val fingerSizes = ArrayDeque<Float>()
     private var curStroke: Stroke? = null
     private var curPage = -1
     private var lastPressure = 0.5f
@@ -668,7 +680,7 @@ class DocumentView @JvmOverloads constructor(
             cancelUnneededJobs(range.first - 1, range.last + 1)
         }
         if (penPointerId != -1 && penErasing) {
-            canvas.drawCircle(lastSx, lastSy, eraserRadiusDp * density, cursorPaint)
+            canvas.drawCircle(lastSx, lastSy, if (palmErasing) palmRadius else eraserRadiusDp * density, cursorPaint)
         }
         drawScrollBar(canvas)
         listener?.onViewportChanged()
@@ -1427,12 +1439,34 @@ class DocumentView @JvmOverloads constructor(
                 penIsFinger = fingerPen
                 penErasing = tool == Tool.ERASER || (tool == Tool.TAPE && tapeErasing) ||
                     (stylus && isEraserInput(ev, idx, samsungButton))
+                penMaxMajor = if (fingerPen) ev.getTouchMajor(idx) else 0f
                 startPen(ev.getX(idx), ev.getY(idx), pressure(ev, idx), ev.eventTime)
+                if (palmReady() && anyPalm(ev)) switchToPalm(ev)
                 return true
             }
         }
 
+        if (penPointerId != -1 && palmErasing) {
+            when (action) {
+                MotionEvent.ACTION_MOVE, MotionEvent.ACTION_POINTER_DOWN -> palmMove(ev, -1)
+                MotionEvent.ACTION_POINTER_UP -> palmMove(ev, ev.actionIndex)
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> endPen(commit = true)
+            }
+            return true
+        }
+
         if (penPointerId != -1) {
+            // 손가락 필기 중 손바닥처럼 넓게 닿거나, 여러 손가락이 한꺼번에 닿으면 손바닥 지우개로 바꾼다
+            if (palmReady() && (action == MotionEvent.ACTION_MOVE || action == MotionEvent.ACTION_POINTER_DOWN)) {
+                if (anyPalm(ev) || (ev.pointerCount >= 3 && ev.eventTime - ev.downTime < PALM_GATHER_MS)) {
+                    switchToPalm(ev)
+                    return true
+                }
+                if (action == MotionEvent.ACTION_MOVE) {
+                    val idx = ev.findPointerIndex(penPointerId)
+                    if (idx >= 0) penMaxMajor = max(penMaxMajor, ev.getTouchMajor(idx))
+                }
+            }
             // 손가락 필기 중 두 번째 손가락이 닿으면 필기를 취소하고 이동/확대로 전환
             if (penIsFinger && action == MotionEvent.ACTION_POINTER_DOWN) {
                 endPen(commit = false)
@@ -1482,6 +1516,21 @@ class DocumentView @JvmOverloads constructor(
             return true
         }
 
+        // 두 손가락으로 넘기기를 막 시작했는데 곧바로 손가락이 더 닿거나 손바닥이면 손바닥 지우기
+        if (fingerDrawing && penPointerId == -1 && palmToolOk() && action == MotionEvent.ACTION_POINTER_DOWN &&
+            ev.eventTime - ev.downTime < PALM_GATHER_MS && (ev.pointerCount >= 3 || anyPalm(ev))
+        ) {
+            cancelFingerGesture(ev)
+            listener?.onPenDown()
+            scroller.forceFinished(true)
+            erased.clear()
+            pieces.clear()
+            penPointerId = ev.getPointerId(0)
+            penIsFinger = true
+            switchToPalm(ev)
+            return true
+        }
+
         fingerActive = action != MotionEvent.ACTION_UP && action != MotionEvent.ACTION_CANCEL
         scaleDetector.onTouchEvent(ev)
         // 확대 중에도 넘겨 주어야 움직임 기준점이 따라와서 확대가 끝난 뒤 튀지 않는다 (onScroll은 확대 중이면 무시)
@@ -1492,6 +1541,81 @@ class DocumentView @JvmOverloads constructor(
             scheduleDetail()
         }
         return true
+    }
+
+    // ================= 손바닥 지우기 =================
+
+    /** 손바닥 지우기를 쓰는 도구 (펜·형광펜·보정 펜·지우개) */
+    private fun palmToolOk() = palmErase && !readOnly &&
+        (tool == Tool.PEN || tool == Tool.HIGHLIGHTER || tool == Tool.SHAPE || tool == Tool.ERASER)
+
+    /** 지금 손가락 필기 중이라 손바닥으로 바꿀 수 있는지 */
+    private fun palmReady() = fingerDrawing && penIsFinger && !palmErasing && palmToolOk()
+
+    /** 보통 손가락이 닿는 크기 (최근 손가락 획들의 가운뎃값, 아직 모르면 9mm) */
+    private fun fingerSize(): Float {
+        if (fingerSizes.size >= 3) return fingerSizes.sorted()[fingerSizes.size / 2]
+        return 9f * resources.displayMetrics.xdpi / 25.4f
+    }
+
+    /** 닿은 것 중에 손바닥만큼 넓은 것이 있는지 (보통 손가락의 2.5배 넘게) */
+    private fun anyPalm(ev: MotionEvent): Boolean {
+        val limit = max(fingerSize() * PALM_RATIO, 3f * resources.displayMetrics.xdpi / 25.4f)
+        for (i in 0 until ev.pointerCount) {
+            if (ev.getToolType(i) == MotionEvent.TOOL_TYPE_FINGER && ev.getTouchMajor(i) >= limit) return true
+        }
+        return false
+    }
+
+    /** 그리던 손가락 획을 버리고 손바닥 지우개로 */
+    private fun switchToPalm(ev: MotionEvent) {
+        shapeGen++
+        shapePending = false
+        shapePreview = null
+        curStroke = null
+        curPage = -1
+        tapCandidate = false
+        clearSelection()
+        penErasing = true
+        palmErasing = true
+        palmMove(ev, -1, first = true)
+    }
+
+    /**
+     * 손바닥 지우개를 닿은 손(손가락·손바닥 모두)의 가운데로 옮기며 지나간 길을 지운다.
+     * 반지름은 닿은 범위를 다 덮도록. [leaving]은 막 떨어지는 손가락 (빼고 셈)
+     */
+    private fun palmMove(ev: MotionEvent, leaving: Int, first: Boolean = false) {
+        var n = 0
+        var cx = 0f
+        var cy = 0f
+        for (i in 0 until ev.pointerCount) {
+            if (i == leaving) continue
+            cx += ev.getX(i); cy += ev.getY(i); n++
+        }
+        if (n == 0) return
+        cx /= n
+        cy /= n
+        var r = 0f
+        for (i in 0 until ev.pointerCount) {
+            if (i == leaving) continue
+            r = max(r, hypot(ev.getX(i) - cx, ev.getY(i) - cy) + ev.getTouchMajor(i) / 2f)
+        }
+        palmRadius = r.coerceIn(PALM_MIN_DP * density, PALM_MAX_DP * density)
+        if (first) {
+            lastSx = cx
+            lastSy = cy
+        }
+        val dist = hypot(cx - lastSx, cy - lastSy)
+        val steps = max(1, (dist / (palmRadius / 2f)).toInt())
+        for (k in (if (first) 0 else 1)..steps) {
+            val x = lastSx + (cx - lastSx) * k / steps
+            val y = lastSy + (cy - lastSy) * k / steps
+            hitPage(x, y)?.let { eraseAt(it.first, it.second, it.third, palmRadius) }
+        }
+        lastSx = cx
+        lastSy = cy
+        invalidate()
     }
 
     private fun cancelFingerGesture(ev: MotionEvent) {
@@ -1733,14 +1857,16 @@ class DocumentView @JvmOverloads constructor(
         return out
     }
 
-    private fun eraseAt(page: Int, px: Float, py: Float) {
+    private fun eraseAt(page: Int, px: Float, py: Float, radiusPx: Float = eraserRadiusDp * density) {
         val inkDoc = ink ?: return
-        val r = eraserRadiusDp * density / scale
+        val r = radiusPx / scale
         val list = inkDoc.pages[page]
         var removed = false
         // 테이프 도구의 지우개는 테이프만 (보이게 한 테이프도) 지운다
-        val tapesOnly = tool == Tool.TAPE && tapeErasing
-        val mode = if (tapesOnly) tapeEraseMode else eraserMode
+        val tapesOnly = tool == Tool.TAPE && tapeErasing && !palmErasing
+        // 손바닥은 늘 닿은 부분만 지운다
+        val mode = if (palmErasing) EraserMode.AREA else if (tapesOnly) tapeEraseMode else eraserMode
+        val hlOnly = eraseHlOnly && !palmErasing
         // 가린 테이프 아래(먼저 그린 획)는 보이지 않으므로 지우지 않는다
         var covered = false
         for (k in list.indices.reversed()) {
@@ -1752,7 +1878,7 @@ class DocumentView @JvmOverloads constructor(
             } else if (isTape && st.revealed) continue  // 보이게 한 테이프는 투명한 셈이라 지우개가 그대로 지나간다
             if (covered) break
             val coversHere = isTape && !st.revealed && st.tapeContains(px, py)
-            if (!tapesOnly && eraseHlOnly && st.tool != Tool.HIGHLIGHTER) {
+            if (!tapesOnly && hlOnly && st.tool != Tool.HIGHLIGHTER) {
                 if (coversHere) covered = true
                 continue
             }
@@ -1842,6 +1968,8 @@ class DocumentView @JvmOverloads constructor(
                         laserStrokes.add(curPage to st)
                         removeCallbacks(laserFadeRunnable)
                         postDelayed(laserFadeRunnable, laserFadeMs)
+                    } else if (st.tool == Tool.PEN && scribbleErase && eraseScribbled(curPage, st)) {
+                        // 긁어 지우기: 긁은 획은 남기지 않고 그 아래를 지웠다
                     } else {
                         if (st.tool == Tool.PEN) penInput.finish(st)
                         inkDoc.add(curPage, st)
@@ -1850,14 +1978,48 @@ class DocumentView @JvmOverloads constructor(
             }
             shapePreview = null
         }
+        // 손바닥이 아니었던 손가락 획으로 보통 손가락 크기를 익힌다
+        if (penIsFinger && !palmErasing && penMaxMajor > 0f) {
+            fingerSizes.addLast(penMaxMajor)
+            while (fingerSizes.size > 15) fingerSizes.removeFirst()
+        }
+        penMaxMajor = 0f
         erased.clear()
         pieces.clear()
         curStroke = null
         curPage = -1
         penPointerId = -1
         penErasing = false
+        palmErasing = false
         tapCandidate = false
         invalidate()
+    }
+
+    /**
+     * 긁어 지우기: [st]가 좌우로 마구 긁은 획이면 그 영역에 닿은 필기(펜·형광펜)를 지우고 true.
+     * 긁은 모양이 아니거나 아래에 지울 필기가 없으면 false (보통 획으로 남긴다). 그림·글·테이프는 그대로
+     */
+    private fun eraseScribbled(page: Int, st: Stroke): Boolean {
+        val inkDoc = ink ?: return false
+        val region = ScribbleRegion.detect(st, density / scale) ?: return false
+        val list = inkDoc.pages[page]
+        val gone = ArrayList<Pair<Int, Stroke>>()
+        val added = ArrayList<Pair<Int, Stroke>>()
+        val step = 0.75f * density / scale
+        for (k in list.indices.reversed()) {
+            val s = list[k]
+            if (s.isBox || s.tape != null) continue
+            val hw = s.halfWidth
+            val rest = s.cutWhere(step) { x, y -> region.contains(x, y, hw) } ?: continue
+            list.removeAt(k)
+            list.addAll(k, rest)
+            gone.add(page to s)
+            rest.forEach { added.add(page to it) }
+        }
+        if (gone.isEmpty()) return false
+        inkDoc.erased(gone, added)
+        performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+        return true
     }
 
     // ================= 올가미 선택 =================
@@ -2518,6 +2680,12 @@ class DocumentView @JvmOverloads constructor(
         private const val TAP_SLOP_DP = 12f
         /** 테이프를 톡 누른 것으로 보는 시간 (ms) */
         private const val TAP_MS = 500L
+        /** 손바닥: 보통 손가락보다 이만큼 넓게 닿으면 */
+        private const val PALM_RATIO = 2.5f
+        /** 손바닥: 처음 닿고 이 안에 손가락 셋 넘게 닿으면 (ms) */
+        private const val PALM_GATHER_MS = 250L
+        private const val PALM_MIN_DP = 24f
+        private const val PALM_MAX_DP = 220f
         /** 테이프를 글자 크기에 맞출 때 가운데에서 위·아래로 찾는 범위 (pt) */
         private const val FIT_RANGE = 40f
         /** 회전 손잡이 반지름과 상자에서 떨어진 거리 */

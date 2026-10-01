@@ -2241,6 +2241,8 @@ class ViewerActivity : AppCompatActivity() {
         docView.eraserMode = prefs.getString("eraserMode", null)
             ?.let { n -> EraserMode.entries.firstOrNull { it.name == n } } ?: EraserMode.STROKE
         docView.eraseHlOnly = prefs.getBoolean("eraseHlOnly", false)
+        docView.scribbleErase = prefs.getBoolean("scribbleErase", true)
+        docView.palmErase = prefs.getBoolean("palmErase", true)
     }
 
     /** 지우개 버튼: 획/영역 표시 + 형광펜만이면 형광색 지우개 */
@@ -2286,6 +2288,18 @@ class ViewerActivity : AppCompatActivity() {
                     docView.eraseHlOnly = !hl
                     prefs.edit().putBoolean("eraseHlOnly", !hl).apply()
                     updateEraserIcon()
+                }
+                addOptionSeparator()
+                // 펜을 든 채 지우기: 좌우로 긁기, 손바닥으로 문지르기 (켜고 끄기)
+                addOption(R.drawable.ic_scribble_erase, "긁어서 지우기", docView.scribbleErase) {
+                    docView.scribbleErase = !docView.scribbleErase
+                    prefs.edit().putBoolean("scribbleErase", docView.scribbleErase).apply()
+                    toast(if (docView.scribbleErase) "펜으로 좌우나 위아래로 마구 긁으면 긁은 자리가 지워집니다." else "긁어서 지우기를 껐습니다.")
+                }
+                addOption(R.drawable.ic_palm_erase, "손바닥 지우기", docView.palmErase) {
+                    docView.palmErase = !docView.palmErase
+                    prefs.edit().putBoolean("palmErase", docView.palmErase).apply()
+                    toast(if (docView.palmErase) "손가락으로 쓰기 중 손바닥으로 문지르면 지워집니다." else "손바닥 지우기를 껐습니다.")
                 }
                 addOptionSeparator()
                 addOption(R.drawable.ic_eraser_page, if (hl) "쪽 형광펜 모두 지우기" else "쪽 전체 지우기", false) {
