@@ -628,12 +628,23 @@ class DocumentView @JvmOverloads constructor(
         invalidate()
     }
 
+    /** 화면 맨 위에 걸친 (쪽, 그 쪽 안 높이). 링크로 옮기기 전 자리를 기억해 둘 때 ([scrollToPageY]로 돌아온다) */
+    fun topSpot(): Pair<Int, Float>? {
+        if (sizes.isEmpty()) return null
+        val docY = (offY + topInset) / scale
+        val page = sizes.indices.lastOrNull { tops[it] - gap / 2 <= docY } ?: 0
+        return page to docY - tops[page]
+    }
+
+    /** 쪽 좌표 (x, y)에 있는 링크 단 글의 주소 (맨 위 것) */
+    fun inkLinkAt(page: Int, x: Float, y: Float): String? = boxAt(page, x, y, textOnly = true)?.link
+
     /** [page]쪽의 높이 [y]가 화면 맨 위에 오도록 옮긴다 (목차 링크로 갈 때) */
     fun scrollToPageY(page: Int, y: Float) {
         if (page !in sizes.indices || width == 0) return
         scroller.forceFinished(true)
         zoomAnimator?.cancel()
-        offY = (tops[page] + y.coerceIn(0f, sizes[page].height)) * scale - topInset
+        offY = (tops[page] + y.coerceIn(-gap / 2, sizes[page].height)) * scale - topInset
         clamp()
         scheduleDetail()
         invalidate()
@@ -2402,6 +2413,32 @@ class DocumentView @JvmOverloads constructor(
         return true
     }
 
+    /** 링크 단 글을 지금 보는 쪽의 화면 가운데에 넣고 고른다 (바로 옮길 수 있게) */
+    fun insertLink(text: InkText, color: Int, url: String): Boolean {
+        val inkDoc = ink ?: return false
+        if (sizes.isEmpty()) return false
+        val page = currentPage().coerceIn(0, sizes.lastIndex)
+        val pw = sizes[page].width
+        val ph = sizes[page].height
+        val w = min(text.boxW.toFloat(), pw)
+        val h = text.boxH * (w / text.boxW)
+        val cx = ((offX + width / 2f) / scale - lefts[page]).coerceIn(w / 2, pw - w / 2)
+        val cy = ((offY + height / 2f) / scale - tops[page]).coerceIn(h / 2, max(h / 2, ph - h / 2))
+        val st = Stroke(Tool.PEN, color, 0f).apply {
+            this.text = text
+            link = url
+            add(cx - w / 2, cy - h / 2, 1f)
+            add(cx + w / 2, cy - h / 2, 1f)
+            add(cx + w / 2, cy + h / 2, 1f)
+            add(cx - w / 2, cy + h / 2, 1f)
+        }
+        clearSelection()
+        inkDoc.addAll(page, listOf(st))
+        select(page, listOf(st))
+        invalidate()
+        return true
+    }
+
     // ================= 테이프 =================
 
     /** 쪽 좌표 (x, y)를 덮고 있는 맨 위 테이프 */
@@ -2830,6 +2867,7 @@ class DocumentView @JvmOverloads constructor(
             add(x0 + ux, y0 + uy, 1f)
             add(x0 + ux + vx, y0 + uy + vy, 1f)
             add(x0 + vx, y0 + vy, 1f)
+            link = old.link
         }
         inkDoc.replace(page, old, st)
         invalidate()

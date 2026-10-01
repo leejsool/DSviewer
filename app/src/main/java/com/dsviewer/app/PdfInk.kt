@@ -22,7 +22,10 @@ import com.tom_roush.pdfbox.pdmodel.graphics.image.LosslessFactory
 import com.tom_roush.pdfbox.pdmodel.graphics.image.PDImageXObject
 import com.tom_roush.pdfbox.pdmodel.graphics.pattern.PDTilingPattern
 import com.tom_roush.pdfbox.pdmodel.graphics.state.PDExtendedGraphicsState
+import com.tom_roush.pdfbox.pdmodel.interactive.action.PDActionURI
 import com.tom_roush.pdfbox.pdmodel.interactive.annotation.PDAnnotation
+import com.tom_roush.pdfbox.pdmodel.interactive.annotation.PDAnnotationLink
+import com.tom_roush.pdfbox.pdmodel.interactive.annotation.PDBorderStyleDictionary
 import com.tom_roush.pdfbox.pdmodel.interactive.annotation.PDAppearanceDictionary
 import com.tom_roush.pdfbox.pdmodel.interactive.annotation.PDAppearanceStream
 import com.tom_roush.pdfbox.util.Matrix
@@ -44,6 +47,9 @@ object PdfInk {
     private val KEY_NAME: COSName = COSName.getPDFName(KEY)
     /** 북마크한 쪽: 쪽 사전에 이 키를 true로 */
     private val MARK_NAME: COSName = COSName.getPDFName("DSViewerMark")
+    /** 글에 단 링크 주소: 글 주석 사전에 이 키로. 다른 앱에서도 눌리도록 따로 넣는 /Link 주석에는 [KEY_NAME]을 [LINK_MARK]로 */
+    private val LINK_NAME: COSName = COSName.getPDFName("DSViewerLink")
+    private const val LINK_MARK = "link"
     const val HL_ALPHA = 0.45f
 
     /**
@@ -86,9 +92,11 @@ object PdfInk {
                         keep.add(a)
                         continue
                     }
+                    // 이 앱이 넣은 /Link 주석([LINK_MARK])은 decode가 null이라 버린다 (글의 링크로 다시 만든다)
                     val st = decode(s) ?: continue
                     // 그림: 외형 안의 그림을 꺼낸다 (못 꺼내면 버림)
                     if (s.startsWith("1|I|")) st.image = readImage(a) ?: continue
+                    if (st.text != null) st.link = a.cosObject.getString(LINK_NAME)
                     strokes.add(st)
                 }
                 if (keep.size != annots.size) page.annotations = keep
@@ -107,6 +115,7 @@ object PdfInk {
                 val s = a.cosObject.getString(KEY_NAME) ?: return@mapNotNull null
                 val st = decode(s) ?: return@mapNotNull null
                 if (s.startsWith("1|I|")) st.image = readImage(a) ?: return@mapNotNull null
+                if (st.text != null) st.link = a.cosObject.getString(LINK_NAME)
                 st
             }
         }
@@ -136,6 +145,7 @@ object PdfInk {
                                     else -> makeAnnotation(doc, page, s)
                                 }
                             )
+                            if (s.text != null) s.link?.let { list.add(makeLinkAnnotation(page, s, it)) }
                         }
                     }
                     page.annotations = list
@@ -367,10 +377,28 @@ object PdfInk {
         annot.setModifiedDate(Calendar.getInstance())
         annot.page = page
         dict.setString(KEY_NAME, encode(s))
+        s.link?.let { dict.setString(LINK_NAME, it) }
         val apd = PDAppearanceDictionary()
         apd.setNormalAppearance(ap)
         annot.appearance = apd
         return annot
+    }
+
+    /** 링크 단 글 자리에 웹 주소 링크 주석(/Link): 다른 PDF 앱에서도 누르면 열린다 */
+    private fun makeLinkAnnotation(page: PDPage, s: Stroke, url: String): PDAnnotation {
+        val box = page.cropBox
+        val rot = ((page.rotation % 360) + 360) % 360
+        val ux = FloatArray(4)
+        val uy = FloatArray(4)
+        for (i in 0 until 4) toUser(s.x(i), s.y(i), box, rot, ux, uy, i)
+        val link = PDAnnotationLink()
+        link.rectangle = PDRectangle(ux.min(), uy.min(), ux.max() - ux.min(), uy.max() - uy.min())
+        link.borderStyle = PDBorderStyleDictionary().apply { width = 0f }
+        link.action = PDActionURI().apply { uri = url }
+        link.isPrinted = true
+        link.page = page
+        link.cosObject.setString(KEY_NAME, LINK_MARK)
+        return link
     }
 
     /**

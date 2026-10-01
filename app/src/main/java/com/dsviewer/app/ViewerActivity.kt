@@ -525,6 +525,7 @@ class ViewerActivity : AppCompatActivity() {
             updateTabTitle(t)
         }
         inkDoc.swapPages = { files, apply -> restorePageFiles(t, files as PageFiles, apply) }
+        inkDoc.jumpTo = { spot -> if (current === t) (spot as Spot).let { docView.scrollToPageY(it.page, it.y) } }
         t.pdf = d
         t.ink = inkDoc
         if (current === t) {
@@ -665,37 +666,60 @@ class ViewerActivity : AppCompatActivity() {
         return DocLinks(f, lifecycleScope).also { t.links = it }
     }
 
-    /** 읽기 모드에서 누른 자리의 링크: 다른 쪽이면 바로 가고, 웹 주소면 물어보고 브라우저로 */
+    /** 링크로 옮겨 가기 전·후의 자리 (쪽, 그 쪽 안 높이). 실행 취소 기록에 담는다 */
+    private class Spot(val page: Int, val y: Float)
+
+    /**
+     * 읽기 모드에서 누른 자리의 링크: 다른 쪽이면 바로 가고(실행 취소하면 돌아온다),
+     * 웹 주소면 물어보고 브라우저로. 링크 삽입으로 단 글이 PDF 링크보다 먼저
+     */
     private fun followLinkAt(page: Int, x: Float, y: Float) {
+        docView.inkLinkAt(page, x, y)?.let { openWebLink(it); return }
         val links = currentLinks() ?: return
         links.whenReady { l ->
-            if (current?.links !== l || !readMode) return@whenReady
+            val t = current
+            if (t?.links !== l || !readMode) return@whenReady
             val link = l.at(page, x, y) ?: return@whenReady
             val uri = link.uri
-            if (uri == null) {
-                if (link.y != null) docView.scrollToPageY(link.page, link.y) else docView.scrollToPage(link.page)
+            if (uri != null) {
+                openWebLink(uri)
                 return@whenReady
             }
-            // 'www.…'처럼 앞이 빠진 주소는 웹 주소로. 웹·메일 말고는 열지 않는다
-            val full = if (Regex("^[a-zA-Z][a-zA-Z0-9+.-]*:").containsMatchIn(uri)) uri else "http://$uri"
-            val parsed = Uri.parse(full)
-            if (parsed.scheme?.lowercase() !in setOf("http", "https", "mailto")) {
-                toast("열 수 없는 링크입니다: $uri")
-                return@whenReady
-            }
-            MaterialAlertDialogBuilder(this)
-                .setTitle("이 주소로 이동할까요?")
-                .setMessage(full)
-                .setPositiveButton("이동") { _, _ ->
-                    try {
-                        startActivity(Intent(Intent.ACTION_VIEW, parsed).addCategory(Intent.CATEGORY_BROWSABLE))
-                    } catch (e: android.content.ActivityNotFoundException) {
-                        toast("이 주소를 열 수 있는 앱이 없습니다.")
-                    }
-                }
-                .setNegativeButton("취소", null)
-                .show()
+            val before = docView.topSpot()
+            val to = Spot(link.page, link.y ?: 0f)
+            docView.scrollToPageY(to.page, to.y)
+            if (before != null) t.ink?.jumped(Spot(before.first, before.second), to)
         }
+    }
+
+    /** 'www.…'처럼 앞이 빠진 주소는 웹 주소로. 웹·메일 주소가 아니면 null */
+    private fun webUri(text: String): Uri? {
+        val s = text.trim()
+        if (s.isEmpty()) return null
+        val full = if (Regex("^[a-zA-Z][a-zA-Z0-9+.-]*:").containsMatchIn(s)) s else "http://$s"
+        val u = Uri.parse(full)
+        return u.takeIf { it.scheme?.lowercase() in setOf("http", "https", "mailto") }
+    }
+
+    /** "이 주소로 이동할까요?"를 묻고 브라우저로 */
+    private fun openWebLink(uri: String) {
+        val parsed = webUri(uri)
+        if (parsed == null) {
+            toast("열 수 없는 링크입니다: $uri")
+            return
+        }
+        MaterialAlertDialogBuilder(this)
+            .setTitle("이 주소로 이동할까요?")
+            .setMessage(parsed.toString())
+            .setPositiveButton("이동") { _, _ ->
+                try {
+                    startActivity(Intent(Intent.ACTION_VIEW, parsed).addCategory(Intent.CATEGORY_BROWSABLE))
+                } catch (e: android.content.ActivityNotFoundException) {
+                    toast("이 주소를 열 수 있는 앱이 없습니다.")
+                }
+            }
+            .setNegativeButton("취소", null)
+            .show()
     }
 
     /** 페이지 관리 창을 저장된 설정대로 열거나 닫는다 (전체 화면에서는 늘 닫음) */
@@ -1101,6 +1125,7 @@ class ViewerActivity : AppCompatActivity() {
         pdf.add(0, 21, 0, "맨 앞에 넣기")
         pdf.add(0, 22, 1, "지금 보는 ${page}쪽 다음에 넣기")
         pdf.add(0, 23, 2, "맨 뒤에 넣기")
+        popup.menu.add(0, 5, 2, "링크").setIcon(R.drawable.ic_link)
         popup.setForceShowIcon(true)
         popup.setOnMenuItemClickListener { item ->
             val at = when (item.itemId) {
@@ -1111,6 +1136,7 @@ class ViewerActivity : AppCompatActivity() {
             }
             when {
                 item.itemId == 4 -> startScreenCapture()
+                item.itemId == 5 -> showInsertLink()
                 item.itemId == 1 || item.itemId == 3 -> {
                     imageImportMode = if (item.itemId == 3) ImageImportMode.NEW_PAGE else ImageImportMode.IN_PAGE
                     pickImage.launch("image/*")
@@ -1126,6 +1152,55 @@ class ViewerActivity : AppCompatActivity() {
     }
 
     private enum class PdfInsertAt { FIRST, AFTER_CURRENT, LAST }
+
+    /** 링크 넣기: 웹 주소와 보일 글자를 받아 파란 밑줄 글로 넣는다. 읽기 모드에서 누르면 열린다 */
+    private fun showInsertLink() {
+        if (current?.ink == null) return
+        val d = resources.displayMetrics.density
+        val url = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+            isSingleLine = true
+            hint = "웹 주소 (예: www.example.com)"
+        }
+        val label = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_TEXT
+            imeOptions = EditorInfo.IME_ACTION_DONE
+            isSingleLine = true
+            hint = "보일 글자 (비우면 주소 그대로)"
+        }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding((24 * d).toInt(), (4 * d).toInt(), (24 * d).toInt(), 0)
+            addView(url)
+            addView(label)
+        }
+        val dialog = MaterialAlertDialogBuilder(this)
+            .setTitle("링크 넣기")
+            .setView(box)
+            .setPositiveButton("넣기", null)
+            .setNegativeButton("취소", null)
+            .create()
+        fun insert() {
+            val u = webUri(url.text.toString())
+            if (u == null) {
+                url.error = "웹 주소를 입력해 주세요"
+                return
+            }
+            val shown = label.text.toString().trim().ifEmpty { url.text.toString().trim() }
+            val text = InkText(RichDoc(shown, listOf(RichDoc.Run(0, shown.length, 'u')), emptyList()), defaultTextSize)
+            dialog.dismiss()
+            if (readMode) setReadMode(false)
+            // 넣은 링크를 바로 옮길 수 있게 선택 도구로
+            selectTool(Tool.LASSO)
+            if (!docView.insertLink(text, LINK_COLOR, u.toString())) toast("링크를 넣지 못했습니다.")
+            else toast("읽기 모드에서 누르면 열립니다.")
+        }
+        label.setOnEditorActionListener { _, _, _ -> insert(); true }
+        dialog.setOnShowListener { dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener { insert() } }
+        dialog.show()
+        url.requestFocus()
+        dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
+    }
 
     /** 다른 PDF의 쪽을 넣는다. 그 PDF에 이 앱으로 쓴 필기가 있으면 필기도 함께 (계속 고칠 수 있게) */
     private fun insertPdfFrom(uri: Uri, at: PdfInsertAt) {
@@ -3546,6 +3621,8 @@ class ViewerActivity : AppCompatActivity() {
         private const val EXPORT_DPI = 150f
         /** 넣는 그림의 긴 변 최대 픽셀 */
         private const val MAX_IMAGE_PX = 2048
+        /** 링크 넣기로 넣은 글의 색 (파란 밑줄) */
+        private val LINK_COLOR = Color.parseColor("#1A5FD0")
         /** 보조선(점근선·축)을 고를 수 있는 보정 펜 도형 */
         private val GUIDE_KINDS = setOf(ShapeKind.HYPERBOLA, ShapeKind.EXP_LOG, ShapeKind.QUAD_EXP, ShapeKind.TANGENT, ShapeKind.SINE)
         private val TAB_ICON_GRAY = Color.parseColor("#9E9E9E")

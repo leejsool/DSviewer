@@ -243,6 +243,8 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
     var image: InkImage? = null
     /** 글이면 그 글 (점 네 개가 글 상자의 네 모서리). 지우개로는 지우지 않는다 */
     var text: InkText? = null
+    /** 글에 단 링크 (웹 주소). 읽기 모드에서 누르면 연다 */
+    var link: String? = null
 
     /** 테이프면 그 모양·무늬 */
     var tape: TapeStyle? = null
@@ -434,6 +436,7 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
         val s = Stroke(tool, color, width, dashed, pen)
         s.image = image
         s.text = text
+        s.link = link
         s.tape = tape
         s.fill = fill
         s.holes = holes.copyOf()
@@ -809,6 +812,8 @@ class InkDocument(pageCount: Int) {
             val before: List<MutableList<Stroke>>, val after: List<MutableList<Stroke>>,
             val beforeFiles: Any, val afterFiles: Any,
         ) : Action()
+        /** 목차 링크로 다른 자리로 감 (필기는 바뀌지 않는다) */
+        class Jump(val before: Any, val after: Any) : Action()
     }
 
     private val undoStack = ArrayDeque<Action>()
@@ -917,6 +922,25 @@ class InkDocument(pageCount: Int) {
      */
     var swapPages: ((files: Any, apply: () -> Boolean) -> Unit)? = null
 
+    /** 링크로 옮겨 간 자리를 실행 취소·다시 실행할 때 그 자리로 화면을 옮긴다 */
+    var jumpTo: ((spot: Any) -> Unit)? = null
+
+    /** 링크로 [before]에서 [after]로 옮겨 감을 기록한다 (실행 취소하면 돌아온다. 저장할 것이 생기지는 않는다) */
+    fun jumped(before: Any, after: Any) {
+        undoStack.addLast(Action.Jump(before, after))
+        redoStack.clear()
+        onChanged?.invoke()
+    }
+
+    /** 옮겨 간 기록이면 화면만 옮기고 true */
+    private fun jumpIf(a: Action, undo: Boolean): Boolean {
+        if (a !is Action.Jump) return false
+        if (undo) redoStack.addLast(undoStack.removeLast()) else undoStack.addLast(redoStack.removeLast())
+        jumpTo?.invoke(if (undo) a.before else a.after)
+        onChanged?.invoke()
+        return true
+    }
+
     /** 쪽 구성 기록이면 [swapPages]로 PDF를 먼저 바꾸게 하고 true */
     private fun swapIfPages(a: Action, undo: Boolean): Boolean {
         if (a !is Action.Pages) return false
@@ -935,7 +959,8 @@ class InkDocument(pageCount: Int) {
     }
 
     fun undo() {
-        if (swapIfPages(undoStack.lastOrNull() ?: return, undo = true)) return
+        val last = undoStack.lastOrNull() ?: return
+        if (jumpIf(last, undo = true) || swapIfPages(last, undo = true)) return
         val a = undoStack.removeLast()
         when (a) {
             is Action.Add -> a.page.remove(a.stroke)
@@ -946,14 +971,15 @@ class InkDocument(pageCount: Int) {
             is Action.Move -> a.strokes.forEach { it.translate(-a.dx, -a.dy) }
             is Action.AddAll -> { val set = a.strokes.toSet(); a.page.removeAll { it in set } }
             is Action.Edit -> a.strokes.forEachIndexed { i, s -> s.restore(a.before[i]) }
-            is Action.Pages -> {}  // swapIfPages
+            is Action.Pages, is Action.Jump -> {}  // swapIfPages, jumpIf
         }
         redoStack.addLast(a)
         changed()
     }
 
     fun redo() {
-        if (swapIfPages(redoStack.lastOrNull() ?: return, undo = false)) return
+        val last = redoStack.lastOrNull() ?: return
+        if (jumpIf(last, undo = false) || swapIfPages(last, undo = false)) return
         val a = redoStack.removeLast()
         when (a) {
             is Action.Add -> a.page.add(a.stroke)
@@ -964,7 +990,7 @@ class InkDocument(pageCount: Int) {
             is Action.Move -> a.strokes.forEach { it.translate(a.dx, a.dy) }
             is Action.AddAll -> a.page.addAll(a.strokes)
             is Action.Edit -> a.strokes.forEachIndexed { i, s -> s.restore(a.after[i]) }
-            is Action.Pages -> {}  // swapIfPages
+            is Action.Pages, is Action.Jump -> {}  // swapIfPages, jumpIf
         }
         undoStack.addLast(a)
         changed()
