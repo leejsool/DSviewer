@@ -231,8 +231,15 @@ class ShapeGuidesTest {
             val ang = Math.toDegrees(kotlin.math.acos((ex * hx + ey * hy) / (hypot(ex, ey) * hypot(hx, hy))))
             assertTrue("각도 차 $ang", ang < 6)
         }
-        val icon = ShapeGuides.pigtailPoints(2.5, 16.0, 21.5, 16.0, 0.5, 3.6, -1.0)
-        val iconHead = ShapeGuides.headOnPath(icon, 5.0)
+        // 아이콘 (ShapeIconDrawable과 같게: 고리 + 끝 기울기로 곧은 꼬리)
+        val curl = ShapeGuides.pigtailPoints(2.0, 14.0, 17.0, 13.0, 0.5, 3.2, -1.0)
+        val m = curl.size / 2
+        val dx = curl[m * 2 - 2] - curl[m * 2 - 6]; val dy = curl[m * 2 - 1] - curl[m * 2 - 5]
+        val dl = hypot(dx, dy)
+        val icon = curl + doubleArrayOf(curl[m * 2 - 2] + dx / dl * 5.5, curl[m * 2 - 1] + dy / dl * 5.5)
+        val iconHead = ShapeGuides.headOnPath(icon, 4.5)
+        // 아이콘 칸(24) 안에
+        assertTrue(iconHead.all { it in 0f..24f } && icon.all { it in 0.0..24.0 })
         check(icon, iconHead)
         // 아이콘을 10배로 그려 둔다
         val zoomed = Fitted(listOf(FloatArray(icon.size) { (icon[it] * 10).toFloat() }),

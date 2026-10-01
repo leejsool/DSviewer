@@ -72,9 +72,15 @@ class ShapeIconDrawable(ctx: Context, private val kind: ShapeKind, private val d
                 canvas.drawPath(p, line)
                 head(canvas, 20.5f, 9f, 13.5f, 6f)
             }
-            // 곧게 가다 고리를 한 번 감는 선
+            // 휘며 고리를 한 번 감고, 끝의 기울기 그대로 곧게 조금 더 나간 끝에 화살촉
+            // (아이콘은 작아서 휘는 끝에 바로 촉을 달면 촉 날개가 선에 겹쳐 보인다)
             ShapeKind.ARROW_PIGTAIL -> {
-                val pts = ShapeGuides.pigtailPoints(2.5, 16.0, 21.5, 16.0, 0.5, 3.6, -1.0)
+                val curl = ShapeGuides.pigtailPoints(2.0, 14.0, 17.0, 13.0, 0.5, 3.2, -1.0)
+                val m = curl.size / 2
+                val dx = curl[m * 2 - 2] - curl[m * 2 - 6]
+                val dy = curl[m * 2 - 1] - curl[m * 2 - 5]
+                val dl = kotlin.math.hypot(dx, dy)
+                val pts = curl + doubleArrayOf(curl[m * 2 - 2] + dx / dl * 5.5, curl[m * 2 - 1] + dy / dl * 5.5)
                 val p = Path()
                 for (i in 0 until pts.size / 2) {
                     val x = pts[i * 2].toFloat()
@@ -83,7 +89,7 @@ class ShapeIconDrawable(ctx: Context, private val kind: ShapeKind, private val d
                 }
                 canvas.drawPath(p, line)
                 // 화살촉은 끝나는 곳의 기울기 방향으로
-                drawHead(canvas, ShapeGuides.headOnPath(pts, 5.0))
+                drawHead(canvas, ShapeGuides.headOnPath(pts, 4.5))
             }
             // 선분(옅게)과 그 위에 가운데를 비운 호
             ShapeKind.LENGTH_MARK -> {

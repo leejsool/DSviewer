@@ -2571,11 +2571,12 @@ class ViewerActivity : AppCompatActivity() {
 
     /**
      * [anchor] 옆에 [items](아이콘, 이름, 고른 것인지)를 툴바 방향으로 늘어놓은 창을 띄운다.
-     * 고르면 창과 옵션 줄을 닫고 [onPick]에 몇 번째인지 넘긴다. [title]은 앞에 붙는 작은 설명
+     * 고르면 창과 옵션 줄을 닫고 [onPick]에 몇 번째인지 넘긴다. [title]은 앞에 붙는 작은 설명,
+     * [separatorBefore]는 그 앞에 나누는 막대를 넣을 칸 번호들 (따로 고르는 묶음을 나눌 때)
      */
     private fun showFlyout(
         anchor: View, items: List<Triple<android.graphics.drawable.Drawable, String, Boolean>>,
-        title: String? = null, onPick: (Int) -> Unit,
+        title: String? = null, separatorBefore: Set<Int> = emptySet(), onPick: (Int) -> Unit,
     ) {
         closeFlyout()
         val d = resources.displayMetrics.density
@@ -2596,6 +2597,7 @@ class ViewerActivity : AppCompatActivity() {
         popup.elevation = 8 * d
         if (title != null) box.addView(optionLabel(title, (4 * d).toInt()))
         items.forEachIndexed { i, (icon, label, selected) ->
+            if (i in separatorBefore) box.addView(optionSeparator())
             box.addView(optionItem(icon, label, selected) {
                 popup.dismiss()
                 hideOptionBar()
@@ -2740,10 +2742,13 @@ class ViewerActivity : AppCompatActivity() {
     }
 
     /** 칸 묶음 사이 구분선 (가로 줄은 세로선, 세로 줄은 가로선) */
-    private fun addOptionSeparator() {
+    private fun addOptionSeparator() = optionRow.addView(optionSeparator())
+
+    /** 칸 묶음을 나누는 가는 막대 (가로 줄이면 세로 막대, 세로 줄이면 가로 막대) */
+    private fun optionSeparator(): View {
         val d = resources.displayMetrics.density
         val vertical = dock.side.vertical
-        optionRow.addView(View(this).apply {
+        return View(this).apply {
             val long = (32 * d).toInt()
             val thin = (1 * d).toInt()
             layoutParams = (if (vertical) LinearLayout.LayoutParams(long, thin) else LinearLayout.LayoutParams(thin, long)).apply {
@@ -2751,7 +2756,7 @@ class ViewerActivity : AppCompatActivity() {
                 else { marginStart = (4 * d).toInt(); marginEnd = (5 * d).toInt() }
             }
             setBackgroundColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOutlineVariant))
-        })
+        }
     }
 
     /** 보고 있는 쪽의 필기(형광펜만 켜 두었으면 형광펜만)를 모두 지운다. 실행 취소로 되돌릴 수 있다 */
@@ -3100,7 +3105,8 @@ class ViewerActivity : AppCompatActivity() {
                 Triple(ShapeIconDrawable(this, cur, false), "실선", !dashed),
                 Triple(ShapeIconDrawable(this, cur, true), "점선", dashed),
             )
-        showFlyout(anchor, items) { i ->
+        // 모양(직선·곡선·돼지꼬리)과 실선·점선은 따로 고르므로 막대로 나눈다
+        showFlyout(anchor, items, separatorBefore = if (shapes.isNotEmpty()) setOf(shapes.size) else emptySet()) { i ->
             if (i < shapes.size) selectShapeKind(shapes[i])
             else {
                 prefs.edit().putBoolean("dashed_${lineGroup(cur).name}", i == shapes.size + 1).apply()
