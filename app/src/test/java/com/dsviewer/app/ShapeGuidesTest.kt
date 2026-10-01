@@ -171,6 +171,40 @@ class ShapeGuidesTest {
         assertTrue(abs((left[left.size - 2] + right[0]) / 2 - 250f) < 3f)
     }
 
+    /** 여러 크기·기울기·방향의 호: 맞춘 호가 늘 그린 쪽에 (반대쪽 큰 호가 아니라) */
+    @Test
+    fun lengthMarkStaysOnDrawnSide() {
+        var case = 0
+        for (sag in listOf(0.08, 0.15, 0.25, 0.4, 0.5, 0.7)) for (side in listOf(1.0, -1.0)) for (ang in listOf(0.0, 0.5, 1.6, 3.0, -2.2)) {
+            for (seed in 1..3) {
+                val cx = 250.0; val cy = 200.0; val half = 150.0
+                val ux = cos(ang); val uy = sin(ang)
+                val h = sag * 2 * half * side
+                val r = (half * half + h * h) / (2 * abs(h))
+                val k = h - Math.signum(h) * r
+                val theta = 4 * kotlin.math.atan(abs(h) / half)
+                val a0 = kotlin.math.atan2(-k, -half)
+                val apex = kotlin.math.atan2(h - k, 0.0)
+                fun diff(x: Double) = abs(kotlin.math.atan2(sin(x - apex), cos(x - apex)))
+                val dir = if (diff(a0 + theta / 2) < diff(a0 - theta / 2)) 1.0 else -1.0
+                val raw = drawn(noise = 2.0, seed = seed) { t ->
+                    val an = a0 + dir * theta * t
+                    val la = r * cos(an); val lq = k + r * sin(an)
+                    (cx + la * ux - lq * uy) to (cy + la * uy + lq * ux)
+                }
+                val f = ShapeGuides.lengthMark(raw)!!
+                if (case++ == 0) save("length_sides", raw, f)
+                // 맞춘 점들의 옆쪽 거리 부호가 그린 쪽과 같고, 높이도 비슷하다
+                for (c in f.curves) for (i in 0 until c.size / 2) {
+                    val q = -(c[i * 2] - cx) * uy + (c[i * 2 + 1] - cy) * ux
+                    assertTrue("sag=$sag side=$side ang=$ang q=$q", q * side > -3)
+                }
+                val far = f.curves.flatMap { c -> (0 until c.size / 2).map { i -> abs(-(c[i * 2] - cx) * uy + (c[i * 2 + 1] - cy) * ux) } }.max()
+                assertEquals("sag=$sag side=$side ang=$ang", abs(h), far, abs(h) * 0.15 + 4)
+            }
+        }
+    }
+
     @Test
     fun lengthMarkBelow() {
         val raw = drawn { t -> (100 + 300 * t) to (150 + 70 * sin(PI * t)) }

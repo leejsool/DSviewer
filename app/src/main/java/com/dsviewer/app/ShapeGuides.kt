@@ -318,10 +318,16 @@ object ShapeGuides {
             val m2 = lo + g * (hi - lo)
             if (err(sign * m1) < err(sign * m2)) hi = m2 else lo = m1
         }
-        val h = sign * (lo + hi) / 2
+        var h = sign * (lo + hi) / 2
+        // 원 하나에 활꼴 높이가 둘(작은 호 h, 큰 호 h ∓ 2R)이라 오차가 같으므로, 그린 획이 있는 쪽의 호를 고른다
+        var qSum = 0.0
+        for (i in 0 until n) qSum += q[i]
+        if (qSum != 0.0 && Math.signum(qSum) != Math.signum(h)) {
+            h -= Math.signum(h) * (half * half + h * h) / abs(h)
+        }
 
         val r = (half * half + h * h) / (2 * abs(h))
-        val k = h - sign * r
+        val k = h - Math.signum(h) * r
         val theta = 4 * atan(abs(h) / half)
         val a0 = atan2(-k, -half)
         // 꼭대기 (0, h)를 지나는 쪽으로 돈다
