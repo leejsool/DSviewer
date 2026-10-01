@@ -30,7 +30,7 @@ object ShapeGuides {
             else -> null
         } ?: return null
         if (pathLength(body) < MIN_LEN) return null
-        return Fitted(listOf(toFloats(body)), heads = listOf(head(body, width)))
+        return Fitted(listOf(toFloats(body)), heads = listOf(headOnPath(body, min(headLength(width), pathLength(body) * 0.4))))
     }
 
     // ---------- 곡선 화살표: 부드러운 포물선 ----------
@@ -142,13 +142,13 @@ object ShapeGuides {
     /** 저절로 정하는 고리 크기 b (pt): 그린 고리가 없을 때. 닫힌 고리는 b의 약 [LOOP_SIZE]배 */
     private const val PIG_B = 11.0
     /** 고리 하나가 차지하는 길이 (b의 배수, 이웃 고리와 사이 포함) */
-    private const val PIG_PITCH = 4.6
+    private const val PIG_PITCH = 3.8
     /** 고리에서 원을 도는 가장 빠른 빠르기 (앞으로 가는 빠르기의 배수) */
     private const val PIG_SPIN = 3.6
     /** 고리 쪽에서 원이 커지는 비율 (0이면 바깥 휨과 고리 반지름이 같다) */
     private const val PIG_GROW = 0.5
     /** 고리들이 차지할 수 있는 선 길이의 비율 */
-    private const val PIG_COVER = 0.62
+    private const val PIG_COVER = 0.7
 
     /**
      * 그린 획을 따라 부드럽게 휘며 고리를 감는 선. 바탕은 그린 획에 맞춘 부드러운 곡선(곡선 화살표와 같은 맞춤)이고,
@@ -344,16 +344,18 @@ object ShapeGuides {
     /** 화살촉 길이 (pt): 굵을수록 크게 */
     fun headLength(width: Float) = 6.0 + width * 3.2
 
-    /** 몸통 끝의 열린 화살촉 (날개, 끝, 날개). 끝 가까운 몸통의 방향으로 */
-    private fun head(body: DoubleArray, width: Float): FloatArray {
+    /**
+     * 몸통 [body] 끝의 길이 hl인 열린 화살촉 (날개, 끝, 날개). 끝에서의 기울기 방향으로
+     * (끝에서 조금만 거슬러 올라간 점에서 끝을 보는 방향. 맞춘 몸통은 매끄러워 흔들리지 않는다). 아이콘도 같이 쓴다
+     */
+    fun headOnPath(body: DoubleArray, hl: Double): FloatArray {
         val n = body.size / 2
         val tx = body[n * 2 - 2]; val ty = body[n * 2 - 1]
-        val hl = min(headLength(width), pathLength(body) * 0.4)
         var k = n - 2
         var acc = 0.0
         while (k > 0) {
             acc += hypot(body[k * 2 + 2] - body[k * 2], body[k * 2 + 3] - body[k * 2 + 1])
-            if (acc >= hl * 0.8) break
+            if (acc >= hl * 0.3) break
             k--
         }
         return headAt(tx, ty, tx - body[k * 2], ty - body[k * 2 + 1], hl)

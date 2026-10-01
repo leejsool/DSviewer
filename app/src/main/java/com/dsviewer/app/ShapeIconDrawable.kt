@@ -82,7 +82,8 @@ class ShapeIconDrawable(ctx: Context, private val kind: ShapeKind, private val d
                     if (i == 0) p.moveTo(x, y) else p.lineTo(x, y)
                 }
                 canvas.drawPath(p, line)
-                head(canvas, 21.5f, 16f, 1f, 0f)
+                // 화살촉은 끝나는 곳의 기울기 방향으로
+                drawHead(canvas, ShapeGuides.headOnPath(pts, 5.0))
             }
             // 선분(옅게)과 그 위에 가운데를 비운 호
             ShapeKind.LENGTH_MARK -> {
@@ -236,7 +237,11 @@ class ShapeIconDrawable(ctx: Context, private val kind: ShapeKind, private val d
 
     /** (tx, ty)가 끝이고 (dx, dy) 쪽을 가리키는 열린 화살촉 */
     private fun head(canvas: Canvas, tx: Float, ty: Float, dx: Float, dy: Float) {
-        val h = ShapeGuides.headAt(tx.toDouble(), ty.toDouble(), dx.toDouble(), dy.toDouble(), 5.0)
+        drawHead(canvas, ShapeGuides.headAt(tx.toDouble(), ty.toDouble(), dx.toDouble(), dy.toDouble(), 5.0))
+    }
+
+    /** 화살촉 (날개, 끝, 날개) */
+    private fun drawHead(canvas: Canvas, h: FloatArray) {
         val p = Path()
         p.moveTo(h[0], h[1])
         p.lineTo(h[2], h[3])

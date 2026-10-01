@@ -51,7 +51,7 @@ class ShapeGuidesTest {
         }
         g.color = Color(190, 190, 190)
         g.stroke = BasicStroke(2f)
-        g.draw(path(raw.first.toList(), raw.second.toList()))
+        if (raw.first.size > 1) g.draw(path(raw.first.toList(), raw.second.toList()))
         g.color = Color.BLACK
         g.stroke = BasicStroke((2.5 / zoom).toFloat(), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
         for (c in f.curves + f.heads) {
@@ -217,6 +217,30 @@ class ShapeGuidesTest {
         assertTrue(abs(off(n / 5)) > 20)
         // 고리가 있다: 직선 방향으로 뒤로 가는 구간
         assertTrue((1 until n).any { i -> (c[i * 2] - c[i * 2 - 2]) * dx + (c[i * 2 + 1] - c[i * 2 - 1]) * dy < -1 })
+    }
+
+    /** 화살촉이 몸통 끝의 기울기 방향을 향한다 (아이콘 크기와 실제 크기 모두) */
+    @Test
+    fun headFollowsEndSlope() {
+        fun check(body: DoubleArray, h: FloatArray) {
+            val n = body.size / 2
+            // 끝의 기울기 (마지막 두 점)
+            val ex = body[n * 2 - 2] - body[n * 2 - 4]; val ey = body[n * 2 - 1] - body[n * 2 - 3]
+            // 화살촉 가운데 방향: 끝 − 두 날개의 가운데
+            val hx = h[2] - (h[0] + h[4]) / 2.0; val hy = h[3] - (h[1] + h[5]) / 2.0
+            val ang = Math.toDegrees(kotlin.math.acos((ex * hx + ey * hy) / (hypot(ex, ey) * hypot(hx, hy))))
+            assertTrue("각도 차 $ang", ang < 6)
+        }
+        val icon = ShapeGuides.pigtailPoints(2.5, 16.0, 21.5, 16.0, 0.5, 3.6, -1.0)
+        val iconHead = ShapeGuides.headOnPath(icon, 5.0)
+        check(icon, iconHead)
+        // 아이콘을 10배로 그려 둔다
+        val zoomed = Fitted(listOf(FloatArray(icon.size) { (icon[it] * 10).toFloat() }),
+            heads = listOf(FloatArray(6) { iconHead[it] * 10 }))
+        save("icon_pigtail", DoubleArray(1) { 0.0 } to DoubleArray(1) { 0.0 }, zoomed)
+        val raw = drawn { t -> (60 + 140 * t) to (250 - 20 * sin(PI * t)) }
+        val f = ShapeGuides.arrow(ShapeKind.ARROW_PIGTAIL, raw, 1.2f)!!
+        check(DoubleArray(f.curves[0].size) { f.curves[0][it].toDouble() }, f.heads[0])
     }
 
     @Test
