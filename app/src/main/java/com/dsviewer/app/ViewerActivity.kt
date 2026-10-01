@@ -598,6 +598,9 @@ class ViewerActivity : AppCompatActivity() {
         pagesButton.setActive(pagePanel.isShowing)
         twoPageButton.setActive(docView.twoPage)
         readModeButton.setActive(readMode)
+        // 읽기 전용이면 책에 눈, 쓸 수 있으면 책에 펜
+        readModeButton.setImageResource(if (readMode) R.drawable.ic_read_mode else R.drawable.ic_write_mode)
+        readModeButton.contentDescription = if (readMode) "읽기 모드 끝내기" else "읽기 모드"
     }
 
     /** 켜진 보기 단추는 바탕에 옅은 동그라미 */
@@ -1168,10 +1171,38 @@ class ViewerActivity : AppCompatActivity() {
             isSingleLine = true
             hint = "보일 글자 (비우면 주소 그대로)"
         }
+        // 주소 칸 옆: 클립보드의 글을 주소 칸에 붙여 넣는다
+        val paste = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_paste)
+            contentDescription = "붙여넣기"
+            tooltipText = "클립보드에서 붙여넣기"
+            android.util.TypedValue().let { tv ->
+                theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, tv, true)
+                setBackgroundResource(tv.resourceId)
+            }
+            setOnClickListener {
+                val cm = getSystemService(android.content.ClipboardManager::class.java)
+                val clip = cm?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(this@ViewerActivity)
+                    ?.toString()?.trim()
+                if (clip.isNullOrEmpty()) {
+                    toast("클립보드에 붙여 넣을 글이 없습니다.")
+                    return@setOnClickListener
+                }
+                url.setText(clip)
+                url.setSelection(url.text.length)
+                url.error = null
+            }
+        }
+        val urlRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            addView(url, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(paste, LinearLayout.LayoutParams((48 * d).toInt(), (48 * d).toInt()))
+        }
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding((24 * d).toInt(), (4 * d).toInt(), (24 * d).toInt(), 0)
-            addView(url)
+            addView(urlRow)
             addView(label)
         }
         val dialog = MaterialAlertDialogBuilder(this)

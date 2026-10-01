@@ -81,7 +81,7 @@
             android:id="@+id/actionReadMode"
             style="@style/TabBarAction"
             android:contentDescription="읽기 모드"
-            android:src="@drawable/ic_read_mode"
+            android:src="@drawable/ic_write_mode"
             android:tooltipText="읽기 모드 (필기하지 않고 넘겨 보기)" />
 
         <ImageButton
