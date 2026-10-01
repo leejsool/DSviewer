@@ -18,6 +18,8 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            // 다른 기기에 APK로 옮겨 설치할 때: 이 PC의 디버그 키로 서명해 지금 설치된 앱 위에 그대로 덮어 설치된다
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 

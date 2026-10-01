@@ -7,3 +7,6 @@ local.properties
 
 # 테스트용 실제 문서 (업무 문서 포함) — 저장소에 넣지 않음
 /test/
+
+# 다른 기기에 옮길 APK
+/dist/
