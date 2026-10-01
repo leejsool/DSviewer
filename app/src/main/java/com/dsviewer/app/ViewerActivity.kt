@@ -112,6 +112,8 @@ class ViewerActivity : AppCompatActivity() {
         var viewState: DocumentView.ViewState? = null
         /** 글자 찾기 (처음 찾을 때 만든다. 쪽을 바꾸면 화면용 PDF가 바뀌어 새로 만든다) */
         var search: DocSearch? = null
+        /** PDF 링크 (읽기 모드에서 처음 누를 때 꺼낸다. 쪽을 바꾸면 새로) */
+        var links: DocLinks? = null
     }
 
     /** 쪽을 넣고 빼기 전·후의 PDF 파일과 그때 보던 쪽 (실행 취소하면 이 상태로 돌아간다) */
@@ -239,6 +241,8 @@ class ViewerActivity : AppCompatActivity() {
             override fun onViewportChanged() = textEditor.reposition()
 
             override fun onPullAddPage() = appendBlankPage()
+
+            override fun onReadTap(page: Int, x: Float, y: Float) = followLinkAt(page, x, y)
 
             override fun onFillFailed() {
                 Toast.makeText(
@@ -653,6 +657,47 @@ class ViewerActivity : AppCompatActivity() {
         return DocSearch(f, lifecycleScope).also { t.search = it }
     }
 
+    /** 지금 탭의 PDF 링크. 화면용 PDF가 바뀌었으면(쪽 넣기·지우기 등) 새로 */
+    private fun currentLinks(): DocLinks? {
+        val t = current ?: return null
+        val f = t.renderPdf ?: return null
+        t.links?.let { if (it.file == f) return it }
+        return DocLinks(f, lifecycleScope).also { t.links = it }
+    }
+
+    /** 읽기 모드에서 누른 자리의 링크: 다른 쪽이면 바로 가고, 웹 주소면 물어보고 브라우저로 */
+    private fun followLinkAt(page: Int, x: Float, y: Float) {
+        val links = currentLinks() ?: return
+        links.whenReady { l ->
+            if (current?.links !== l || !readMode) return@whenReady
+            val link = l.at(page, x, y) ?: return@whenReady
+            val uri = link.uri
+            if (uri == null) {
+                if (link.y != null) docView.scrollToPageY(link.page, link.y) else docView.scrollToPage(link.page)
+                return@whenReady
+            }
+            // 'www.…'처럼 앞이 빠진 주소는 웹 주소로. 웹·메일 말고는 열지 않는다
+            val full = if (Regex("^[a-zA-Z][a-zA-Z0-9+.-]*:").containsMatchIn(uri)) uri else "http://$uri"
+            val parsed = Uri.parse(full)
+            if (parsed.scheme?.lowercase() !in setOf("http", "https", "mailto")) {
+                toast("열 수 없는 링크입니다: $uri")
+                return@whenReady
+            }
+            MaterialAlertDialogBuilder(this)
+                .setTitle("이 주소로 이동할까요?")
+                .setMessage(full)
+                .setPositiveButton("이동") { _, _ ->
+                    try {
+                        startActivity(Intent(Intent.ACTION_VIEW, parsed).addCategory(Intent.CATEGORY_BROWSABLE))
+                    } catch (e: android.content.ActivityNotFoundException) {
+                        toast("이 주소를 열 수 있는 앱이 없습니다.")
+                    }
+                }
+                .setNegativeButton("취소", null)
+                .show()
+        }
+    }
+
     /** 페이지 관리 창을 저장된 설정대로 열거나 닫는다 (전체 화면에서는 늘 닫음) */
     private fun syncPagePanel() {
         val t = current
@@ -978,6 +1023,8 @@ class ViewerActivity : AppCompatActivity() {
         }
         readMode = on
         docView.readOnly = on
+        // 링크를 미리 꺼내 둔다 (처음 누를 때 기다리지 않게)
+        if (on) currentLinks()
         findViewById<View>(R.id.toolbar).visibility = if (on) View.GONE else View.VISIBLE
         shapeBar.visibility = if (!on && docView.tool == Tool.SHAPE) View.VISIBLE else View.GONE
         updateActions()

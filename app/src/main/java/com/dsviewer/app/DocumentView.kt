@@ -69,6 +69,8 @@ class DocumentView @JvmOverloads constructor(
         fun onPullAddPage() {}
         /** 칠하기: 누른 자리를 둘러싼 닫힌 영역을 찾지 못함 */
         fun onFillFailed() {}
+        /** 읽기 모드에서 쪽의 (x, y)를 톡 누름 (테이프가 아닌 곳). 링크를 따라갈 때 */
+        fun onReadTap(page: Int, x: Float, y: Float) {}
     }
 
     var listener: Listener? = null
@@ -621,6 +623,17 @@ class DocumentView @JvmOverloads constructor(
         scroller.forceFinished(true)
         zoomAnimator?.cancel()
         offY = (tops[page] - gap / 2) * scale - topInset
+        clamp()
+        scheduleDetail()
+        invalidate()
+    }
+
+    /** [page]쪽의 높이 [y]가 화면 맨 위에 오도록 옮긴다 (목차 링크로 갈 때) */
+    fun scrollToPageY(page: Int, y: Float) {
+        if (page !in sizes.indices || width == 0) return
+        scroller.forceFinished(true)
+        zoomAnimator?.cancel()
+        offY = (tops[page] + y.coerceIn(0f, sizes[page].height)) * scale - topInset
         clamp()
         scheduleDetail()
         invalidate()
@@ -1214,8 +1227,11 @@ class DocumentView @JvmOverloads constructor(
             else if (tool == Tool.FILL && fillMode == FillMode.BUCKET && !fillErasing && !readOnly) {
                 hitPage(e.x, e.y)?.let { bucketFill(it.first, it.second, it.third) }
             }
-            // 다른 도구에서는 손가락으로 테이프를 톡 누르면 보였다 가려졌다
-            else toggleTapeAt(e.x, e.y)
+            // 다른 도구에서는 손가락으로 테이프를 톡 누르면 보였다 가려졌다.
+            // 읽기 모드에서 테이프가 아닌 곳을 누르면 (펜도) 링크를 따라간다
+            else if (!toggleTapeAt(e.x, e.y) && readOnly) {
+                hitPage(e.x, e.y)?.let { listener?.onReadTap(it.first, it.second, it.third) }
+            }
             return true
         }
     })

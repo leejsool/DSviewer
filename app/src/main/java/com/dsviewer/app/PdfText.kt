@@ -49,6 +49,18 @@ class PageText(val chars: String, val boxes: FloatArray)
 /** PDF에서 글자와 자리를 꺼내고 찾는다 (PDFBox) */
 object PdfText {
 
+    /** PDF 사용자 좌표 → 화면에 그린 쪽 좌표 (왼쪽 위가 원점, 쪽 돌림 [rot] 반영). [out]의 [at], [at]+1에 넣는다 */
+    fun toPage(crop: PDRectangle, rot: Int, x: Float, y: Float, out: FloatArray, at: Int) {
+        val (px, py) = when (rot) {
+            90 -> (y - crop.lowerLeftY) to (x - crop.lowerLeftX)
+            180 -> (crop.upperRightX - x) to (y - crop.lowerLeftY)
+            270 -> (crop.upperRightY - y) to (crop.upperRightX - x)
+            else -> (x - crop.lowerLeftX) to (crop.upperRightY - y)
+        }
+        out[at] = px
+        out[at + 1] = py
+    }
+
     /** 찾을 말을 글자 목록과 같은 모양으로 (띄어쓰기 빼고 소문자) */
     fun normalize(s: String) = buildString { for (c in s) if (!c.isWhitespace()) append(c.lowercaseChar()) }
 
@@ -95,17 +107,7 @@ object PdfText {
             return PageText(sb.toString(), boxes.copyOf(sb.length * 4))
         }
 
-        /** PDF 사용자 좌표 → 화면에 그린 쪽 좌표 (왼쪽 위가 원점, 쪽 돌림 반영) */
-        private fun toPage(x: Float, y: Float, out: FloatArray, at: Int) {
-            val (px, py) = when (rot) {
-                90 -> (y - crop.lowerLeftY) to (x - crop.lowerLeftX)
-                180 -> (crop.upperRightX - x) to (y - crop.lowerLeftY)
-                270 -> (crop.upperRightY - y) to (crop.upperRightX - x)
-                else -> (x - crop.lowerLeftX) to (crop.upperRightY - y)
-            }
-            out[at] = px
-            out[at + 1] = py
-        }
+        private fun toPage(x: Float, y: Float, out: FloatArray, at: Int) = PdfText.toPage(crop, rot, x, y, out, at)
 
         override fun showGlyph(m: Matrix?, font: PDFont?, code: Int, unicode: String?, displacement: Vector?) {
             if (m == null || font == null) return
