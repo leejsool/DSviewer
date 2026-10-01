@@ -1,5 +1,12 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
+}
+
+// 배포용 서명 키: 저장소 밖(keystore.properties, keystore/)에 둔다. 없는 PC에서는 디버그 키로 서명
+val releaseKeys = rootProject.file("keystore.properties").takeIf { it.exists() }?.let { f ->
+    Properties().apply { f.inputStream().use { load(it) } }
 }
 
 android {
@@ -10,16 +17,25 @@ android {
         applicationId = "com.dsviewer.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.2"
+        versionCode = 3
+        versionName = "0.3"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    signingConfigs {
+        if (releaseKeys != null) create("release") {
+            storeFile = rootProject.file("keystore/dsnote-release.jks")
+            storePassword = releaseKeys.getProperty("storePassword")
+            keyAlias = releaseKeys.getProperty("keyAlias")
+            keyPassword = releaseKeys.getProperty("keyPassword")
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            // 다른 기기에 APK로 옮겨 설치할 때: 이 PC의 디버그 키로 서명해 지금 설치된 앱 위에 그대로 덮어 설치된다
-            signingConfig = signingConfigs.getByName("debug")
+            // 다른 기기에 옮겨 설치하는 APK: 배포용 키로 서명 (디버그 키로 서명한 APK는 플레이 프로텍트가 더 의심한다)
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }
 

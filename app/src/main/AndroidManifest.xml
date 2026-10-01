@@ -10,8 +10,8 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="29" />
 
-    <!-- 다른 앱 화면 가져오기: 다른 앱 위의 캡처 단추, 화면 전송 서비스 -->
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- 다른 앱 화면 가져오기: 화면 전송 서비스, 알림의 '이 화면 가져오기' 단추 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
@@ -83,6 +83,15 @@
                 <data android:mimeType="image/*" />
             </intent-filter>
         </activity>
+
+        <!-- 알림의 '이 화면 가져오기': 알림창을 닫고 줄 두께만 읽고 닫히는 보이지 않는 창 (자기 작업으로 떠서 뷰어를 앞으로 불러오지 않게) -->
+        <activity
+            android:name=".ShotActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
         <service
             android:name=".CaptureService"

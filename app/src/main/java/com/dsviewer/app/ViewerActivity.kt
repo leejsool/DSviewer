@@ -161,16 +161,20 @@ class ViewerActivity : AppCompatActivity() {
     private var captureTab: DocTab? = null
     private var captureIndex = 0
 
-    /** '다른 앱 위에 표시' 권한 설정에서 돌아오면 이어서 화면 전송 허락을 묻는다 */
-    private val overlayPermission = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        if (android.provider.Settings.canDrawOverlays(this)) requestProjection()
-        else toast("'다른 앱 위에 표시'를 허용해야 화면을 가져올 수 있습니다.")
+    /** 알림 권한(안드로이드 13부터)을 받으면 이어서 화면 전송 허락을 묻는다. '이 화면 가져오기' 단추가 알림에 있어서 */
+    private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+        if (ok) requestProjection()
+        else {
+            captureTab = null
+            toast("알림을 허용해야 알림창의 '이 화면 가져오기' 단추로 화면을 가져올 수 있습니다.")
+        }
     }
 
     private val projectionConsent = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
         val data = r.data
         if (r.resultCode != RESULT_OK || data == null) { captureTab = null; return@registerForActivityResult }
         CaptureService.start(this, r.resultCode, data)
+        Toast.makeText(this, "가져올 화면을 띄운 뒤 알림창을 내려 '이 화면 가져오기'를 누르세요.", Toast.LENGTH_LONG).show()
         // 뷰어를 뒤로 보내 바로 전에 쓰던 앱이 보이게 한다
         moveTaskToBack(true)
     }
@@ -1312,25 +1316,17 @@ class ViewerActivity : AppCompatActivity() {
 
     // ================= 다른 앱 화면 가져오기 =================
 
-    /** 화면 전송 허락을 받고 떠 있는 캡처 단추를 띄운다. 처음엔 '다른 앱 위에 표시' 권한부터 */
+    /** 화면 전송 허락을 받고 알림에 '이 화면 가져오기' 단추를 둔다. 안드로이드 13부터는 알림 권한부터 */
     private fun startScreenCapture() {
         val t = current ?: return
         val d = t.pdf ?: return
         if (t.pagesBusy) return
         captureTab = t
         captureIndex = docView.currentPage().coerceIn(0, d.pageCount - 1) + 1
-        if (android.provider.Settings.canDrawOverlays(this)) { requestProjection(); return }
-        MaterialAlertDialogBuilder(this)
-            .setTitle("다른 앱 화면 가져오기")
-            .setMessage("다른 앱 위에 캡처 단추를 띄우려면 'DSnote'의 '다른 앱 위에 표시'를 허용해 주세요.\n허용한 뒤 뒤로 가기를 누르면 이어서 진행합니다.")
-            .setPositiveButton("설정 열기") { _, _ ->
-                val pkg = Uri.parse("package:$packageName")
-                runCatching { overlayPermission.launch(Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkg)) }
-                    .recoverCatching { overlayPermission.launch(Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION)) }
-                    .onFailure { toast("이 기기에서는 권한 설정 화면을 열 수 없습니다.") }
-            }
-            .setNegativeButton("취소") { _, _ -> captureTab = null }
-            .show()
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        else requestProjection()
     }
 
     private fun requestProjection() {
