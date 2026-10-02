@@ -65,7 +65,7 @@ class DocumentView @JvmOverloads constructor(
         fun onTextTap(page: Int, x: Float, y: Float, existing: Stroke?) {}
         /** 화면을 다시 그림 (스크롤·확대가 바뀌었을 수 있다. 문서 위에 띄운 글 상자를 따라 옮길 때) */
         fun onViewportChanged() {}
-        /** 마지막 쪽 아래로 끝까지 끌어 올렸다가 놓음 → 맨 뒤에 빈 쪽 붙이기 */
+        /** 마지막 쪽 아래로 끝까지 끌어 올렸다가 놓음, 또는 마지막 쪽 아래 '빈 쪽 추가' 단추 → 맨 뒤에 빈 쪽 붙이기 */
         fun onPullAddPage() {}
         /** 칠하기: 누른 자리를 둘러싼 닫힌 영역을 찾지 못함 */
         fun onFillFailed() {}
@@ -115,6 +115,11 @@ class DocumentView @JvmOverloads constructor(
             if (v && penPointerId != -1) endPen(commit = true)
             field = v
             if (v) clearSelection()
+            // 마지막 쪽 아래 '빈 쪽 추가' 단추는 읽기 모드에서 숨긴다 (그만큼 스크롤 길이가 바뀐다)
+            if (doc != null) {
+                clamp()
+                invalidate()
+            }
         }
     /**
      * 양쪽 보기: 화면이 가로로 길면 쪽을 두 개씩 나란히 (1·2쪽, 3·4쪽 …).
@@ -296,6 +301,23 @@ class DocumentView @JvmOverloads constructor(
         pathEffect = DashPathEffect(floatArrayOf(6f * d, 4f * d), 0f)
     }
     private val pullIcon = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    // ---- 마지막 쪽 아래 '빈 쪽 추가' 단추 (끌어 올리지 않고 톡 눌러 붙이기) ----
+    /** 마지막 쪽 아래에 단추를 두는 자리의 높이 (화면 px). 읽기 모드에서는 없다 */
+    private val addFooterPx get() = if (readOnly) 0f else ADD_FOOTER_DP * density
+    private val addRect = RectF()
+    /** 단추를 누르고 있는 중 (손가락·펜 모두) */
+    private var addTracking = false
+    private var addPressed = false
+    private var addDownX = 0f
+    private var addDownY = 0f
+    private val addFill = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val addLine = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+    private val addText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textSize = 14f * resources.displayMetrics.density
+        isFakeBoldText = true
+    }
+    private val addTouchSlop = android.view.ViewConfiguration.get(context).scaledTouchSlop
     private val pullText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textSize = 14f * resources.displayMetrics.density
         textAlign = Paint.Align.CENTER
@@ -535,7 +557,7 @@ class DocumentView @JvmOverloads constructor(
     }
 
     /** 스크롤할 수 있는 전체 높이 (화면 px) */
-    private fun contentH() = docH * scale + bottomInset + topInset
+    private fun contentH() = docH * scale + addFooterPx + bottomInset + topInset
 
     private fun clamp() {
         val cw = docW * scale
@@ -729,6 +751,7 @@ class DocumentView @JvmOverloads constructor(
             }
             canvas.restore()
         }
+        drawAddButton(canvas)
         canvas.restore()
         if (pullPx > 0f) drawPullPage(canvas)
         drawSelection(canvas)
@@ -780,7 +803,7 @@ class DocumentView @JvmOverloads constructor(
         if (last < 0) return
         val s = scale
         val lastBottom = (tops[last] + sizes[last].height) * s - offY - pullPx
-        val top = lastBottom + gap * s
+        val top = lastBottom + gap * s + addFooterPx
         val bottom = height - bottomInset
         if (bottom - top < 8f * density) return
         val pw = sizes[last].width * s
@@ -815,6 +838,105 @@ class DocumentView @JvmOverloads constructor(
         canvas.drawLine(cx, cy - arm, cx, cy + arm, pullIcon)
         pullText.color = accent
         canvas.drawText(label, cx, cy + r + textH * 0.8f, pullText)
+    }
+
+    /**
+     * '빈 쪽 추가' 단추 자리 (화면 좌표, 끌어 올린 거리는 빼고). 단추가 없으면 false.
+     * 확대해서 쪽이 화면보다 넓어도 화면에 보이는 문서 부분의 가운데에 둔다
+     */
+    private fun addButtonRect(out: RectF): Boolean {
+        val footer = addFooterPx
+        if (footer <= 0f || sizes.isEmpty()) return false
+        val s = scale
+        val top = docH * s - offY
+        val cy = top + footer / 2f
+        val h = 40f * density
+        val w = addText.measureText(ADD_LABEL) + h + 28f * density
+        val visL = max(-offX, 0f)
+        val visR = min(docW * s - offX, width.toFloat())
+        val cx = ((visL + visR) / 2f).let { if (width > w) it.coerceIn(w / 2f, width - w / 2f) else width / 2f }
+        out.set(cx - w / 2f, cy - h / 2f, cx + w / 2f, cy + h / 2f)
+        return true
+    }
+
+    /** 마지막 쪽 아래의 '⊕ 빈 쪽 추가' 알약 단추 (쪽들과 함께 끌어 올려진 canvas에 그린다) */
+    private fun drawAddButton(canvas: Canvas) {
+        if (!addButtonRect(addRect)) return
+        if (addRect.bottom < 0f || addRect.top > height) return
+        val accent = if (addPressed) SEL_COLOR else 0xFF6B7380.toInt()
+        val r = addRect.height() / 2f
+        addFill.color = if (addPressed) 0xFFE3EEFC.toInt() else Color.WHITE
+        canvas.drawRoundRect(addRect, r, r, addFill)
+        addLine.color = accent
+        addLine.strokeWidth = 1.5f * density
+        canvas.drawRoundRect(addRect, r, r, addLine)
+        // ⊕ 아이콘 + 글
+        val ir = 9f * density
+        val icx = addRect.left + 14f * density + ir
+        val cy = addRect.centerY()
+        addLine.strokeWidth = 1.8f * density
+        canvas.drawCircle(icx, cy, ir, addLine)
+        val arm = ir * 0.55f
+        canvas.drawLine(icx - arm, cy, icx + arm, cy, addLine)
+        canvas.drawLine(icx, cy - arm, icx, cy + arm, addLine)
+        addText.color = accent
+        val tx = icx + ir + 8f * density
+        canvas.drawText(ADD_LABEL, tx, cy - (addText.ascent() + addText.descent()) / 2f, addText)
+    }
+
+    /**
+     * '빈 쪽 추가' 단추를 누르는 동안의 터치 (손가락·펜 모두). 단추에서 시작한 동작은 여기서 받는다.
+     * 움직이면 누름을 풀고 문서 넘기기로 (제스처 감지기에 그대로 넘긴다), 단추 위에서 떼면 빈 쪽 추가
+     */
+    private fun handleAddTouch(ev: MotionEvent): Boolean {
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                if (pullPx > 0f || !addButtonRect(addRect)) return false
+                val slop = 6f * density
+                if (ev.x < addRect.left - slop || ev.x > addRect.right + slop ||
+                    ev.y < addRect.top - slop || ev.y > addRect.bottom + slop
+                ) return false
+                addTracking = true
+                addPressed = true
+                addDownX = ev.x
+                addDownY = ev.y
+                scroller.forceFinished(true)
+                invalidate()
+                return true
+            }
+            MotionEvent.ACTION_MOVE -> if (addTracking) {
+                if (addPressed && hypot(ev.x - addDownX, ev.y - addDownY) > addTouchSlop) {
+                    addPressed = false
+                    invalidate()
+                    // 넘기기로: 제스처 감지기는 DOWN을 못 받았으므로 지금 자리에서 새로 시작시킨다
+                    val down = MotionEvent.obtain(ev)
+                    down.action = MotionEvent.ACTION_DOWN
+                    gestureDetector.onTouchEvent(down)
+                    down.recycle()
+                } else if (!addPressed) gestureDetector.onTouchEvent(ev)
+                return true
+            }
+            MotionEvent.ACTION_UP -> if (addTracking) {
+                val click = addPressed
+                addTracking = false
+                addPressed = false
+                if (click) {
+                    playSoundEffect(android.view.SoundEffectConstants.CLICK)
+                    performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                    listener?.onPullAddPage()
+                } else gestureDetector.onTouchEvent(ev)
+                invalidate()
+                return true
+            }
+            MotionEvent.ACTION_CANCEL -> if (addTracking) {
+                addTracking = false
+                addPressed = false
+                gestureDetector.onTouchEvent(ev)
+                invalidate()
+                return true
+            }
+        }
+        return addTracking
     }
 
     /** 올가미 선과 선택 상자 (화면 좌표) */
@@ -1481,6 +1603,7 @@ class DocumentView @JvmOverloads constructor(
     override fun onTouchEvent(ev: MotionEvent): Boolean {
         if (doc == null) return false
         if (penPointerId == -1 && handleBarTouch(ev)) return true
+        if (penPointerId == -1 && !fingerActive && handleAddTouch(ev)) return true
         var action = ev.actionMasked
         // 구형 삼성 S펜: 버튼을 누른 채 그리면 별도 액션 코드(211~213)로 들어온다
         var samsungButton = false
@@ -3001,6 +3124,9 @@ class DocumentView @JvmOverloads constructor(
         private const val ROT_OFFSET_DP = 34f
         /** 마지막 쪽 아래로 이만큼(dp) 끌어 올렸다 놓으면 빈 쪽을 붙인다 */
         private const val PULL_ADD_DP = 90f
+        /** 마지막 쪽 아래 '빈 쪽 추가' 단추 자리의 높이 (dp) */
+        private const val ADD_FOOTER_DP = 72f
+        private const val ADD_LABEL = "빈 쪽 추가"
         private const val SPEN_DOWN = 211
         private const val SPEN_UP = 212
         private const val SPEN_MOVE = 213
