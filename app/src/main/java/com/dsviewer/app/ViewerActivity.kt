@@ -225,7 +225,7 @@ class ViewerActivity : AppCompatActivity() {
 
         docView.listener = object : DocumentView.Listener {
             override fun onPageChanged(page: Int, count: Int) {
-                pageLabel.visibility = View.VISIBLE
+                flashPageLabel()
                 // 양쪽 보기면 나란히 놓인 두 쪽을 '1-2 / 20'처럼
                 pageLabel.text = if (docView.isSpread && page + 1 < count) "${page + 1}-${page + 2} / $count" else "${page + 1} / $count"
                 pagePanel.setCurrent(page)
@@ -243,6 +243,8 @@ class ViewerActivity : AppCompatActivity() {
                 this@ViewerActivity.onTextTap(page, x, y, existing)
 
             override fun onViewportChanged() = textEditor.reposition()
+
+            override fun onScrolled() = flashPageLabel()
 
             override fun onPullAddPage() = appendBlankPage()
 
@@ -378,10 +380,29 @@ class ViewerActivity : AppCompatActivity() {
         } else {
             docView.clearDocument()
             pagePanel.clear()
+            pageLabel.removeCallbacks(hidePageLabel)
+            pageLabel.animate().cancel()
             pageLabel.visibility = View.GONE
             progress.visibility = View.VISIBLE
         }
         updateActions()
+    }
+
+    /** 쪽 번호가 사라지게 하는 일 (넘기면 다시 미룬다) */
+    private val hidePageLabel = Runnable {
+        pageLabel.animate().alpha(0f).setDuration(PAGE_LABEL_FADE_MS).withEndAction {
+            // 투명해진 쪽 번호가 누름(쪽 이동)을 받지 않게. 자리는 그대로 두어 아래 줄들이 흔들리지 않게
+            if (pageLabel.alpha == 0f) pageLabel.visibility = View.INVISIBLE
+        }.start()
+    }
+
+    /** 쪽 번호를 보이고, 넘기지 않은 채 몇 초 지나면 흐려지며 사라지게 한다 */
+    private fun flashPageLabel() {
+        pageLabel.removeCallbacks(hidePageLabel)
+        pageLabel.animate().cancel()
+        pageLabel.visibility = View.VISIBLE
+        pageLabel.alpha = 1f
+        pageLabel.postDelayed(hidePageLabel, PAGE_LABEL_SHOW_MS)
     }
 
     private fun closeTab(t: DocTab) {
@@ -3636,6 +3657,9 @@ class ViewerActivity : AppCompatActivity() {
     }
 
     companion object {
+        /** 넘기지 않은 채 이만큼(ms) 지나면 쪽 번호가 흐려지며 사라진다 */
+        private const val PAGE_LABEL_SHOW_MS = 2500L
+        private const val PAGE_LABEL_FADE_MS = 400L
         const val EXTRA_WRITABLE = "writable"
         /** 앱의 파일 탐색기에서 연 문서 */
         const val EXTRA_FROM_BROWSER = "fromBrowser"

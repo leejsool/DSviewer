@@ -65,6 +65,8 @@ class DocumentView @JvmOverloads constructor(
         fun onTextTap(page: Int, x: Float, y: Float, existing: Stroke?) {}
         /** 화면을 다시 그림 (스크롤·확대가 바뀌었을 수 있다. 문서 위에 띄운 글 상자를 따라 옮길 때) */
         fun onViewportChanged() {}
+        /** 손가락으로 넘기거나 튕겨서 문서가 위아래로 움직임 (쪽 번호를 잠깐 보일 때) */
+        fun onScrolled() {}
         /** 마지막 쪽 아래로 끝까지 끌어 올렸다가 놓음, 또는 마지막 쪽 아래 '빈 쪽 추가' 단추 → 맨 뒤에 빈 쪽 붙이기 */
         fun onPullAddPage() {}
         /** 칠하기: 누른 자리를 둘러싼 닫힌 영역을 찾지 못함 */
@@ -1443,6 +1445,7 @@ class DocumentView @JvmOverloads constructor(
 
     private fun noteScrolled(dy: Float) {
         if (dy == 0f) return
+        listener?.onScrolled()
         clearLaser()
         if (contentH() <= height * 1.05f) return
         fadeBar(1f)
