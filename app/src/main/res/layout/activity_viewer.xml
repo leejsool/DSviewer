@@ -8,14 +8,14 @@
     android:orientation="vertical">
 
     <!-- 탭 줄: 크롬식 문서 탭(최대 6개) + 새 탭, 오른쪽에 실행 취소·다시 실행·저장·⋮.
-         바탕은 한 단계 어둡고, 고른 탭은 아래 문서 화면 쪽과 같은 색으로 이어진다 -->
-    <LinearLayout
+         바탕은 한 단계 어둡고, 고른 탭은 아래 문서 화면 쪽과 같은 색으로 이어진다.
+         폭이 좁으면 탭 줄이 고른 탭 하나 자리는 먼저 갖고, 오른쪽 단추 줄은 옆으로 밀어 본다 (TabActionRow) -->
+    <com.dsviewer.app.TabActionRow
         android:id="@+id/tabRow"
         android:layout_width="match_parent"
         android:layout_height="44dp"
         android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:paddingEnd="6dp">
+        android:orientation="horizontal">
 
         <com.dsviewer.app.ChromeTabBar
             android:id="@+id/docTabs"
@@ -25,6 +25,22 @@
             android:paddingStart="6dp"
             android:paddingTop="6dp"
             android:paddingEnd="4dp" />
+
+        <HorizontalScrollView
+            android:id="@+id/actionScroll"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:fadingEdgeLength="20dp"
+            android:overScrollMode="never"
+            android:requiresFadingEdge="horizontal"
+            android:scrollbars="none">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingEnd="6dp">
 
         <ImageButton
             android:id="@+id/actionUndo"
@@ -97,7 +113,9 @@
             android:contentDescription="더 보기"
             android:src="@drawable/ic_more"
             android:tooltipText="더 보기" />
-    </LinearLayout>
+        </LinearLayout>
+        </HorizontalScrollView>
+    </com.dsviewer.app.TabActionRow>
 
     <!-- 문서 화면 줄. 툴바를 왼쪽·오른쪽에 붙이면 이 줄의 앞·뒤에 들어온다
          (위·아래는 바깥 세로 줄의 탭 줄 다음·맨 끝). ViewerActivity.dockToolbar -->
