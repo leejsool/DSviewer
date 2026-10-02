@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 빈 쪽 넣기 창 (삽입 ▸ 빈 쪽): 넣을 자리와 서식(기존대로 / 직접 정하기) -->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingHorizontal="24dp"
+        android:paddingTop="8dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="넣을 자리"
+            android:textAppearance="?attr/textAppearanceLabelLarge" />
+
+        <com.google.android.material.button.MaterialButtonToggleGroup
+            android:id="@+id/posGroup"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            app:selectionRequired="true"
+            app:singleSelection="true">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/posFirst"
+                style="?attr/materialButtonOutlinedStyle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="맨 앞" />
+
+            <!-- 글은 코드에서 'n쪽 다음' -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/posAfter"
+                style="?attr/materialButtonOutlinedStyle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/posLast"
+                style="?attr/materialButtonOutlinedStyle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="맨 뒤" />
+        </com.google.android.material.button.MaterialButtonToggleGroup>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="서식"
+            android:textAppearance="?attr/textAppearanceLabelLarge" />
+
+        <com.google.android.material.button.MaterialButtonToggleGroup
+            android:id="@+id/formatGroup"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            app:selectionRequired="true"
+            app:singleSelection="true">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/formatSame"
+                style="?attr/materialButtonOutlinedStyle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="기존대로" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/formatCustom"
+                style="?attr/materialButtonOutlinedStyle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="직접 정하기" />
+        </com.google.android.material.button.MaterialButtonToggleGroup>
+
+        <!-- 기존대로: 어느 쪽을 따르는지 (코드에서) -->
+        <TextView
+            android:id="@+id/formatHint"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:textAppearance="?attr/textAppearanceBodySmall"
+            android:textColor="?attr/colorOnSurfaceVariant" />
+
+        <include
+            android:id="@+id/customFormat"
+            layout="@layout/view_page_format"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp" />
+    </LinearLayout>
+</ScrollView>

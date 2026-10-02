@@ -17,6 +17,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.graphics.ColorUtils
 import com.google.android.material.color.MaterialColors
+import kotlin.math.max
 import kotlin.math.min
 
 /**
@@ -24,6 +25,7 @@ import kotlin.math.min
  * 선택한 탭은 윗모서리가 둥글고 아래쪽이 바깥으로 휘어져 바로 아래 화면(colorSurface)과 이어진다.
  * 막대 바탕은 한 단계 어두운 색이어야 한다 (레이아웃에서 부모 배경으로 준다).
  * 탭이 많으면 탭 너비가 줄어들고, 최소 너비보다 좁아지면 옆으로 밀린다. ＋ 버튼은 늘 탭 바로 오른쪽.
+ * 폭이 좁은 화면(휴대폰 세로 등)에서는 탭을 작게 그리고, 고른 탭에만 × 단추를 둔다 (크롬처럼).
  */
 class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? = null) : LinearLayout(ctx, attrs) {
 
@@ -36,6 +38,14 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
     var listener: Listener? = null
     var minTabWidthDp = 110f
     var maxTabWidthDp = 220f
+    /** 좁은 화면에서 쓰는 작은 탭의 최소 너비 */
+    var compactMinTabWidthDp = 104f
+
+    /** 화면 폭이 이보다 좁으면 작은 탭 (휴대폰 세로) */
+    private val compactBelowDp = 600
+    private var compact = isCompactScreen()
+    private val minTabPx get() = px(if (compact) compactMinTabWidthDp else minTabWidthDp)
+    private val addButtonSpace get() = if (showAddButton) px(40f) else 0
 
     private val density = resources.displayMetrics.density
     private fun px(dp: Float) = (dp * density).toInt()
@@ -96,8 +106,9 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
         val tv = TabView(closable)
         tv.setTitle(title)
         tv.setIcon(icon, iconTint)
+        tv.applyCompact(compact)
         tabs.add(tv)
-        row.addView(tv, LayoutParams(px(minTabWidthDp), ViewGroup.LayoutParams.MATCH_PARENT))
+        row.addView(tv, LayoutParams(minTabPx, ViewGroup.LayoutParams.MATCH_PARENT))
         refreshStates()
         return tabs.size - 1
     }
@@ -119,8 +130,44 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
         val changed = i != selectedIndex
         selectedIndex = i
         refreshStates()
-        post { tabs.getOrNull(selectedIndex)?.let { scroll.smoothScrollTo(it.left - (scroll.width - it.width) / 2, 0) } }
+        post { scrollToSelected(smooth = true) }
         if (notify && changed) listener?.onTabSelected(i)
+    }
+
+    /** 고른 탭을 탭 줄 가운데로 (자리가 좁아도 고른 탭은 늘 보이게) */
+    private fun scrollToSelected(smooth: Boolean) {
+        val t = tabs.getOrNull(selectedIndex) ?: return
+        val x = t.left - (scroll.width - t.width) / 2
+        if (smooth) scroll.smoothScrollTo(x, 0) else scroll.scrollTo(x, 0)
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        // 화면을 돌리거나 옆 단추 줄이 자리를 바꿔 폭이 달라져도 고른 탭이 밀려나지 않게
+        post { scrollToSelected(smooth = false) }
+    }
+
+    /**
+     * 옆에 다른 것과 자리를 나눌 때 탭 줄이 적어도 차지해야 할 너비 ([TabActionRow]).
+     * 고른 탭 하나는 늘 다 보이고, 탭이 여럿이면 [total]의 절반까지는 더 받는다
+     */
+    fun reserveWidth(total: Int): Int {
+        updateCompact()
+        val base = paddingLeft + paddingRight + addButtonSpace
+        val one = base + minTabPx
+        val all = base + minTabPx * tabs.size
+        return max(one, min(all, total / 2))
+    }
+
+    private fun isCompactScreen() = resources.configuration.screenWidthDp in 1 until compactBelowDp
+
+    /** 화면 폭에 맞춰 작은 탭을 쓸지 정한다 (바뀌었을 때만 탭들을 고친다) */
+    private fun updateCompact() {
+        val c = isCompactScreen()
+        if (c == compact) return
+        compact = c
+        tabs.forEach { it.applyCompact(c) }
+        refreshStates()
     }
 
     private fun refreshStates() {
@@ -130,25 +177,27 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
             t.divider = k != selectedIndex && k + 1 != selectedIndex && k != tabs.lastIndex
             t.invalidate()
             t.refreshColors()
+            t.refreshClose()
         }
         requestLayout()
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        updateCompact()
         // 탭 너비: 자리를 탭 수로 나눈 값을 최소~최대 사이로
-        val addW = if (showAddButton) px(40f) else 0
-        val avail = (MeasureSpec.getSize(widthMeasureSpec) - paddingLeft - paddingRight - addW).coerceAtLeast(0)
+        val avail = (MeasureSpec.getSize(widthMeasureSpec) - paddingLeft - paddingRight - addButtonSpace).coerceAtLeast(0)
         val n = tabs.size.coerceAtLeast(1)
-        val tw = (avail / n).coerceIn(px(minTabWidthDp), px(maxTabWidthDp))
+        val tw = (avail / n).coerceIn(minTabPx, max(minTabPx, px(maxTabWidthDp)))
         tabs.forEach { it.layoutParams.width = tw }
         (scroll.layoutParams as LayoutParams).width = min(tw * tabs.size, avail)
         super.onMeasure(widthMeasureSpec, heightMeasureSpec)
     }
 
     /** 탭 하나: [아이콘] 이름 [×] */
-    private inner class TabView(closable: Boolean) : LinearLayout(context) {
+    private inner class TabView(private val closable: Boolean) : LinearLayout(context) {
         var active = false
         var divider = false
+        private var small = false
 
         private val foot = px(8f).toFloat()      // 아래쪽 바깥으로 휘는 부분
         private val radius = px(10f).toFloat()   // 위쪽 둥근 모서리
@@ -164,22 +213,49 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
             gravity = Gravity.CENTER_VERTICAL
             setWillNotDraw(false)
             isClickable = true
-            setPadding(foot.toInt() + px(10f), px(2f), foot.toInt() + px(if (closable) 2f else 10f), 0)
-            addView(icon, LayoutParams(px(16f), px(16f)).apply { marginEnd = px(8f) })
+            addView(icon, LayoutParams(px(16f), px(16f)))
             title.setSingleLine()
             title.ellipsize = android.text.TextUtils.TruncateAt.END
-            title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             addView(title, LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             if (closable) {
                 close.setImageResource(R.drawable.ic_close)
                 close.scaleType = ImageView.ScaleType.FIT_CENTER
-                close.setPadding(px(5f), px(5f), px(5f), px(5f))
                 close.setBackgroundResource(attrRes(android.R.attr.selectableItemBackgroundBorderless))
                 close.contentDescription = "탭 닫기"
                 close.setOnClickListener { listener?.onTabClose(tabs.indexOf(this)) }
-                addView(close, LayoutParams(px(26f), px(26f)).apply { marginStart = px(2f) })
+                addView(close, LayoutParams(px(26f), px(26f)))
             }
+            applyCompact(false)
             setOnClickListener { select(tabs.indexOf(this), notify = true) }
+        }
+
+        /** 작은 탭: 여백·아이콘·글자·× 단추를 줄인다 */
+        fun applyCompact(c: Boolean) {
+            small = c
+            (icon.layoutParams as LayoutParams).apply {
+                width = px(if (c) 14f else 16f); height = width
+                marginEnd = px(if (c) 5f else 8f)
+            }
+            title.setTextSize(TypedValue.COMPLEX_UNIT_SP, if (c) 12f else 13f)
+            if (closable) {
+                val pad = px(if (c) 4f else 5f)
+                close.setPadding(pad, pad, pad, pad)
+                (close.layoutParams as LayoutParams).apply {
+                    width = px(if (c) 22f else 26f); height = width
+                    marginStart = px(if (c) 1f else 2f)
+                }
+            }
+            refreshClose()
+            requestLayout()
+        }
+
+        /** 작은 탭에서는 고른 탭에만 × (고르지 않은 탭은 이름을 더 보이게) */
+        fun refreshClose() {
+            val showClose = closable && (!small || active)
+            if (closable) close.visibility = if (showClose) View.VISIBLE else View.GONE
+            val f = foot.toInt()
+            val side = px(if (small) 6f else 10f)
+            setPadding(f + side, px(2f), f + if (showClose) px(2f) else side, 0)
         }
 
         fun setTitle(t: CharSequence) {

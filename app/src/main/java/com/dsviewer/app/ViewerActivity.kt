@@ -43,8 +43,10 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.button.MaterialButton
+import com.google.android.material.button.MaterialButtonToggleGroup
 import com.google.android.material.color.MaterialColors
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.snackbar.Snackbar
 import com.dsviewer.app.conv.DocConvert
 import com.dsviewer.app.conv.ImagePdf
 import kotlinx.coroutines.Dispatchers
@@ -54,6 +56,7 @@ import java.io.File
 import java.util.Date
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
 
 class ViewerActivity : AppCompatActivity() {
@@ -225,7 +228,7 @@ class ViewerActivity : AppCompatActivity() {
 
         docView.listener = object : DocumentView.Listener {
             override fun onPageChanged(page: Int, count: Int) {
-                pageLabel.visibility = View.VISIBLE
+                flashPageLabel()
                 // 양쪽 보기면 나란히 놓인 두 쪽을 '1-2 / 20'처럼
                 pageLabel.text = if (docView.isSpread && page + 1 < count) "${page + 1}-${page + 2} / $count" else "${page + 1} / $count"
                 pagePanel.setCurrent(page)
@@ -244,9 +247,24 @@ class ViewerActivity : AppCompatActivity() {
 
             override fun onViewportChanged() = textEditor.reposition()
 
+            override fun onScrolled() = flashPageLabel()
+
             override fun onPullAddPage() = appendBlankPage()
 
             override fun onReadTap(page: Int, x: Float, y: Float) = followLinkAt(page, x, y)
+
+            override fun onNoteEdit(page: Int, note: Stroke) = showNoteEditor(page, note)
+
+            override fun onNoteColorPicked(color: Int) {
+                prefs.edit().putInt("noteColor", color).apply()
+            }
+
+            override fun onNotePlacementEnded() {
+                placeHint?.let {
+                    placeHint = null
+                    it.dismiss()
+                }
+            }
 
             override fun onFillFailed() {
                 Toast.makeText(
@@ -378,10 +396,29 @@ class ViewerActivity : AppCompatActivity() {
         } else {
             docView.clearDocument()
             pagePanel.clear()
+            pageLabel.removeCallbacks(hidePageLabel)
+            pageLabel.animate().cancel()
             pageLabel.visibility = View.GONE
             progress.visibility = View.VISIBLE
         }
         updateActions()
+    }
+
+    /** 쪽 번호가 사라지게 하는 일 (넘기면 다시 미룬다) */
+    private val hidePageLabel = Runnable {
+        pageLabel.animate().alpha(0f).setDuration(PAGE_LABEL_FADE_MS).withEndAction {
+            // 투명해진 쪽 번호가 누름(쪽 이동)을 받지 않게. 자리는 그대로 두어 아래 줄들이 흔들리지 않게
+            if (pageLabel.alpha == 0f) pageLabel.visibility = View.INVISIBLE
+        }.start()
+    }
+
+    /** 쪽 번호를 보이고, 넘기지 않은 채 몇 초 지나면 흐려지며 사라지게 한다 */
+    private fun flashPageLabel() {
+        pageLabel.removeCallbacks(hidePageLabel)
+        pageLabel.animate().cancel()
+        pageLabel.visibility = View.VISIBLE
+        pageLabel.alpha = 1f
+        pageLabel.postDelayed(hidePageLabel, PAGE_LABEL_SHOW_MS)
     }
 
     private fun closeTab(t: DocTab) {
@@ -1132,6 +1169,10 @@ class ViewerActivity : AppCompatActivity() {
         pdf.add(0, 21, 0, "맨 앞에 넣기")
         pdf.add(0, 22, 1, "지금 보는 ${page}쪽 다음에 넣기")
         pdf.add(0, 23, 2, "맨 뒤에 넣기")
+        popup.menu.add(0, 6, 1, "빈 쪽").setIcon(R.drawable.ic_paper_plain)
+            .isEnabled = ink != null && !docView.readOnly
+        popup.menu.add(0, 7, 1, "포스트잇 메모").setIcon(R.drawable.ic_sticky_note)
+            .isEnabled = ink != null && !docView.readOnly
         popup.menu.add(0, 5, 2, "링크").setIcon(R.drawable.ic_link)
         popup.setForceShowIcon(true)
         popup.setOnMenuItemClickListener { item ->
@@ -1144,6 +1185,8 @@ class ViewerActivity : AppCompatActivity() {
             when {
                 item.itemId == 4 -> startScreenCapture()
                 item.itemId == 5 -> showInsertLink()
+                item.itemId == 6 -> showInsertBlankPage()
+                item.itemId == 7 -> startNotePlacement()
                 item.itemId == 1 || item.itemId == 3 -> {
                     imageImportMode = if (item.itemId == 3) ImageImportMode.NEW_PAGE else ImageImportMode.IN_PAGE
                     pickImage.launch("image/*")
@@ -1159,6 +1202,124 @@ class ViewerActivity : AppCompatActivity() {
     }
 
     private enum class PdfInsertAt { FIRST, AFTER_CURRENT, LAST }
+
+    /** '포스트잇을 붙일 곳을 탭해 주세요' 안내 (붙이거나 취소하면 닫는다) */
+    private var placeHint: Snackbar? = null
+
+    /** 삽입 ▸ 포스트잇 메모: 안내를 띄우고, 다음에 탭한 자리에 메모를 붙인다 */
+    private fun startNotePlacement() {
+        textEditor.commit()
+        if (!docView.startNotePlacement()) return
+        placeHint?.dismiss()
+        placeHint = Snackbar.make(findViewById(R.id.docFrame), "포스트잇을 붙일 곳을 탭해 주세요.", Snackbar.LENGTH_INDEFINITE)
+            .setAction("취소") { docView.cancelNotePlacement() }
+            .addCallback(object : Snackbar.Callback() {
+                // 밀어서 닫아도 붙이기를 그만둔다
+                override fun onDismissed(bar: Snackbar?, event: Int) {
+                    if (placeHint === bar) placeHint = null
+                    docView.cancelNotePlacement()
+                }
+            })
+            .also { it.show() }
+    }
+
+    /** 포스트잇 메모 글 고치기: 여러 줄 입력 창 */
+    private fun showNoteEditor(page: Int, note: Stroke) {
+        val n = note.note ?: return
+        textEditor.commit()
+        val d = resources.displayMetrics.density
+        val input = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            isSingleLine = false
+            minLines = 4
+            maxLines = 10
+            gravity = android.view.Gravity.TOP or android.view.Gravity.START
+            setText(n.text)
+            setSelection(text.length)
+            hint = "메모 내용"
+            setBackgroundColor(note.color or 0xFF000000.toInt())
+            setPadding((12 * d).toInt(), (10 * d).toInt(), (12 * d).toInt(), (10 * d).toInt())
+        }
+        val box = FrameLayout(this).apply {
+            setPadding((20 * d).toInt(), (8 * d).toInt(), (20 * d).toInt(), 0)
+            addView(input)
+        }
+        val dialog = MaterialAlertDialogBuilder(this)
+            .setTitle("포스트잇 메모")
+            .setView(box)
+            .setPositiveButton("확인") { _, _ -> docView.setNoteText(page, note, input.text.toString().trimEnd()) }
+            .setNegativeButton("취소", null)
+            .create()
+        dialog.setOnShowListener {
+            input.requestFocus()
+            dialog.window?.let { WindowCompat.getInsetsController(it, input).show(WindowInsetsCompat.Type.ime()) }
+        }
+        dialog.show()
+    }
+
+    /**
+     * 삽입 ▸ 빈 쪽: 넣을 자리(맨 앞 · 지금 쪽 다음 · 맨 뒤)와 서식을 골라 빈 쪽을 넣는다.
+     * 서식은 '기존대로'(옆 쪽과 같은 바탕·크기) 또는 '직접 정하기'(바탕·방향을 그림 단추로). 고른 것은 다음에도 그대로
+     */
+    private fun showInsertBlankPage() {
+        val t = current ?: return
+        val d = t.pdf ?: return
+        if (t.ink == null || docView.readOnly) return
+        val page = docView.currentPage().coerceIn(0, d.pageCount - 1)
+        val view = layoutInflater.inflate(R.layout.dialog_insert_page, null)
+        val posGroup = view.findViewById<MaterialButtonToggleGroup>(R.id.posGroup)
+        val formatGroup = view.findViewById<MaterialButtonToggleGroup>(R.id.formatGroup)
+        val hint = view.findViewById<TextView>(R.id.formatHint)
+        val custom = view.findViewById<View>(R.id.customFormat)
+        val paperGroup = custom.findViewById<MaterialButtonToggleGroup>(R.id.paperGroup)
+        val orientGroup = custom.findViewById<MaterialButtonToggleGroup>(R.id.orientGroup)
+        view.findViewById<TextView>(R.id.posAfter).text = "${page + 1}쪽 다음"
+
+        val posIds = mapOf(PdfInsertAt.FIRST to R.id.posFirst, PdfInsertAt.AFTER_CURRENT to R.id.posAfter, PdfInsertAt.LAST to R.id.posLast)
+        val paperIds = mapOf(Paper.PLAIN to R.id.paperPlain, Paper.GRID to R.id.paperGrid, Paper.LINED to R.id.paperLined)
+        val lastPos = prefs.getString("blankPos", null)?.let { n -> PdfInsertAt.entries.firstOrNull { it.name == n } } ?: PdfInsertAt.AFTER_CURRENT
+        val lastPaper = prefs.getString("blankPaper", null)?.let { n -> Paper.entries.firstOrNull { it.name == n } } ?: Paper.GRID
+        // 직접 정하기의 방향은 처음엔 지금 쪽 방향으로
+        val curSize = d.sizes[page]
+        val portrait0 = prefs.getString("blankOrient", null)?.let { it == "portrait" } ?: (curSize.height >= curSize.width)
+        posGroup.check(posIds.getValue(lastPos))
+        formatGroup.check(if (prefs.getBoolean("blankCustom", false)) R.id.formatCustom else R.id.formatSame)
+        paperGroup.check(paperIds.getValue(lastPaper))
+        orientGroup.check(if (portrait0) R.id.orientPortrait else R.id.orientLandscape)
+
+        fun indexOf(pos: PdfInsertAt) = when (pos) {
+            PdfInsertAt.FIRST -> 0
+            PdfInsertAt.AFTER_CURRENT -> page + 1
+            PdfInsertAt.LAST -> d.pageCount
+        }
+        fun pos() = posIds.entries.first { it.value == posGroup.checkedButtonId }.key
+        fun refresh() {
+            val isCustom = formatGroup.checkedButtonId == R.id.formatCustom
+            custom.visibility = if (isCustom) View.VISIBLE else View.GONE
+            hint.visibility = if (isCustom) View.GONE else View.VISIBLE
+            val ref = blankPageRef(d, indexOf(pos()))
+            hint.text = "${ref + 1}쪽과 같은 바탕(흰 바탕·모눈·줄)·크기·방향으로 넣습니다."
+        }
+        posGroup.addOnButtonCheckedListener { _, _, checked -> if (checked) refresh() }
+        formatGroup.addOnButtonCheckedListener { _, _, checked -> if (checked) refresh() }
+        refresh()
+
+        MaterialAlertDialogBuilder(this)
+            .setTitle("빈 쪽 넣기")
+            .setView(view)
+            .setPositiveButton("넣기") { _, _ ->
+                val p = pos()
+                val isCustom = formatGroup.checkedButtonId == R.id.formatCustom
+                val paper = paperIds.entries.first { it.value == paperGroup.checkedButtonId }.key
+                val portrait = orientGroup.checkedButtonId == R.id.orientPortrait
+                val e = prefs.edit().putString("blankPos", p.name).putBoolean("blankCustom", isCustom)
+                if (isCustom) e.putString("blankPaper", paper.name).putString("blankOrient", if (portrait) "portrait" else "landscape")
+                e.apply()
+                if (isCustom) insertBlankPage(paper, indexOf(p), portrait) else insertBlankPage(null, indexOf(p))
+            }
+            .setNegativeButton("취소", null)
+            .show()
+    }
 
     /** 링크 넣기: 웹 주소와 보일 글자를 받아 파란 밑줄 글로 넣는다. 읽기 모드에서 누르면 열린다 */
     private fun showInsertLink() {
@@ -1476,15 +1637,32 @@ class ViewerActivity : AppCompatActivity() {
 
     // ================= 쪽 넣기 · 지우기 =================
 
+    /** [at]번째 자리에 넣을 빈 쪽이 크기·바탕을 따를 쪽: 바로 앞 쪽 (맨 앞에 넣으면 첫 쪽) */
+    private fun blankPageRef(d: PdfDoc, at: Int) = (at - 1).coerceIn(0, d.pageCount - 1)
+
     /**
-     * [at]번째 자리(0부터, 기본은 보고 있는 쪽 뒤)에 앞 쪽과 같은 크기의 빈 쪽을 넣고 그 쪽으로 간다.
-     * 맨 앞에 넣으면 첫 쪽과 같은 크기
+     * [at]번째 자리(0부터, 기본은 보고 있는 쪽 뒤)에 빈 쪽을 넣고 그 쪽으로 간다.
+     * 크기는 앞 쪽(맨 앞이면 첫 쪽)과 같고, [portrait]를 주면 그 방향으로 긴 변·짧은 변을 맞춘다.
+     * [paper]가 null이면 바탕도 앞 쪽(흰 바탕·모눈·줄)을 따른다
      */
-    private fun insertBlankPage(paper: Paper, at: Int = docView.currentPage() + 1) {
+    private fun insertBlankPage(paper: Paper?, at: Int = docView.currentPage() + 1, portrait: Boolean? = null) {
         val t = current ?: return
         val d = t.pdf ?: return
-        val size = d.sizes[(at - 1).coerceIn(0, d.pageCount - 1)]
-        editPages(t, { src, out -> PdfPages.insert(src, out, at, paper, size.width, size.height) }) { pages ->
+        val ref = blankPageRef(d, at)
+        val size = d.sizes[ref]
+        val long = max(size.width, size.height)
+        val short = min(size.width, size.height)
+        val (w, h) = when (portrait) {
+            null -> size.width to size.height
+            true -> short to long
+            false -> long to short
+        }
+        var found = paper
+        editPages(t, { src, out ->
+            // 원본에서 한 번 알아낸 바탕을 화면용 PDF에도 똑같이
+            val p = found ?: runCatching { PdfPages.paperOf(src, ref) }.getOrDefault(Paper.PLAIN).also { found = it }
+            PdfPages.insert(src, out, at, p, w, h)
+        }) { pages ->
             pages.add(at, mutableListOf())
             at
         }
@@ -1497,17 +1675,7 @@ class ViewerActivity : AppCompatActivity() {
         val t = current ?: return
         val d = t.pdf ?: return
         if (t.pagesBusy || docView.readOnly) return
-        val last = d.pageCount - 1
-        val size = d.sizes[last]
-        var paper: Paper? = null
-        editPages(t, { src, out ->
-            // 원본에서 한 번 알아낸 바탕을 화면용 PDF에도 똑같이
-            val p = paper ?: runCatching { PdfPages.paperOf(src, last) }.getOrDefault(Paper.PLAIN).also { paper = it }
-            PdfPages.insert(src, out, last + 1, p, size.width, size.height)
-        }) { pages ->
-            pages.add(mutableListOf())
-            pages.size - 1
-        }
+        insertBlankPage(null, d.pageCount)
     }
 
     /** 쪽 지우기: 지금 쪽만 / n쪽부터 m쪽까지 (실행 취소로 되돌릴 수 있다) */
@@ -2448,6 +2616,7 @@ class ViewerActivity : AppCompatActivity() {
         docView.eraseHlOnly = prefs.getBoolean("eraseHlOnly", false)
         docView.scribbleErase = prefs.getBoolean("scribbleErase", true)
         docView.palmErase = prefs.getBoolean("palmErase", true)
+        docView.noteColor = prefs.getInt("noteColor", StickyNote.COLORS[0])
     }
 
     /** 지우개 버튼: 획/영역 표시 + 형광펜만이면 형광색 지우개 */
@@ -3636,6 +3805,9 @@ class ViewerActivity : AppCompatActivity() {
     }
 
     companion object {
+        /** 넘기지 않은 채 이만큼(ms) 지나면 쪽 번호가 흐려지며 사라진다 */
+        private const val PAGE_LABEL_SHOW_MS = 2500L
+        private const val PAGE_LABEL_FADE_MS = 400L
         const val EXTRA_WRITABLE = "writable"
         /** 앱의 파일 탐색기에서 연 문서 */
         const val EXTRA_FROM_BROWSER = "fromBrowser"

@@ -1,0 +1,10 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24"
+    android:tint="?attr/colorControlNormal">
+    <!-- 빈 쪽 바탕: 줄 (공책처럼 가로줄) -->
+    <path android:strokeColor="@android:color/white" android:strokeWidth="1.6" android:strokeLineJoin="round"
+        android:pathData="M6,2.8h12v18.4h-12z" />
+    <path android:strokeColor="@android:color/white" android:strokeWidth="0.9" android:strokeLineCap="round"
+        android:pathData="M8.3,8h7.4 M8.3,11.3h7.4 M8.3,14.6h7.4 M8.3,17.9h7.4" />
+</vector>

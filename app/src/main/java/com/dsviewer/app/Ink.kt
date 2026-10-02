@@ -168,6 +168,10 @@ fun inkPaint() = Paint(Paint.ANTI_ALIAS_FLAG).apply {
  * 형광펜은 반투명 곱하기, 점선 획은 점선으로. alphaMul < 1이면 흐리게
  */
 fun drawInkStroke(c: Canvas, paint: Paint, st: Stroke, alphaMul: Float = 1f) {
+    if (st.note != null) {
+        drawStickyNote(c, st, alphaMul)
+        return
+    }
     if (st.image != null) {
         drawInkImage(c, st, alphaMul)
         return
@@ -245,6 +249,8 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
     var text: InkText? = null
     /** 글에 단 링크 (웹 주소). 읽기 모드에서 누르면 연다 */
     var link: String? = null
+    /** 포스트잇 메모면 그 메모 (점 0은 접힌 메모, 점 1은 펼친 메모의 왼쪽 위). 지우개·선택으로는 건드리지 않는다 */
+    var note: StickyNote? = null
 
     /** 테이프면 그 모양·무늬 */
     var tape: TapeStyle? = null
@@ -424,6 +430,13 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
             val old = data.copyOf(12)
             for (k in 0 until 4) for (j in 0 until 3) data[k * 3 + j] = old[order[k] * 3 + j]
         }
+        // 메모: 점은 왼쪽 위 모서리이므로 거울에 비춘 뒤 크기만큼 되돌린다 (글은 뒤집지 않는다)
+        note?.let { n ->
+            if (count >= 2) {
+                data[axis] -= StickyNote.ICON
+                data[3 + axis] -= if (horizontal) n.w else n.h
+            }
+        }
         version++
     }
 
@@ -437,6 +450,7 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
         s.image = image
         s.text = text
         s.link = link
+        s.note = note?.copy()
         s.tape = tape
         s.fill = fill
         s.holes = holes.copyOf()

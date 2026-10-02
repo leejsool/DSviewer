@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 빈 쪽 서식 고르기: 바탕(흰 바탕·모눈·줄)과 방향(세로·가로)을 그림 단추로.
+     새 노트 만들기 창(dialog_new_note)과 빈 쪽 넣기 창(dialog_insert_page)이 같이 쓴다 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="바탕"
+        android:textAppearance="?attr/textAppearanceLabelLarge" />
+
+    <com.google.android.material.button.MaterialButtonToggleGroup
+        android:id="@+id/paperGroup"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        app:selectionRequired="true"
+        app:singleSelection="true">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/paperPlain"
+            style="@style/PageFormatChoice"
+            android:contentDescription="흰 바탕"
+            android:tooltipText="흰 바탕"
+            app:icon="@drawable/ic_paper_plain" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/paperGrid"
+            style="@style/PageFormatChoice"
+            android:contentDescription="모눈"
+            android:tooltipText="모눈"
+            app:icon="@drawable/ic_paper_grid" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/paperLined"
+            style="@style/PageFormatChoice"
+            android:contentDescription="줄"
+            android:tooltipText="줄"
+            app:icon="@drawable/ic_paper_lined" />
+    </com.google.android.material.button.MaterialButtonToggleGroup>
+
+    <TextView
+        android:id="@+id/orientLabel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:text="방향"
+        android:textAppearance="?attr/textAppearanceLabelLarge" />
+
+    <com.google.android.material.button.MaterialButtonToggleGroup
+        android:id="@+id/orientGroup"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        app:selectionRequired="true"
+        app:singleSelection="true">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/orientPortrait"
+            style="@style/PageFormatChoice"
+            android:contentDescription="세로"
+            android:tooltipText="세로"
+            app:icon="@drawable/ic_orient_portrait" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/orientLandscape"
+            style="@style/PageFormatChoice"
+            android:contentDescription="가로"
+            android:tooltipText="가로"
+            app:icon="@drawable/ic_orient_landscape" />
+    </com.google.android.material.button.MaterialButtonToggleGroup>
+</LinearLayout>
