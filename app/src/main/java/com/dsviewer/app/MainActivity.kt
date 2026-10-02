@@ -794,6 +794,7 @@ class MainActivity : AppCompatActivity() {
         val lastPaper = prefs.getString("notePaper", null)?.let { n -> Paper.entries.firstOrNull { it.name == n } } ?: Paper.GRID
         paperGroup.check(paperIds.getValue(lastPaper))
         orientGroup.check(if (prefs.getBoolean("notePortrait", false)) R.id.orientPortrait else R.id.orientLandscape)
+        view.findViewById<TextView>(R.id.orientLabel).text = "방향 (A4)"
         MaterialAlertDialogBuilder(this)
             .setTitle("새 노트")
             .setView(view)

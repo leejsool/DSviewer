@@ -1,0 +1,8 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24"
+    android:tint="?attr/colorControlNormal">
+    <!-- 쪽 방향: 세로 (위아래로 긴 종이, 오른쪽 위 모서리가 접힘) -->
+    <path android:strokeColor="@android:color/white" android:strokeWidth="1.6" android:strokeLineJoin="round"
+        android:pathData="M6,2.8h8.5l3.5,3.5v14.9h-12z M14.5,2.8v3.5h3.5" />
+</vector>

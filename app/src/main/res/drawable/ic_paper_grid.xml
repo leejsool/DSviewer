@@ -1,0 +1,10 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24"
+    android:tint="?attr/colorControlNormal">
+    <!-- 빈 쪽 바탕: 모눈 (종이 안에 바둑판 칸) -->
+    <path android:strokeColor="@android:color/white" android:strokeWidth="1.6" android:strokeLineJoin="round"
+        android:pathData="M6,2.8h12v18.4h-12z" />
+    <path android:strokeColor="@android:color/white" android:strokeWidth="0.8"
+        android:pathData="M10,2.8v18.4 M14,2.8v18.4 M6,6.5h12 M6,10.2h12 M6,13.9h12 M6,17.6h12" />
+</vector>
