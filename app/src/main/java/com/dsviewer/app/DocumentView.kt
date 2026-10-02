@@ -21,6 +21,7 @@ import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.animation.DecelerateInterpolator
 import android.widget.OverScroller
 import com.google.android.material.color.MaterialColors
@@ -73,6 +74,10 @@ class DocumentView @JvmOverloads constructor(
         fun onFillFailed() {}
         /** 읽기 모드에서 쪽의 (x, y)를 톡 누름 (테이프가 아닌 곳). 링크를 따라갈 때 */
         fun onReadTap(page: Int, x: Float, y: Float) {}
+        /** 펼친 포스트잇 메모의 몸통을 누름 → 글 고치기 ([setNoteText]) */
+        fun onNoteEdit(page: Int, note: Stroke) {}
+        /** 포스트잇 메모 색을 고름 (다음에 넣는 메모도 이 색으로) */
+        fun onNoteColorPicked(color: Int) {}
     }
 
     var listener: Listener? = null
@@ -440,6 +445,8 @@ class DocumentView @JvmOverloads constructor(
         doc = d
         ink = inkDoc
         sizes = d.sizes
+        resetNoteTouch()
+        paletteNote = null
         pullAnimator?.cancel()
         pullPx = 0f
         layoutPages()
@@ -728,9 +735,18 @@ class DocumentView @JvmOverloads constructor(
             searchHits[i]?.forEach { canvas.drawRect(it, hitPaint) }
             val dragging = (moving || resizing || rotating) && selPage == i
             // 그림을 먼저, 채우기를 그 위에, 나머지 필기는 맨 위에
-            for (layer in 0..2) for (st in inkDoc.pages[i]) {
-                if (inkLayer(st) == layer && st !== hiddenStroke && (!dragging || st !in selSet)) drawStroke(canvas, st)
+            // 포스트잇 메모는 맨 위에 (끌어 옮기는 중이면 손가락을 따라)
+            for (layer in 0..3) for (st in inkDoc.pages[i]) {
+                if (inkLayer(st) != layer || st === hiddenStroke || (dragging && st in selSet)) continue
+                if (st === noteTrack && noteDragging) {
+                    canvas.save()
+                    computeNoteDelta(st, i, noteDelta)
+                    canvas.translate(noteDelta[0], noteDelta[1])
+                    drawStroke(canvas, st)
+                    canvas.restore()
+                } else drawStroke(canvas, st)
             }
+            paletteNote?.let { if (it.note?.collapsed == false && inkDoc.pages[i].contains(it)) drawNotePalette(canvas, it) }
             for ((p, st) in fillPending) if (p == i) drawFillDraft(canvas, st)
             if (dragging) {
                 // 옮기거나 크기를 바꾸는 중인 획은 손을 뗄 때까지 그림만 바꿔 그린다
@@ -939,6 +955,274 @@ class DocumentView @JvmOverloads constructor(
             }
         }
         return addTracking
+    }
+
+    // ================= 포스트잇 메모 =================
+    // 접힌 메모: 톡 누르면 펼치고, 꾹 누른 채 끌면 옮긴다. 펼친 메모: 띠의 단추(색 · 지우기 · 접기),
+    // 띠를 끌면 옮기고, 몸통을 누르면 글 고치기. 손가락으로 메모에서 시작해 움직이면 그대로 문서 넘기기
+
+    /** 새 메모 색 (마지막으로 고른 색) */
+    var noteColor = StickyNote.COLORS[0]
+
+    /** 누르고 있는 메모와 그 쪽 */
+    private var noteTrack: Stroke? = null
+    private var notePage = -1
+    private var noteMode = NoteTouch.NONE
+    private var noteButton: NoteButton? = null
+    private var noteSwatch = -1
+    private var noteFinger = false
+    private var noteDownX = 0f
+    private var noteDownY = 0f
+    private var noteMoved = false
+    /** 메모를 끌어 옮기는 중 (손가락이 움직인 거리, 화면 px) */
+    private var noteDragging = false
+    private var noteDx = 0f
+    private var noteDy = 0f
+    private val noteDelta = FloatArray(2)
+    /** 색 고르기 칸을 띄운 메모 */
+    private var paletteNote: Stroke? = null
+    private val noteBox = RectF()
+    private val swatchFill = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val swatchLine = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+
+    private enum class NoteTouch { NONE, ICON, HEADER, BUTTON, BODY, SWATCH, SCROLL }
+
+    /** 접힌 메모를 꾹 누름: 끌어 옮기기 시작 */
+    private val noteLongPress = Runnable {
+        if (noteTrack != null && noteMode == NoteTouch.ICON && !noteMoved && !readOnly) {
+            noteDragging = true
+            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+            invalidate()
+        }
+    }
+
+    /** 보고 있는 쪽의 화면에 보이는 부분 가운데에 새 메모를 넣는다 (펼친 채). 실행 취소 가능 */
+    fun addStickyNote(): Boolean {
+        val inkDoc = ink ?: return false
+        val page = currentPage().takeIf { it in sizes.indices } ?: return false
+        val r = pageRect(page, RectF())
+        val sx = (max(r.left, 0f) + min(r.right, width.toFloat())) / 2f
+        val sy = (max(r.top, topInset) + min(r.bottom, height - bottomInset)) / 2f
+        val st = StickyNote.create(
+            toPageX(page, sx) - StickyNote.DEFAULT_W / 2f, toPageY(page, sy) - StickyNote.DEFAULT_H / 2f,
+            noteColor, sizes[page].width, sizes[page].height,
+        )
+        clearSelection()
+        paletteNote = null
+        inkDoc.add(page, st)
+        invalidate()
+        return true
+    }
+
+    /** 메모 글 고치기 (실행 취소 가능) */
+    fun setNoteText(page: Int, old: Stroke, text: String) {
+        val inkDoc = ink ?: return
+        if (old.note == null || old.note?.text == text || page !in inkDoc.pages.indices) return
+        inkDoc.replace(page, old, StickyNote.withText(old, text))
+        invalidate()
+    }
+
+    /** 쪽 좌표 (x, y)에 닿는 맨 위 메모. 접힌 메모는 [slop]만큼 넉넉히 */
+    private fun noteAt(page: Int, x: Float, y: Float, slop: Float): Stroke? =
+        ink?.pages?.getOrNull(page)?.lastOrNull { st ->
+            val n = st.note ?: return@lastOrNull false
+            if (n.collapsed) st.noteIconRect(noteBox).apply { inset(-slop, -slop) }.contains(x, y)
+            else st.noteRect(noteBox).contains(x, y)
+        }
+
+    private fun expandedNoteAt(page: Int, x: Float, y: Float): Stroke? =
+        ink?.pages?.getOrNull(page)?.lastOrNull { st -> st.note?.collapsed == false && st.noteRect(noteBox).contains(x, y) }
+
+    /** 끌어 옮기는 거리 (쪽 좌표). 메모가 쪽 밖으로 나가지 않게 */
+    private fun computeNoteDelta(st: Stroke, page: Int, out: FloatArray) {
+        val n = st.note ?: return
+        val pw = sizes[page].width
+        val ph = sizes[page].height
+        val k = if (n.collapsed) 0 else 1
+        val w = if (n.collapsed) StickyNote.ICON else n.w
+        val h = if (n.collapsed) StickyNote.ICON else n.h
+        val x = st.x(k)
+        val y = st.y(k)
+        out[0] = (noteDx / scale).coerceAtMost(pw - w - x).coerceAtLeast(min(0f, -x))
+        out[1] = (noteDy / scale).coerceAtMost(ph - h - y).coerceAtLeast(min(0f, -y))
+    }
+
+    /** 색 고르기 칸 k번째 자리 (쪽 좌표): 메모 띠 바로 아래에 한 줄 */
+    private fun swatchRect(st: Stroke, k: Int, out: RectF): RectF {
+        val r = st.noteRect(RectF())
+        val n = StickyNote.COLORS.size
+        val cell = r.width() / n
+        val top = r.top + StickyNote.HEADER
+        return out.apply { set(r.left + cell * k, top, r.left + cell * (k + 1), top + cell) }
+    }
+
+    /** 펼친 메모 띠 아래의 색 고르기 칸 (쪽 좌표 캔버스) */
+    private fun drawNotePalette(c: Canvas, st: Stroke) {
+        val b = RectF()
+        val r = st.noteRect(RectF())
+        swatchRect(st, 0, b)
+        swatchFill.color = Color.argb(235, 255, 255, 255)
+        c.drawRect(r.left, b.top, r.right, b.bottom, swatchFill)
+        for (k in StickyNote.COLORS.indices) {
+            swatchRect(st, k, b)
+            val rad = b.width() * 0.32f
+            swatchFill.color = StickyNote.COLORS[k]
+            c.drawCircle(b.centerX(), b.centerY(), rad, swatchFill)
+            val on = (StickyNote.COLORS[k] or 0xFF000000.toInt()) == (st.color or 0xFF000000.toInt())
+            swatchLine.color = if (on) SEL_COLOR else Color.argb(90, 0, 0, 0)
+            swatchLine.strokeWidth = if (on) 2f else 0.8f
+            c.drawCircle(b.centerX(), b.centerY(), rad, swatchLine)
+        }
+    }
+
+    private fun resetNoteTouch() {
+        removeCallbacks(noteLongPress)
+        noteTrack = null
+        notePage = -1
+        noteMode = NoteTouch.NONE
+        noteButton = null
+        noteSwatch = -1
+        noteMoved = false
+        noteDragging = false
+        noteDx = 0f
+        noteDy = 0f
+    }
+
+    /** 메모를 누른 동작 (손가락·펜 모두). 메모가 아닌 곳에서 시작했으면 false */
+    private fun handleNoteTouch(ev: MotionEvent): Boolean {
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                resetNoteTouch()
+                val hit = hitPage(ev.x, ev.y)
+                // 색 고르기 칸이 떠 있으면 먼저 그 칸을 본다. 다른 곳을 누르면 닫는다
+                paletteNote?.let { pn ->
+                    if (hit != null && ink?.pages?.getOrNull(hit.first)?.contains(pn) == true) {
+                        val b = RectF()
+                        for (k in StickyNote.COLORS.indices) if (swatchRect(pn, k, b).contains(hit.second, hit.third)) {
+                            beginNoteTouch(ev, pn, hit.first, NoteTouch.SWATCH)
+                            noteSwatch = k
+                            return true
+                        }
+                    }
+                    paletteNote = null
+                    invalidate()
+                }
+                hit ?: return false
+                val st = noteAt(hit.first, hit.second, hit.third, 6f * density / scale) ?: return false
+                val n = st.note!!
+                val mode = when {
+                    n.collapsed -> NoteTouch.ICON
+                    hit.third < st.y(1) + StickyNote.HEADER -> {
+                        noteButton = st.noteButtonAt(hit.second, hit.third)
+                        if (noteButton != null) NoteTouch.BUTTON else NoteTouch.HEADER
+                    }
+                    else -> NoteTouch.BODY
+                }
+                beginNoteTouch(ev, st, hit.first, mode)
+                if (mode == NoteTouch.ICON && !readOnly) postDelayed(noteLongPress, ViewConfiguration.getLongPressTimeout().toLong())
+                invalidate()
+                return true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                noteTrack ?: return false
+                if (!noteMoved && hypot(ev.x - noteDownX, ev.y - noteDownY) > addTouchSlop) {
+                    noteMoved = true
+                    removeCallbacks(noteLongPress)
+                    when {
+                        noteDragging -> {}
+                        // 펼친 메모는 띠를 끌면 바로 옮긴다
+                        noteMode == NoteTouch.HEADER && !readOnly -> noteDragging = true
+                        // 손가락이면 문서 넘기기로 (제스처 감지기는 DOWN을 못 받았으므로 지금 자리에서 새로 시작)
+                        noteFinger -> {
+                            noteMode = NoteTouch.SCROLL
+                            val down = MotionEvent.obtain(ev)
+                            down.action = MotionEvent.ACTION_DOWN
+                            gestureDetector.onTouchEvent(down)
+                            down.recycle()
+                        }
+                        else -> noteMode = NoteTouch.NONE
+                    }
+                }
+                if (noteDragging) {
+                    noteDx = ev.x - noteDownX
+                    noteDy = ev.y - noteDownY
+                    invalidate()
+                } else if (noteMode == NoteTouch.SCROLL) gestureDetector.onTouchEvent(ev)
+                return true
+            }
+            MotionEvent.ACTION_UP -> {
+                val st = noteTrack ?: return false
+                removeCallbacks(noteLongPress)
+                when {
+                    noteDragging -> {
+                        computeNoteDelta(st, notePage, noteDelta)
+                        if (noteDelta[0] != 0f || noteDelta[1] != 0f) ink?.move(listOf(st), noteDelta[0], noteDelta[1])
+                    }
+                    noteMode == NoteTouch.SCROLL -> gestureDetector.onTouchEvent(ev)
+                    !noteMoved -> noteTapped(st, notePage)
+                }
+                resetNoteTouch()
+                invalidate()
+                return true
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                noteTrack ?: return false
+                if (noteMode == NoteTouch.SCROLL) gestureDetector.onTouchEvent(ev)
+                resetNoteTouch()
+                invalidate()
+                return true
+            }
+        }
+        return noteTrack != null
+    }
+
+    private fun beginNoteTouch(ev: MotionEvent, st: Stroke, page: Int, mode: NoteTouch) {
+        noteTrack = st
+        notePage = page
+        noteMode = mode
+        noteFinger = ev.getToolType(0) == MotionEvent.TOOL_TYPE_FINGER
+        noteDownX = ev.x
+        noteDownY = ev.y
+        scroller.forceFinished(true)
+        zoomAnimator?.cancel()
+        clearSelection()
+    }
+
+    /** 메모를 톡 누름. 읽기 모드에서는 펼치고 접기만 */
+    private fun noteTapped(st: Stroke, page: Int) {
+        val inkDoc = ink ?: return
+        val n = st.note ?: return
+        if (page !in sizes.indices) return
+        playSoundEffect(android.view.SoundEffectConstants.CLICK)
+        // 접고 펼친 상태는 저장할 때 같이 남지만, 그것만으로 '저장 안 한 변경'이 생기지는 않는다 (읽으려고 펼쳐 볼 때)
+        when (noteMode) {
+            NoteTouch.ICON -> {
+                n.collapsed = false
+                st.fitNoteInPage(sizes[page].width, sizes[page].height)
+            }
+            NoteTouch.BUTTON -> when (noteButton) {
+                NoteButton.COLLAPSE -> {
+                    n.collapsed = true
+                    paletteNote = null
+                }
+                NoteButton.COLOR -> if (!readOnly) paletteNote = if (paletteNote === st) null else st
+                NoteButton.DELETE -> if (!readOnly) {
+                    paletteNote = null
+                    inkDoc.remove(page, listOf(st))
+                }
+                null -> {}
+            }
+            NoteTouch.BODY -> if (!readOnly) listener?.onNoteEdit(page, st)
+            NoteTouch.SWATCH -> {
+                val c = StickyNote.COLORS.getOrNull(noteSwatch) ?: return
+                if (c != st.color) inkDoc.edit(listOf(st)) { st.recolor(c) }
+                noteColor = c
+                listener?.onNoteColorPicked(c)
+                paletteNote = null
+            }
+            else -> {}
+        }
+        invalidate()
     }
 
     /** 올가미 선과 선택 상자 (화면 좌표) */
@@ -1607,6 +1891,7 @@ class DocumentView @JvmOverloads constructor(
         if (doc == null) return false
         if (penPointerId == -1 && handleBarTouch(ev)) return true
         if (penPointerId == -1 && !fingerActive && handleAddTouch(ev)) return true
+        if (penPointerId == -1 && !fingerActive && handleNoteTouch(ev)) return true
         var action = ev.actionMasked
         // 구형 삼성 S펜: 버튼을 누른 채 그리면 별도 액션 코드(211~213)로 들어온다
         var samsungButton = false
@@ -2079,6 +2364,8 @@ class DocumentView @JvmOverloads constructor(
 
     private fun eraseAt(page: Int, px: Float, py: Float, radiusPx: Float = eraserRadiusDp * density) {
         val inkDoc = ink ?: return
+        // 펼친 포스트잇 메모 아래는 보이지 않으므로 지우지 않는다
+        if (expandedNoteAt(page, px, py) != null) return
         val r = radiusPx / scale
         val list = inkDoc.pages[page]
         var removed = false
@@ -2111,7 +2398,7 @@ class DocumentView @JvmOverloads constructor(
         var covered = false
         for (k in list.indices.reversed()) {
             val st = list[k]
-            if (st.isBox) continue  // 그림·글은 선택해서 삭제
+            if (st.isBox || st.note != null) continue  // 그림·글은 선택해서 삭제, 메모는 메모의 지우기 단추로
             val isTape = st.tape != null
             val isFill = st.fill != null
             if (fillsOnly) {
@@ -2269,7 +2556,7 @@ class DocumentView @JvmOverloads constructor(
         var crossed = 0
         for (k in list.indices.reversed()) {
             val s = list[k]
-            if (s.isBox || s.tape != null || s.fill != null) continue
+            if (s.isBox || s.tape != null || s.fill != null || s.note != null) continue
             val hw = s.halfWidth
             val rest = s.cutWhere(step) { x, y -> region.contains(x, y, hw) } ?: continue
             cuts.add(Triple(k, s, rest))
@@ -2417,6 +2704,7 @@ class DocumentView @JvmOverloads constructor(
         }
         if (lassoCount < 3) return
         val picked = inkDoc.pages[lassoPage].filter { st ->
+            if (st.note != null) return@filter false  // 메모는 끌어 옮기고 메모의 단추로 지운다
             var inside = 0
             for (k in 0 until st.count) if (inLasso(st.x(k), st.y(k))) inside++
             inside * 2 >= st.count && inside > 0
@@ -2451,7 +2739,7 @@ class DocumentView @JvmOverloads constructor(
         val tol = TAP_SELECT_DP * density / scale
         list.lastOrNull { st ->
             when {
-                st.image != null || st.fill != null -> false
+                st.image != null || st.fill != null || st.note != null -> false
                 st.isBox -> st.count >= 4 && boxContains(st, x, y)
                 st.tool == Tool.TAPE && st.tapeContains(x, y) -> true
                 else -> strokeNear(st, x, y, tol)
@@ -2666,7 +2954,7 @@ class DocumentView @JvmOverloads constructor(
             // 필기·그림·글도 (다른 테이프는 빼고)
             val paint = inkPaint()
             for (s in inkDoc.pages[page]) if (s.image != null) drawInkStroke(c, paint, s)
-            for (s in inkDoc.pages[page]) if (s.image == null && s.tape == null && s.fill == null) drawInkStroke(c, paint, s)
+            for (s in inkDoc.pages[page]) if (s.image == null && s.tape == null && s.fill == null && s.note == null) drawInkStroke(c, paint, s)
             bmp.getPixels(px, 0, bw, 0, 0, bw, bh)
         } finally {
             bmp.recycle()
@@ -2838,7 +3126,7 @@ class DocumentView @JvmOverloads constructor(
         val inkDoc = ink ?: return
         if (bucketJob?.isActive == true || page !in sizes.indices) return
         val list = inkDoc.pages[page]
-        val strokes = list.filter { it.fill == null && it.tool != Tool.HIGHLIGHTER && it.tool != Tool.LASER }
+        val strokes = list.filter { it.fill == null && it.note == null && it.tool != Tool.HIGHLIGHTER && it.tool != Tool.LASER }
         val pw = sizes[page].width
         val ph = sizes[page].height
         val k = min(FILL_MAX_K, sqrt(FILL_MAX_PX / (pw * ph)))
@@ -3032,7 +3320,7 @@ class DocumentView @JvmOverloads constructor(
     fun clearPage(hlOnly: Boolean): Int {
         val inkDoc = ink ?: return 0
         val page = currentPage().takeIf { it >= 0 } ?: return 0
-        val targets = inkDoc.pages[page].filter { !it.isBox && (!hlOnly || it.tool == Tool.HIGHLIGHTER) }
+        val targets = inkDoc.pages[page].filter { !it.isBox && it.note == null && (!hlOnly || it.tool == Tool.HIGHLIGHTER) }
         if (targets.isEmpty()) return 0
         clearSelection()
         inkDoc.remove(page, targets)

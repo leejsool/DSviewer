@@ -252,6 +252,12 @@ class ViewerActivity : AppCompatActivity() {
 
             override fun onReadTap(page: Int, x: Float, y: Float) = followLinkAt(page, x, y)
 
+            override fun onNoteEdit(page: Int, note: Stroke) = showNoteEditor(page, note)
+
+            override fun onNoteColorPicked(color: Int) {
+                prefs.edit().putInt("noteColor", color).apply()
+            }
+
             override fun onFillFailed() {
                 Toast.makeText(
                     this@ViewerActivity, "닫힌 영역을 찾지 못했어요. 도형 안을 누르거나, 선이 끊긴 곳을 이어 그려 주세요.",
@@ -1157,6 +1163,8 @@ class ViewerActivity : AppCompatActivity() {
         pdf.add(0, 23, 2, "맨 뒤에 넣기")
         popup.menu.add(0, 6, 1, "빈 쪽").setIcon(R.drawable.ic_paper_plain)
             .isEnabled = ink != null && !docView.readOnly
+        popup.menu.add(0, 7, 1, "포스트잇 메모").setIcon(R.drawable.ic_sticky_note)
+            .isEnabled = ink != null && !docView.readOnly
         popup.menu.add(0, 5, 2, "링크").setIcon(R.drawable.ic_link)
         popup.setForceShowIcon(true)
         popup.setOnMenuItemClickListener { item ->
@@ -1170,6 +1178,7 @@ class ViewerActivity : AppCompatActivity() {
                 item.itemId == 4 -> startScreenCapture()
                 item.itemId == 5 -> showInsertLink()
                 item.itemId == 6 -> showInsertBlankPage()
+                item.itemId == 7 -> { textEditor.commit(); docView.addStickyNote() }
                 item.itemId == 1 || item.itemId == 3 -> {
                     imageImportMode = if (item.itemId == 3) ImageImportMode.NEW_PAGE else ImageImportMode.IN_PAGE
                     pickImage.launch("image/*")
@@ -1185,6 +1194,40 @@ class ViewerActivity : AppCompatActivity() {
     }
 
     private enum class PdfInsertAt { FIRST, AFTER_CURRENT, LAST }
+
+    /** 포스트잇 메모 글 고치기: 여러 줄 입력 창 */
+    private fun showNoteEditor(page: Int, note: Stroke) {
+        val n = note.note ?: return
+        textEditor.commit()
+        val d = resources.displayMetrics.density
+        val input = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            isSingleLine = false
+            minLines = 4
+            maxLines = 10
+            gravity = android.view.Gravity.TOP or android.view.Gravity.START
+            setText(n.text)
+            setSelection(text.length)
+            hint = "메모 내용"
+            setBackgroundColor(note.color or 0xFF000000.toInt())
+            setPadding((12 * d).toInt(), (10 * d).toInt(), (12 * d).toInt(), (10 * d).toInt())
+        }
+        val box = FrameLayout(this).apply {
+            setPadding((20 * d).toInt(), (8 * d).toInt(), (20 * d).toInt(), 0)
+            addView(input)
+        }
+        val dialog = MaterialAlertDialogBuilder(this)
+            .setTitle("포스트잇 메모")
+            .setView(box)
+            .setPositiveButton("확인") { _, _ -> docView.setNoteText(page, note, input.text.toString().trimEnd()) }
+            .setNegativeButton("취소", null)
+            .create()
+        dialog.setOnShowListener {
+            input.requestFocus()
+            dialog.window?.let { WindowCompat.getInsetsController(it, input).show(WindowInsetsCompat.Type.ime()) }
+        }
+        dialog.show()
+    }
 
     /**
      * 삽입 ▸ 빈 쪽: 넣을 자리(맨 앞 · 지금 쪽 다음 · 맨 뒤)와 서식을 골라 빈 쪽을 넣는다.
@@ -2545,6 +2588,7 @@ class ViewerActivity : AppCompatActivity() {
         docView.eraseHlOnly = prefs.getBoolean("eraseHlOnly", false)
         docView.scribbleErase = prefs.getBoolean("scribbleErase", true)
         docView.palmErase = prefs.getBoolean("palmErase", true)
+        docView.noteColor = prefs.getInt("noteColor", StickyNote.COLORS[0])
     }
 
     /** 지우개 버튼: 획/영역 표시 + 형광펜만이면 형광색 지우개 */

@@ -138,6 +138,7 @@ object PdfInk {
                             if (s.count == 0) continue
                             list.add(
                                 when {
+                                    s.note != null -> makeNoteAnnotation(doc, page, s)
                                     s.image != null -> makeImageAnnotation(doc, page, s)
                                     s.text != null -> makeTextAnnotation(doc, page, s, texts!!)
                                     s.tape != null -> makeTapeAnnotation(doc, page, s)
@@ -378,6 +379,75 @@ object PdfInk {
         annot.page = page
         dict.setString(KEY_NAME, encode(s))
         s.link?.let { dict.setString(LINK_NAME, it) }
+        val apd = PDAppearanceDictionary()
+        apd.setNormalAppearance(ap)
+        annot.appearance = apd
+        return annot
+    }
+
+    /**
+     * 포스트잇 메모: PDF 표준 메모 주석(/Text). 다른 PDF 앱에서도 메모 아이콘이 보이고 누르면 글(/Contents)이 열린다.
+     * 외형은 접힌 포스트잇 (이 앱에서 펼치고 접은 상태·자리는 [KEY_NAME]에)
+     */
+    private fun makeNoteAnnotation(doc: PDDocument, page: PDPage, s: Stroke): PDAnnotation {
+        val n = s.note!!
+        val box = page.cropBox
+        val rot = ((page.rotation % 360) + 360) % 360
+        val ux = FloatArray(2)
+        val uy = FloatArray(2)
+        toUser(s.x(0), s.y(0), box, rot, ux, uy, 0)
+        toUser(s.x(0) + StickyNote.ICON, s.y(0) + StickyNote.ICON, box, rot, ux, uy, 1)
+        val rect = PDRectangle(min(ux[0], ux[1]), min(uy[0], uy[1]), kotlin.math.abs(ux[1] - ux[0]), kotlin.math.abs(uy[1] - uy[0]))
+        val c = s.color
+        val rgb = floatArrayOf(Color.red(c) / 255f, Color.green(c) / 255f, Color.blue(c) / 255f)
+
+        // 외형: 오른쪽 아래가 접힌 작은 포스트잇
+        val ap = PDAppearanceStream(doc)
+        ap.bBox = rect
+        ap.resources = PDResources()
+        val l = rect.lowerLeftX; val b = rect.lowerLeftY; val w = rect.width; val h = rect.height
+        val fold = min(w, h) * 0.32f
+        PDPageContentStream(doc, ap).use { cs ->
+            cs.setNonStrokingColor(rgb[0], rgb[1], rgb[2])
+            cs.moveTo(l, b + h); cs.lineTo(l + w, b + h); cs.lineTo(l + w, b + fold); cs.lineTo(l + w - fold, b); cs.lineTo(l, b)
+            cs.closePath()
+            cs.fill()
+            cs.setNonStrokingColor(rgb[0] * 0.85f, rgb[1] * 0.85f, rgb[2] * 0.85f)
+            cs.moveTo(l + w, b + fold); cs.lineTo(l + w - fold, b + fold); cs.lineTo(l + w - fold, b)
+            cs.closePath()
+            cs.fill()
+            cs.setStrokingColor(rgb[0] * 0.72f, rgb[1] * 0.72f, rgb[2] * 0.72f)
+            cs.setLineWidth(0.8f)
+            cs.addRect(l, b + fold, w, h - fold)
+            cs.stroke()
+            if (n.text.isNotEmpty()) {
+                cs.setStrokingColor(rgb[0] * 0.4f, rgb[1] * 0.4f, rgb[2] * 0.4f)
+                cs.setLineWidth(1.4f)
+                cs.setLineCapStyle(1)
+                for (k in 0 until 3) {
+                    val y = b + h - h * (0.28f + 0.18f * k)
+                    cs.moveTo(l + w * 0.2f, y)
+                    cs.lineTo(l + w - w * (if (k == 2) 0.45f else 0.2f), y)
+                }
+                cs.stroke()
+            }
+        }
+        val dict = COSDictionary()
+        dict.setItem(COSName.TYPE, COSName.ANNOT)
+        dict.setItem(COSName.SUBTYPE, COSName.getPDFName("Text"))
+        val annot = PDAnnotation.createAnnotation(dict)
+        annot.rectangle = rect
+        annot.color = PDColor(rgb, PDDeviceRGB.INSTANCE)
+        annot.contents = n.text
+        annot.isPrinted = true
+        annot.isNoZoom = true
+        annot.isNoRotate = true
+        annot.annotationName = UUID.randomUUID().toString()
+        annot.setModifiedDate(Calendar.getInstance())
+        annot.page = page
+        dict.setName(COSName.NAME, "Note")
+        dict.setBoolean(COSName.getPDFName("Open"), false)
+        dict.setString(KEY_NAME, encode(s))
         val apd = PDAppearanceDictionary()
         apd.setNormalAppearance(ap)
         annot.appearance = apd
@@ -679,9 +749,11 @@ object PdfInk {
     // 글은 굵기 자리에 글자 크기, 끝에 |글(UTF-8 Base64)|줄 바꾸는 폭|서식(JSON, UTF-8 Base64)을 붙인다
     // 테이프는 끝에 |R(네모) 또는 P(펜)|무늬 이름, 지우개로 뚫은 구멍이 있으면 |x,y,r;x,y,r;... 을 붙인다
     // 채우기(A)는 점들이 윤곽들 (필압 1이 윤곽의 첫 점), 끝에 |무늬 이름, 구멍이 있으면 |x,y,r;... 을 붙인다
+    // 포스트잇 메모(N)는 점 두 개(접힌 자리, 펼친 자리), 끝에 |글(UTF-8 Base64)|가로,세로|C(접힘) 또는 O(펼침)
     private fun encode(s: Stroke): String {
         val sb = StringBuilder(s.count * 16 + 32)
         val kind = when {
+            s.note != null -> 'N'
             s.image != null -> 'I'
             s.text != null -> 'T'
             s.tape != null -> 'K'
@@ -718,6 +790,11 @@ object PdfInk {
             sb.append('|').append(it.pattern.name)
             holes()
         }
+        s.note?.let {
+            sb.append('|').append(Base64.encodeToString(it.text.toByteArray(), Base64.NO_WRAP))
+            sb.append('|').append(r2(it.w)).append(',').append(r2(it.h))
+            sb.append('|').append(if (it.collapsed) 'C' else 'O')
+        }
         return sb.toString()
     }
 
@@ -733,7 +810,8 @@ object PdfInk {
             }
             val color = parts[2].toLong(16).toInt()
             val isText = parts[1] == "T"
-            val pen = if (tool == Tool.PEN && parts[1].length == 1) PenStyle.of(parts[1][0]) ?: PenStyle.FELT else PenStyle.FELT
+            val isNote = parts[1] == "N"
+            val pen = if (tool == Tool.PEN && !isNote && parts[1].length == 1) PenStyle.of(parts[1][0]) ?: PenStyle.FELT else PenStyle.FELT
             val s = Stroke(tool, color, if (isText) 0f else parts[3].toFloat(), dashed = parts[1] == "D", pen = pen)
             for (pt in parts[4].split(';')) {
                 val v = pt.split(',')
@@ -758,7 +836,14 @@ object PdfInk {
                 val rich = parts.getOrNull(7)?.let { RichDoc.fromJson(txt, String(Base64.decode(it, Base64.NO_WRAP))) }
                 s.text = InkText(rich ?: RichDoc.plain(txt), parts[3].toFloat(), parts.getOrNull(6)?.toFloatOrNull() ?: InkText.NO_WRAP)
             }
-            if (s.count > 0 && (!isText || s.count >= 4)) s else null
+            if (isNote) {
+                val txt = String(Base64.decode(parts[5], Base64.NO_WRAP))
+                val size = parts.getOrNull(6)?.split(',')
+                val w = size?.getOrNull(0)?.toFloatOrNull() ?: StickyNote.DEFAULT_W
+                val h = size?.getOrNull(1)?.toFloatOrNull() ?: StickyNote.DEFAULT_H
+                s.note = StickyNote(txt, w, h).also { it.collapsed = parts.getOrNull(7) == "C" }
+            }
+            if (s.count > 0 && (!isText || s.count >= 4) && (!isNote || s.count >= 2)) s else null
         }
     } catch (e: Exception) {
         null
