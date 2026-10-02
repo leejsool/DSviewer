@@ -46,6 +46,7 @@ import com.google.android.material.button.MaterialButton
 import com.google.android.material.button.MaterialButtonToggleGroup
 import com.google.android.material.color.MaterialColors
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.snackbar.Snackbar
 import com.dsviewer.app.conv.DocConvert
 import com.dsviewer.app.conv.ImagePdf
 import kotlinx.coroutines.Dispatchers
@@ -256,6 +257,13 @@ class ViewerActivity : AppCompatActivity() {
 
             override fun onNoteColorPicked(color: Int) {
                 prefs.edit().putInt("noteColor", color).apply()
+            }
+
+            override fun onNotePlacementEnded() {
+                placeHint?.let {
+                    placeHint = null
+                    it.dismiss()
+                }
             }
 
             override fun onFillFailed() {
@@ -1178,7 +1186,7 @@ class ViewerActivity : AppCompatActivity() {
                 item.itemId == 4 -> startScreenCapture()
                 item.itemId == 5 -> showInsertLink()
                 item.itemId == 6 -> showInsertBlankPage()
-                item.itemId == 7 -> { textEditor.commit(); docView.addStickyNote() }
+                item.itemId == 7 -> startNotePlacement()
                 item.itemId == 1 || item.itemId == 3 -> {
                     imageImportMode = if (item.itemId == 3) ImageImportMode.NEW_PAGE else ImageImportMode.IN_PAGE
                     pickImage.launch("image/*")
@@ -1194,6 +1202,26 @@ class ViewerActivity : AppCompatActivity() {
     }
 
     private enum class PdfInsertAt { FIRST, AFTER_CURRENT, LAST }
+
+    /** '포스트잇을 붙일 곳을 탭해 주세요' 안내 (붙이거나 취소하면 닫는다) */
+    private var placeHint: Snackbar? = null
+
+    /** 삽입 ▸ 포스트잇 메모: 안내를 띄우고, 다음에 탭한 자리에 메모를 붙인다 */
+    private fun startNotePlacement() {
+        textEditor.commit()
+        if (!docView.startNotePlacement()) return
+        placeHint?.dismiss()
+        placeHint = Snackbar.make(findViewById(R.id.docFrame), "포스트잇을 붙일 곳을 탭해 주세요.", Snackbar.LENGTH_INDEFINITE)
+            .setAction("취소") { docView.cancelNotePlacement() }
+            .addCallback(object : Snackbar.Callback() {
+                // 밀어서 닫아도 붙이기를 그만둔다
+                override fun onDismissed(bar: Snackbar?, event: Int) {
+                    if (placeHint === bar) placeHint = null
+                    docView.cancelNotePlacement()
+                }
+            })
+            .also { it.show() }
+    }
 
     /** 포스트잇 메모 글 고치기: 여러 줄 입력 창 */
     private fun showNoteEditor(page: Int, note: Stroke) {

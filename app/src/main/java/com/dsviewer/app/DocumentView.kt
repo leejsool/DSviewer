@@ -78,6 +78,8 @@ class DocumentView @JvmOverloads constructor(
         fun onNoteEdit(page: Int, note: Stroke) {}
         /** 포스트잇 메모 색을 고름 (다음에 넣는 메모도 이 색으로) */
         fun onNoteColorPicked(color: Int) {}
+        /** 포스트잇 붙일 곳 고르기가 끝남 (붙였거나 취소). 안내를 닫을 때 */
+        fun onNotePlacementEnded() {}
     }
 
     var listener: Listener? = null
@@ -121,7 +123,10 @@ class DocumentView @JvmOverloads constructor(
             if (field == v) return
             if (v && penPointerId != -1) endPen(commit = true)
             field = v
-            if (v) clearSelection()
+            if (v) {
+                clearSelection()
+                cancelNotePlacement()
+            }
             // 마지막 쪽 아래 '빈 쪽 추가' 단추는 읽기 모드에서 숨긴다 (그만큼 스크롤 길이가 바뀐다)
             if (doc != null) {
                 clamp()
@@ -447,6 +452,7 @@ class DocumentView @JvmOverloads constructor(
         sizes = d.sizes
         resetNoteTouch()
         paletteNote = null
+        cancelNotePlacement()
         pullAnimator?.cancel()
         pullPx = 0f
         layoutPages()
@@ -996,21 +1002,79 @@ class DocumentView @JvmOverloads constructor(
         }
     }
 
-    /** 보고 있는 쪽의 화면에 보이는 부분 가운데에 새 메모를 넣는다 (펼친 채). 실행 취소 가능 */
-    fun addStickyNote(): Boolean {
-        val inkDoc = ink ?: return false
-        val page = currentPage().takeIf { it in sizes.indices } ?: return false
-        val r = pageRect(page, RectF())
-        val sx = (max(r.left, 0f) + min(r.right, width.toFloat())) / 2f
-        val sy = (max(r.top, topInset) + min(r.bottom, height - bottomInset)) / 2f
-        val st = StickyNote.create(
-            toPageX(page, sx) - StickyNote.DEFAULT_W / 2f, toPageY(page, sy) - StickyNote.DEFAULT_H / 2f,
-            noteColor, sizes[page].width, sizes[page].height,
-        )
+    /** 포스트잇 붙일 곳을 고르는 중: 다음에 톡 누른 자리에 메모를 넣는다 (손가락으로 밀면 그동안 문서를 넘겨 볼 수 있다) */
+    var notePlacing = false
+        private set
+    private var placeTracking = false
+    private var placeFinger = false
+    private var placeMoved = false
+    private var placeDownX = 0f
+    private var placeDownY = 0f
+
+    /** 포스트잇 붙일 곳 고르기를 시작한다 (끝나면 [Listener.onNotePlacementEnded]) */
+    fun startNotePlacement(): Boolean {
+        if (ink == null || readOnly) return false
         clearSelection()
         paletteNote = null
-        inkDoc.add(page, st)
+        notePlacing = true
         invalidate()
+        return true
+    }
+
+    fun cancelNotePlacement() {
+        if (!notePlacing) return
+        notePlacing = false
+        placeTracking = false
+        listener?.onNotePlacementEnded()
+    }
+
+    /** 쪽의 (x, y)를 왼쪽 위로 새 메모를 넣고(펼친 채, 쪽 안에 들게) 바로 글을 치게 한다. 실행 취소 가능 */
+    private fun placeNote(page: Int, x: Float, y: Float) {
+        val inkDoc = ink ?: return
+        val st = StickyNote.create(x, y, noteColor, sizes[page].width, sizes[page].height)
+        inkDoc.add(page, st)
+        notePlacing = false
+        listener?.onNotePlacementEnded()
+        invalidate()
+        listener?.onNoteEdit(page, st)
+    }
+
+    /** 붙일 곳 고르는 동안의 터치: 톡 누르면 그 자리에, 손가락으로 밀면 문서 넘기기 */
+    private fun handlePlaceTouch(ev: MotionEvent): Boolean {
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                placeTracking = true
+                placeMoved = false
+                placeFinger = ev.getToolType(0) == MotionEvent.TOOL_TYPE_FINGER
+                placeDownX = ev.x
+                placeDownY = ev.y
+                scroller.forceFinished(true)
+            }
+            MotionEvent.ACTION_MOVE -> if (placeTracking) {
+                if (!placeMoved && hypot(ev.x - placeDownX, ev.y - placeDownY) > addTouchSlop) {
+                    placeMoved = true
+                    if (placeFinger) {
+                        val down = MotionEvent.obtain(ev)
+                        down.action = MotionEvent.ACTION_DOWN
+                        gestureDetector.onTouchEvent(down)
+                        down.recycle()
+                    }
+                } else if (placeMoved && placeFinger) gestureDetector.onTouchEvent(ev)
+            }
+            MotionEvent.ACTION_UP -> if (placeTracking) {
+                placeTracking = false
+                if (placeMoved) {
+                    if (placeFinger) gestureDetector.onTouchEvent(ev)
+                } else hitPage(ev.x, ev.y)?.let { (page, x, y) ->
+                    // 쪽 바깥(쪽 사이 여백)을 누르면 다시 고르게 둔다
+                    if (page in sizes.indices && x in 0f..sizes[page].width && y in 0f..sizes[page].height) placeNote(page, x, y)
+                }
+            }
+            MotionEvent.ACTION_CANCEL -> if (placeTracking) {
+                placeTracking = false
+                if (placeMoved && placeFinger) gestureDetector.onTouchEvent(ev)
+            }
+        }
         return true
     }
 
@@ -1090,6 +1154,7 @@ class DocumentView @JvmOverloads constructor(
 
     /** 메모를 누른 동작 (손가락·펜 모두). 메모가 아닌 곳에서 시작했으면 false */
     private fun handleNoteTouch(ev: MotionEvent): Boolean {
+        if (notePlacing || placeTracking) return handlePlaceTouch(ev)
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 resetNoteTouch()
