@@ -1,12 +1,10 @@
 package com.dsviewer.app
 
-import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.junit.runner.RunWith
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.hypot
@@ -15,9 +13,7 @@ import kotlin.math.sin
 /**
  * 긁어서 지우기 판단: 넓게 휘어 긁기·좁게 위아래로 긁기·뾰족하게 긁기는 긁기,
  * 동그라미 두 번·물결선은 긁기가 아님. 긁은 아래 가로선은 가운데만 잘림. (쪽 좌표 1 = 1dp로 봄)
- * 실행: adb shell am instrument -w -e class com.dsviewer.app.ScribbleTest com.dsviewer.app.test/androidx.test.runner.AndroidJUnitRunner
  */
-@RunWith(AndroidJUnit4::class)
 class ScribbleTest {
     private fun stroke(pts: List<Pair<Float, Float>>): Stroke {
         val st = Stroke(Tool.PEN, 0xFF000000.toInt(), 2f)

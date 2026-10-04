@@ -1,6 +1,5 @@
 package com.dsviewer.app
 
-import android.graphics.RectF
 import kotlin.math.ceil
 import kotlin.math.hypot
 import kotlin.math.max
@@ -14,17 +13,24 @@ class ScribbleRegion private constructor(
     private val line: Stroke,
     private val band: Float,
 ) {
-    val bounds = RectF()
+    /** 긁은 선을 [band]만큼 부풀려 감싼 상자: 왼쪽 · 위 · 오른쪽 · 아래 */
+    private val left: Float
+    private val top: Float
+    private val right: Float
+    private val bottom: Float
 
     init {
-        bounds.set(line.x(0), line.y(0), line.x(0), line.y(0))
-        for (i in 1 until line.count) bounds.union(line.x(i), line.y(i))
-        bounds.inset(-band, -band)
+        var l = line.x(0); var t = line.y(0); var r = l; var b = t
+        for (i in 1 until line.count) {
+            l = minOf(l, line.x(i)); r = maxOf(r, line.x(i))
+            t = minOf(t, line.y(i)); b = maxOf(b, line.y(i))
+        }
+        left = l - band; top = t - band; right = r + band; bottom = b + band
     }
 
     /** (x, y)에서 반지름 m인 원이 영역에 닿는지 */
     fun contains(x: Float, y: Float, m: Float): Boolean {
-        if (x < bounds.left - m || x > bounds.right + m || y < bounds.top - m || y > bounds.bottom + m) return false
+        if (x < left - m || x > right + m || y < top - m || y > bottom + m) return false
         val m2 = m * m
         for (t in tris.indices step 6) {
             val ax = tris[t]; val ay = tris[t + 1]

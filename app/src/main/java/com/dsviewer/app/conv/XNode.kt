@@ -17,6 +17,11 @@ class XNode(val name: String, val attrs: Map<String, String>) {
     /** 바로 안의 글 (a:t, w:t 등) */
     val text: String get() = textBuf?.toString() ?: ""
 
+    /** 글을 이어 붙인다 (파서가 쓰고, 시험에서 나무를 손으로 만들 때도 쓴다) */
+    internal fun addText(s: String) {
+        (textBuf ?: StringBuilder().also { textBuf = it }).append(s)
+    }
+
     operator fun get(attr: String): String? = attrs[attr]
 
     fun child(name: String): XNode? = children.firstOrNull { it.name == name }
@@ -68,8 +73,7 @@ class XNode(val name: String, val attrs: Map<String, String>) {
                     }
                     XmlPullParser.END_TAG -> stack.removeAt(stack.size - 1)
                     XmlPullParser.TEXT -> {
-                        val top = stack.last()
-                        (top.textBuf ?: StringBuilder().also { top.textBuf = it }).append(p.text)
+                        stack.last().addText(p.text)
                     }
                     XmlPullParser.END_DOCUMENT -> break
                 }
