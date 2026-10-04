@@ -1233,16 +1233,15 @@ class DocumentView @JvmOverloads constructor(
     }
 
     private fun isEraserInput(ev: MotionEvent, idx: Int, samsungButton: Boolean): Boolean {
-        if (samsungButton) return true
-        if (ev.getToolType(idx) == MotionEvent.TOOL_TYPE_ERASER) return true
+        if (PenInputRules.isEraserInput(samsungButton, ev.getToolType(idx) == MotionEvent.TOOL_TYPE_ERASER, 0, 0)) return true
         val mask = MotionEvent.BUTTON_STYLUS_PRIMARY or MotionEvent.BUTTON_STYLUS_SECONDARY or MotionEvent.BUTTON_SECONDARY
-        return ev.buttonState and mask != 0
+        return PenInputRules.isEraserInput(false, false, ev.buttonState, mask)
     }
 
     private fun pressure(ev: MotionEvent, idx: Int, hist: Int = -1): Float {
-        if (!isStylus(ev, idx)) return 0.6f
-        val p = if (hist >= 0) ev.getHistoricalPressure(idx, hist) else ev.getPressure(idx)
-        return p.coerceIn(0f, 1f)
+        val stylus = isStylus(ev, idx)
+        if (!stylus) return PenInputRules.pressure(false, 0f)
+        return PenInputRules.pressure(true, if (hist >= 0) ev.getHistoricalPressure(idx, hist) else ev.getPressure(idx))
     }
 
     override fun onTouchEvent(ev: MotionEvent): Boolean {
@@ -1251,30 +1250,26 @@ class DocumentView @JvmOverloads constructor(
         if (penPointerId == -1 && scrollBar.onTouch(ev)) return true
         if (penPointerId == -1 && !fingerActive && addFooter.onTouch(ev)) return true
         if (penPointerId == -1 && !fingerActive && handleNoteTouch(ev)) return true
-        var action = ev.actionMasked
         // 구형 삼성 S펜: 버튼을 누른 채 그리면 별도 액션 코드(211~213)로 들어온다
-        var samsungButton = false
-        when (action) {
-            SPEN_DOWN -> { action = MotionEvent.ACTION_DOWN; samsungButton = true }
-            SPEN_UP -> { action = MotionEvent.ACTION_UP; samsungButton = true }
-            SPEN_MOVE -> { action = MotionEvent.ACTION_MOVE; samsungButton = true }
-        }
+        val translated = PenInputRules.translate(ev.actionMasked)
+        val action = translated.action
+        val samsungButton = translated.samsungButton
 
         // 펜 시작 (읽기 모드에서는 펜도 손가락처럼 넘기기·확대만)
-        if (!readOnly && penPointerId == -1 && (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN)) {
+        if (PenInputRules.mayStartPen(readOnly, penPointerId != -1, action)) {
             val idx = if (samsungButton) 0 else ev.actionIndex
             val stylus = isStylus(ev, idx) || samsungButton
             // 선택한 부분은 손가락 필기를 꺼 두어도 손가락으로 끌어 옮길 수 있다
-            val fingerPen = !stylus && action == MotionEvent.ACTION_DOWN &&
-                ev.getToolType(idx) == MotionEvent.TOOL_TYPE_FINGER &&
-                (fingerDrawing || onSelection(ev.getX(idx), ev.getY(idx)))
+            val fingerPen = PenInputRules.isFingerPen(
+                stylus, action, ev.getToolType(idx) == MotionEvent.TOOL_TYPE_FINGER, fingerDrawing,
+                onSelection(ev.getX(idx), ev.getY(idx)),
+            )
             if (stylus || fingerPen) {
                 if (fingerActive) cancelFingerGesture(ev)
                 fingersBlocked = stylus
                 penPointerId = ev.getPointerId(idx)
                 penIsFinger = fingerPen
-                penErasing = tool == Tool.ERASER || (tool == Tool.TAPE && tapeErasing) || (tool == Tool.FILL && fillErasing) ||
-                    (stylus && isEraserInput(ev, idx, samsungButton))
+                penErasing = PenInputRules.penErasing(tool, tapeErasing, fillErasing, stylus, isEraserInput(ev, idx, samsungButton))
                 penMaxMajor = if (fingerPen) ev.getTouchMajor(idx) else 0f
                 startPen(ev.getX(idx), ev.getY(idx), pressure(ev, idx), ev.eventTime)
                 if (palmReady() && anyPalm(ev)) switchToPalm(ev)
@@ -1384,11 +1379,10 @@ class DocumentView @JvmOverloads constructor(
     // ================= 손바닥 지우기 =================
 
     /** 손바닥 지우기를 쓰는 도구 (펜·형광펜·보정 펜·지우개) */
-    private fun palmToolOk() = palmErase && !readOnly &&
-        (tool == Tool.PEN || tool == Tool.HIGHLIGHTER || tool == Tool.SHAPE || tool == Tool.ERASER)
+    private fun palmToolOk() = PenInputRules.palmToolOk(palmErase, readOnly, tool)
 
     /** 지금 손가락 필기 중이라 손바닥으로 바꿀 수 있는지 */
-    private fun palmReady() = fingerDrawing && penIsFinger && !palmErasing && palmToolOk()
+    private fun palmReady() = PenInputRules.palmReady(fingerDrawing, penIsFinger, palmErasing, palmToolOk())
 
     /** 보통 손가락이 닿는 크기 (최근 손가락 획들의 가운뎃값, 아직 모르면 9mm) */
     private fun fingerSize(): Float {
@@ -2326,8 +2320,5 @@ class DocumentView @JvmOverloads constructor(
         /** 회전 손잡이 반지름과 상자에서 떨어진 거리 */
         private const val ROT_HANDLE_DP = 14f
         private const val ROT_OFFSET_DP = 34f
-        private const val SPEN_DOWN = 211
-        private const val SPEN_UP = 212
-        private const val SPEN_MOVE = 213
     }
 }
