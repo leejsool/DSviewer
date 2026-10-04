@@ -1112,6 +1112,11 @@ class InkDocument(pageCount: Int) {
         onChanged?.invoke()
     }
 
+    /** 자동 저장본에서 복구한 필기: 아직 저장하지 않은 상태로 둔다 (알리지는 않는다) */
+    fun restoreDirty() {
+        dirty = true
+    }
+
     private fun push(a: Action) {
         undoStack.addLast(a)
         redoStack.clear()

@@ -78,6 +78,8 @@ class ViewerActivity : AppCompatActivity() {
     private val saver: DocSaver by lazy {
         DocSaver(this, docView, textEditor, progress, { current }, { createDoc.launch(it) }, ::removeTab, ::updateTabTitle)
     }
+    private val drafts by lazy { Drafts.store(this) }
+    private val autoSaver: AutoSaver by lazy { AutoSaver(this, drafts) { docs } }
     /** 파일 탐색기에서 열었는지 (뒤로 가면 탭을 그대로 둔 채 탐색기로) */
     private var fromBrowser = false
 
@@ -253,6 +255,12 @@ class ViewerActivity : AppCompatActivity() {
         textEditor.commit()
     }
 
+    override fun onStop() {
+        super.onStop()
+        // 시스템이 뒤로 간 앱을 끌 수 있으니, 저장하지 않은 필기는 지금 자동 저장본에 적어 둔다
+        autoSaver.flush()
+    }
+
     /** 뷰어가 이미 떠 있을 때 탐색기에서 문서를 고르면 새 탭으로 연다 */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
@@ -276,7 +284,8 @@ class ViewerActivity : AppCompatActivity() {
         uri ?: return false
         val writable = intent.getBooleanExtra(EXTRA_WRITABLE, false) ||
             (intent.flags and Intent.FLAG_GRANT_WRITE_URI_PERMISSION) != 0
-        openTab(uri, writable, intent.getBooleanExtra(EXTRA_NEW_NOTE, false))
+        openTab(uri, writable, intent.getBooleanExtra(EXTRA_NEW_NOTE, false), intent.getStringExtra(EXTRA_DRAFT))
+        intent.removeExtra(EXTRA_DRAFT)
         return true
     }
 
@@ -284,6 +293,7 @@ class ViewerActivity : AppCompatActivity() {
         super.onDestroy()
         docs.forEach { it.pdf?.close() }
         openTabs = 0
+        openUris = emptySet()
         if (isFinishing) CaptureService.stop(this)
     }
 
@@ -304,7 +314,8 @@ class ViewerActivity : AppCompatActivity() {
         }
     }
 
-    private fun openTab(uri: Uri, writable: Boolean, newNote: Boolean) {
+    /** [draftId]가 있으면 탐색기에서 고른 복구할 필기: 그 자동 저장본을 연다 */
+    private fun openTab(uri: Uri, writable: Boolean, newNote: Boolean, draftId: String? = null) {
         docs.firstOrNull { it.uri == uri }?.let {
             // 이미 열려 있는 문서면 그 탭으로
             docTabs.select(docs.indexOf(it), notify = true)
@@ -320,11 +331,40 @@ class ViewerActivity : AppCompatActivity() {
         val t = DocTab(uri, writable && !newNote, newNote)
         docs.add(t)
         openTabs = docs.size
+        openUris = docs.mapTo(HashSet()) { it.uri.toString() }
         updateAddButton()
         docTabs.addTab(t.name, R.drawable.ic_doc, TAB_ICON_GRAY, closable = true)
         updateTabTitle(t)
         docTabs.select(docs.lastIndex, notify = true)
-        load(t)
+        val meta = drafts.meta(draftId ?: drafts.idOf(uri.toString()))
+        when {
+            meta == null -> load(t)
+            draftId != null -> { useDraft(t, meta); load(t) }
+            else -> askRecover(t, meta)
+        }
+    }
+
+    /** 자동 저장본을 문서 대신 열도록 탭을 맞춘다 (저장은 원래 문서 자리로) */
+    private fun useDraft(t: DocTab, meta: DraftMeta) {
+        t.draftFile = drafts.pdf(meta.id)
+        t.name = meta.name
+        t.type = DocType.entries.firstOrNull { it.name == meta.type } ?: DocType.PDF
+        t.canOverwrite = meta.canOverwrite
+        t.isNewNote = meta.isNewNote
+        t.draft.draftId = meta.id
+        t.draft.savedChange = System.currentTimeMillis()  // 이 자동 저장본은 방금 연 그대로이니 새 변경이 있을 때까지 다시 쓰지 않는다
+    }
+
+    /** 이 문서의 저장하지 않은 필기가 자동 저장돼 있으면 복구할지 묻는다 */
+    private fun askRecover(t: DocTab, meta: DraftMeta) {
+        val whenText = android.text.format.DateFormat.format("M월 d일 a h:mm", meta.time)
+        MaterialAlertDialogBuilder(this)
+            .setTitle("저장하지 않은 필기가 있습니다")
+            .setMessage("'${meta.name}'에 ${whenText}까지 쓴 필기가 저장되지 않은 채 남아 있습니다.\n복구할까요?")
+            .setCancelable(false)
+            .setPositiveButton("복구") { _, _ -> useDraft(t, meta); load(t) }
+            .setNegativeButton("버리고 열기") { _, _ -> drafts.delete(meta.id); load(t) }
+            .show()
     }
 
     private fun updateTabTitle(t: DocTab) {
@@ -409,8 +449,11 @@ class ViewerActivity : AppCompatActivity() {
             pagePanel.clear()
         }
         docs.removeAt(index)
+        // 저장했거나 '저장 안 함'으로 닫았으니 자동 저장본은 더 필요 없다 (열다 만 복구 탭은 남겨 둔다)
+        if (t.ink != null) autoSaver.discard(t)
         t.search?.cancel()
         openTabs = docs.size
+        openUris = docs.mapTo(HashSet()) { it.uri.toString() }
         updateAddButton()
         docTabs.removeTab(index)
         t.pdf?.close()
@@ -468,13 +511,20 @@ class ViewerActivity : AppCompatActivity() {
         val uri = t.uri
         lifecycleScope.launch {
             try {
-                val name = withContext(Dispatchers.IO) { FileUtil.displayName(this@ViewerActivity, uri) }
+                val draftFile = t.draftFile
+                val name = if (draftFile != null) t.name
+                else withContext(Dispatchers.IO) { FileUtil.displayName(this@ViewerActivity, uri) }
                 t.name = name
                 updateTabTitle(t)
                 val file = withContext(Dispatchers.IO) {
                     // 다른 탭이 쓰고 있을 수 있으므로 오래된 캐시 정리는 첫 탭에서만
                     if (docs.size == 1) FileUtil.cleanOld(this@ViewerActivity)
-                    FileUtil.copyToCache(this@ViewerActivity, uri, name)
+                    if (draftFile != null) FileUtil.tempFile(this@ViewerActivity, "draft", "pdf").also { draftFile.copyTo(it, overwrite = true) }
+                    else FileUtil.copyToCache(this@ViewerActivity, uri, name)
+                }
+                if (draftFile != null) {  // 자동 저장본은 이미 PDF
+                    openPdf(t, file)
+                    return@launch
                 }
                 t.type = withContext(Dispatchers.IO) { FileUtil.detect(name, contentResolver.getType(uri), file) }
                 updateTabTitle(t)  // 탭 아이콘 색 (PDF 빨강, 한글 파랑 …)
@@ -517,6 +567,11 @@ class ViewerActivity : AppCompatActivity() {
         val inkDoc = InkDocument(d.pageCount)
         strokes?.let { inkDoc.load(it, marks) }
         inkDoc.loadWrongs(wrongs)
+        // 자동 저장본에서 열었으면 아직 저장하지 않은 필기로 (탭에 ●, 닫을 때 저장 여부를 묻는다)
+        if (t.draftFile != null) {
+            t.draftFile = null
+            inkDoc.restoreDirty()
+        }
         inkDoc.onChanged = {
             if (current === t) {
                 updateActions()
@@ -526,11 +581,13 @@ class ViewerActivity : AppCompatActivity() {
                 overview.inkChanged()
             }
             updateTabTitle(t)
+            autoSaver.onInkChanged(t)
         }
         inkDoc.swapPages = { files, apply -> restorePageFiles(t, files as PageFiles, apply) }
         inkDoc.jumpTo = { spot -> if (current === t) (spot as Spot).let { docView.scrollToPageY(it.page, it.y) } }
         t.pdf = d
         t.ink = inkDoc
+        updateTabTitle(t)  // 복구한 필기면 ●
         if (current === t) {
             docView.setDocument(d, inkDoc)
             syncPagePanel()
@@ -1956,6 +2013,8 @@ class ViewerActivity : AppCompatActivity() {
         const val EXTRA_FROM_BROWSER = "fromBrowser"
         /** 탐색기의 '새 노트'로 만든 빈 문서 (처음 저장할 때 저장 위치를 고른다) */
         const val EXTRA_NEW_NOTE = "newNote"
+        /** 탐색기에서 고른 복구할 자동 저장본의 이름표 ([DraftMeta.id]) */
+        const val EXTRA_DRAFT = "draft"
         /** 다른 앱 화면 가져오기로 찍은 PNG 경로 (새 쪽으로 넣는다) */
         const val EXTRA_CAPTURE = "capture"
         /** true면 찍은 화면에서 네모로 부분을 골라 그 부분만 넣는다 */
@@ -1968,6 +2027,9 @@ class ViewerActivity : AppCompatActivity() {
         private val TAB_ICON_GRAY = Color.parseColor("#9E9E9E")
         /** 열려 있는 탭 수 (탐색기의 '열린 문서' 버튼용) */
         var openTabs = 0
+            private set
+        /** 열려 있는 탭의 문서 주소 (탐색기가 '복구할 필기'에서 이미 열린 것을 빼려고) */
+        var openUris: Set<String> = emptySet()
             private set
     }
 }

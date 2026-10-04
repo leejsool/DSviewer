@@ -21,6 +21,10 @@ internal class DocTab(var uri: Uri, var canOverwrite: Boolean, var isNewNote: Bo
     var search: DocSearch? = null
     /** PDF 링크 (읽기 모드에서 처음 누를 때 꺼낸다. 쪽을 바꾸면 새로) */
     var links: DocLinks? = null
+    /** 자동 저장 진행 상태 */
+    val draft = DraftState()
+    /** 복구하는 탭: 문서 대신 이 자동 저장본을 열고(필기가 저장 안 된 상태로), 다 열면 비운다 */
+    var draftFile: File? = null
 }
 
 /** 쪽을 넣고 빼기 전·후의 PDF 파일과 그때 보던 쪽 (실행 취소하면 이 상태로 돌아간다) */

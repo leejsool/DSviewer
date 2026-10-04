@@ -245,6 +245,7 @@ class MainActivity : AppCompatActivity() {
         })
         onBackPressedDispatcher.addCallback(this, backCallback)
         setPickMode(intent.getBooleanExtra(EXTRA_PICK, false))
+        checkDrafts()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -263,6 +264,7 @@ class MainActivity : AppCompatActivity() {
         // 권한 설정에서 돌아왔거나, 문서를 저장하고 돌아왔을 수 있으므로 매번 새로 읽는다
         refresh()
         updateOpenTabs()
+        updateRecoverItem()
     }
 
     /** '종류' 정렬 순서: PDF · 한글 · 워드 · 파워포인트 · 글 · 그림 */
@@ -299,6 +301,7 @@ class MainActivity : AppCompatActivity() {
                 R.id.action_new_note -> { newNote(); true }
                 R.id.action_pick -> { openDoc.launch(arrayOf("*/*")); true }
                 R.id.action_open_tabs -> { backToViewer(); true }
+                R.id.action_recover -> { showRecoverDialog(pendingDrafts()); true }
                 R.id.action_lock_password -> { Locks.changePassword(this); true }
                 else -> false
             }
@@ -828,6 +831,75 @@ class MainActivity : AppCompatActivity() {
     private fun setPickMode(on: Boolean) {
         pickMode = on
         toolbar.subtitle = if (on) "새 탭에 열 문서를 고르세요" else null
+    }
+
+    // ================= 자동 저장 복구 =================
+
+    /** 아직 열려 있지 않은, 복구할 수 있는 자동 저장본 */
+    private fun pendingDrafts() = Drafts.store(this).list().filter { it.uri !in ViewerActivity.openUris }
+
+    private fun updateRecoverItem() {
+        toolbar.menu.findItem(R.id.action_recover)?.apply {
+            val n = pendingDrafts().size
+            isVisible = n > 0 && !pickMode
+            title = "복구할 필기 $n"
+        }
+    }
+
+    /**
+     * 앱을 새로 켰을 때(시스템이 끈 뒤 포함) 저장하지 않은 채 남은 필기가 있으면 복구할지 묻는다.
+     * 뷰어가 열려 있으면 앱이 죽었다 살아난 것이 아니니 묻지 않는다
+     */
+    private fun checkDrafts() {
+        if (draftsChecked) return
+        draftsChecked = true
+        if (ViewerActivity.openTabs > 0) return
+        val store = Drafts.store(this)
+        lifecycleScope.launch {
+            val found = withContext(Dispatchers.IO) {
+                store.cleanup(System.currentTimeMillis() - DRAFT_KEEP_MS)
+                store.list()
+            }
+            updateRecoverItem()
+            if (found.isNotEmpty()) showRecoverDialog(found)
+        }
+    }
+
+    private fun showRecoverDialog(found: List<DraftMeta>) {
+        if (found.isEmpty()) return
+        val items = found.map {
+            val name = if (Locks.isLocked(this, it.uri)) "잠긴 문서" else it.name
+            "$name\n${DateFormat.format("M월 d일 a h:mm", Date(it.time))}까지 쓴 필기"
+        }.toTypedArray()
+        MaterialAlertDialogBuilder(this)
+            .setTitle("저장하지 않은 필기 ${found.size}개")
+            .setItems(items) { _, i -> unlockThen(found[i].uri) { openDraft(found[i]) } }
+            .setNegativeButton("나중에", null)
+            .setNeutralButton("모두 버리기") { _, _ -> confirmDiscardDrafts(found) }
+            .show()
+    }
+
+    private fun confirmDiscardDrafts(found: List<DraftMeta>) {
+        MaterialAlertDialogBuilder(this)
+            .setMessage("저장하지 않은 필기 ${found.size}개를 지웁니다. 되돌릴 수 없습니다.")
+            .setPositiveButton("지우기") { _, _ ->
+                val store = Drafts.store(this)
+                found.forEach { store.delete(it.id) }
+                updateRecoverItem()
+            }
+            .setNegativeButton("취소", null)
+            .show()
+    }
+
+    private fun openDraft(meta: DraftMeta) {
+        startActivity(
+            Intent(this, ViewerActivity::class.java)
+                .setData(Uri.parse(meta.uri))
+                .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                .putExtra(ViewerActivity.EXTRA_FROM_BROWSER, true)
+                .putExtra(ViewerActivity.EXTRA_DRAFT, meta.id)
+        )
+        setPickMode(false)
     }
 
     private fun updateOpenTabs() {
@@ -1573,6 +1645,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
+        /** 자동 저장본은 마지막 저장 뒤 이만큼(30일) 지나면 지운다 */
+        private const val DRAFT_KEEP_MS = 30L * 24 * 3600 * 1000
+        /** 이번 실행에서 복구할 필기를 이미 찾아봤는지 */
+        private var draftsChecked = false
         /** 뷰어의 ＋ 버튼으로 띄웠을 때: 고른 문서를 새 탭으로 열고, 뒤로 가면 뷰어로 돌아간다 */
         const val EXTRA_PICK = "pick"
         private val FOLDER_COLOR = Color.parseColor("#E8A317")
