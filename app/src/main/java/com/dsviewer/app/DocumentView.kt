@@ -503,9 +503,9 @@ class DocumentView @JvmOverloads constructor(
             return
         }
         // 화면 가운데에 있던 문서 위치를 유지. 높이만 바뀌면(화면 키보드) 위쪽을 그대로 둔다
-        val anchorY = if (oldw > 0) (offY + oldh / 2f) / scale else 0f
+        val anchorY = if (oldw > 0) ViewportMath.centerDoc(offY, oldh.toFloat(), scale) else 0f
         baseScale = w / docW
-        if (oldw != w) offY = if (oldw > 0) anchorY * scale - h / 2f else 0f
+        if (oldw != w) offY = if (oldw > 0) ViewportMath.offsetForCenter(anchorY, scale, h.toFloat()) else 0f
         clamp()
         baseCache.evictAll()
         details = emptyList()
@@ -549,13 +549,11 @@ class DocumentView @JvmOverloads constructor(
     }
 
     /** 스크롤할 수 있는 전체 높이 (화면 px) */
-    private fun contentH() = docH * scale + addFooter.footerPx + bottomInset + topInset
+    private fun contentH() = ViewportMath.contentHeight(docH, scale, addFooter.footerPx, bottomInset, topInset)
 
     private fun clamp() {
-        val cw = docW * scale
-        val ch = contentH()
-        offX = if (cw <= width) -(width - cw) / 2f else offX.coerceIn(0f, cw - width)
-        offY = if (ch <= height) -(height - ch) / 2f - topInset else offY.coerceIn(-topInset, ch - height - topInset)
+        offX = ViewportMath.clampX(offX, docW * scale, width.toFloat())
+        offY = ViewportMath.clampY(offY, contentH(), height.toFloat(), topInset)
     }
 
     private fun pageRect(i: Int, out: RectF): RectF {
@@ -611,7 +609,7 @@ class DocumentView @JvmOverloads constructor(
         if (page !in sizes.indices || width == 0) return
         scroller.forceFinished(true)
         zoomAnimator?.cancel()
-        offY = (tops[page] - gap / 2) * scale - topInset
+        offY = ViewportMath.offsetForPageTop(tops[page], gap, scale, topInset)
         clamp()
         scheduleDetail()
         invalidate()
@@ -628,7 +626,7 @@ class DocumentView @JvmOverloads constructor(
         if (page !in sizes.indices || width == 0) return
         scroller.forceFinished(true)
         zoomAnimator?.cancel()
-        offY = (tops[page] + y.coerceIn(-gap / 2, sizes[page].height)) * scale - topInset
+        offY = ViewportMath.offsetForPageY(tops[page], y, sizes[page].height, gap, scale, topInset)
         clamp()
         scheduleDetail()
         invalidate()
@@ -639,9 +637,8 @@ class DocumentView @JvmOverloads constructor(
         if (page !in sizes.indices || width == 0) return
         scroller.forceFinished(true)
         zoomAnimator?.cancel()
-        offY = (tops[page] + y) * scale - height / 3f
-        val sx = (lefts[page] + x) * scale - offX
-        if (sx < 0 || sx > width) offX = (lefts[page] + x) * scale - width / 2f
+        offY = ViewportMath.offsetForPointY(tops[page], y, scale, height.toFloat())
+        offX = ViewportMath.offsetForPointX(offX, lefts[page], x, scale, width.toFloat())
         clamp()
         scheduleDetail()
         invalidate()
@@ -1063,9 +1060,8 @@ class DocumentView @JvmOverloads constructor(
         val reqs = ArrayList<Pair<Int, RectF>>()
         for (i in visibleRange()) {
             val r = pageRect(i, RectF())
-            val vis = RectF(max(r.left, 0f), max(r.top, 0f), min(r.right, width.toFloat()), min(r.bottom, height.toFloat()))
-            if (vis.width() <= 1 || vis.height() <= 1) continue
-            reqs.add(i to RectF((vis.left - r.left) / s, (vis.top - r.top) / s, (vis.right - r.left) / s, (vis.bottom - r.top) / s))
+            val v = ViewportMath.visibleRegion(r.left, r.top, r.right, r.bottom, width.toFloat(), height.toFloat(), s) ?: continue
+            reqs.add(i to RectF(v[0], v[1], v[2], v[3]))
         }
         detailJob = scope.launch {
             val list = ArrayList<Detail>()
@@ -1103,11 +1099,12 @@ class DocumentView @JvmOverloads constructor(
         }
 
         override fun onScale(detector: ScaleGestureDetector): Boolean {
-            val docX = (lastFx + offX) / scale
-            val docY = (lastFy + offY) / scale
+            val oldScale = scale
+            val oldOffX = offX
+            val oldOffY = offY
             zoom = (zoom * detector.scaleFactor).coerceIn(MIN_ZOOM, MAX_ZOOM)
-            offX = docX * scale - detector.focusX
-            offY = docY * scale - detector.focusY
+            offX = ViewportMath.zoomOffset(oldOffX, lastFx, detector.focusX, oldScale, scale)
+            offY = ViewportMath.zoomOffset(oldOffY, lastFy, detector.focusY, oldScale, scale)
             lastFx = detector.focusX
             lastFy = detector.focusY
             clamp()
@@ -1147,23 +1144,14 @@ class DocumentView @JvmOverloads constructor(
 
         override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
             if (scaling) return false
-            val cw = docW * scale
-            val ch = contentH()
-            val maxX = max(0f, cw - width).toInt()
-            val maxY = (max(0f, ch - height) - topInset).toInt()
-            val minX = if (cw <= width) offX.toInt() else 0
-            val minY = if (ch <= height) offY.toInt() else -topInset.toInt()
-            scroller.fling(
-                offX.toInt(), offY.toInt(), -velocityX.toInt(), -velocityY.toInt(),
-                minX, max(minX, if (cw <= width) minX else maxX),
-                minY, max(minY, if (ch <= height) minY else maxY)
-            )
+            val b = ViewportMath.flingBounds(offX, offY, docW * scale, contentH(), width.toFloat(), height.toFloat(), topInset)
+            scroller.fling(offX.toInt(), offY.toInt(), -velocityX.toInt(), -velocityY.toInt(), b[0], b[1], b[2], b[3])
             postInvalidateOnAnimation()
             return true
         }
 
         override fun onDoubleTap(e: MotionEvent): Boolean {
-            val target = if (zoom < 1.5f) 2.5f else 1f
+            val target = ViewportMath.doubleTapTarget(zoom)
             animateZoom(target, e.x, e.y)
             return true
         }
@@ -1190,15 +1178,15 @@ class DocumentView @JvmOverloads constructor(
 
     private fun animateZoom(target: Float, fx: Float, fy: Float) {
         zoomAnimator?.cancel()
-        val docX = (fx + offX) / scale
-        val docY = (fy + offY) / scale
+        val docX = ViewportMath.docAt(offX, fx, scale)
+        val docY = ViewportMath.docAt(offY, fy, scale)
         zoomAnimator = ValueAnimator.ofFloat(zoom, target).apply {
             duration = 220
             interpolator = DecelerateInterpolator()
             addUpdateListener {
                 zoom = it.animatedValue as Float
-                offX = docX * scale - fx
-                offY = docY * scale - fy
+                offX = ViewportMath.offsetKeeping(docX, scale, fx)
+                offY = ViewportMath.offsetKeeping(docY, scale, fy)
                 clamp()
                 invalidate()
             }
