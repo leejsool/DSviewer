@@ -245,6 +245,8 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
         private set
     /** 그림이면 그 그림 (점 네 개가 그림의 네 모서리). 지우개로는 지우지 않는다 */
     var image: InkImage? = null
+    /** 오답노트가 붙인 그림의 이름표 (머리줄 'WH번호', 원문 쪽 배지 'WS번호'). 그림 주석에 함께 저장한다 */
+    var role: String? = null
     /** 글이면 그 글 (점 네 개가 글 상자의 네 모서리). 지우개로는 지우지 않는다 */
     var text: InkText? = null
     /** 글에 단 링크 (웹 주소). 읽기 모드에서 누르면 연다 */
@@ -448,6 +450,7 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
     fun copy(): Stroke {
         val s = Stroke(tool, color, width, dashed, pen)
         s.image = image
+        s.role = role
         s.text = text
         s.link = link
         s.note = note?.copy()
@@ -828,6 +831,13 @@ class InkDocument(pageCount: Int) {
         ) : Action()
         /** 목차 링크로 다른 자리로 감 (필기는 바뀌지 않는다) */
         class Jump(val before: Any, val after: Any) : Action()
+        /** 오답 한 문제를 이미 있는 오답 쪽의 빈 칸에 담음: 획들과, [list] 쪽의 오답 항목 목록의 전후 */
+        class Wrong(
+            val adds: List<Pair<MutableList<Stroke>, Stroke>>,
+            val list: MutableList<Stroke>,
+            val before: List<WrongEntry>?,
+            val after: List<WrongEntry>?,
+        ) : Action()
     }
 
     private val undoStack = ArrayDeque<Action>()
@@ -865,6 +875,77 @@ class InkDocument(pageCount: Int) {
     /** 쪽 구성 바꾸기에서 새로 들어온 쪽 목록에 북마크를 단다 ([changePages]의 edit 안에서) */
     fun markList(list: MutableList<Stroke>) {
         marks.add(list)
+    }
+
+    // ---- 오답노트 ----
+
+    /**
+     * 오답 쪽의 항목들. 북마크처럼 쪽 번호 대신 그 쪽의 획 목록(자체)에 달아 두어
+     * 쪽을 넣고 빼거나 실행 취소해도 항목이 쪽을 따라간다
+     */
+    private val wrongs: MutableMap<MutableList<Stroke>, MutableList<WrongEntry>> = java.util.IdentityHashMap()
+
+    fun wrongEntries(page: Int): List<WrongEntry> = pages.getOrNull(page)?.let { wrongs[it] } ?: emptyList()
+
+    /** 오답 전체 (쪽 번호, 항목): 쪽 차례, 한 쪽 안에서는 위 칸부터 */
+    fun allWrongs(): List<Pair<Int, WrongEntry>> =
+        pages.indices.flatMap { i -> wrongEntries(i).sortedBy { it.slot }.map { i to it } }
+
+    fun nextWrongNumber() = (allWrongs().maxOfOrNull { it.second.number } ?: 0) + 1
+
+    /** 쪽 구성 바꾸기([changePages])의 edit 안에서 새로 만든 오답 쪽에 항목을 단다 (그 기록이 되돌리는 대로 따라간다) */
+    fun attachWrong(list: MutableList<Stroke>, e: WrongEntry) {
+        wrongs.getOrPut(list) { mutableListOf() }.add(e)
+    }
+
+    /**
+     * 이미 있는 [page]쪽의 빈 칸에 오답 [e]를 담는다. [adds]는 (쪽 번호, 획): 오답 쪽의 머리줄·문제 그림과 원문 쪽의 배지.
+     * 한 번의 실행 취소로 모두 되돌린다
+     */
+    fun addWrongToPage(page: Int, e: WrongEntry, adds: List<Pair<Int, Stroke>>) {
+        val list = pages[page]
+        val before = wrongs[list]?.toList()
+        attachWrong(list, e)
+        val pairs = adds.map { (p, st) -> pages[p] to st }
+        pairs.forEach { (l, st) -> l.add(st) }
+        push(Action.Wrong(pairs, list, before, wrongs[list]?.toList()))
+    }
+
+    private fun restoreWrongs(list: MutableList<Stroke>, entries: List<WrongEntry>?) {
+        if (entries == null) wrongs.remove(list) else wrongs[list] = entries.toMutableList()
+    }
+
+    /** 오답의 머리줄·배지 그림을 바꿔 끼운다 (분류를 고친 뒤). 실행 취소 기록에는 남기지 않는다 */
+    fun swapWrongStroke(page: Int, old: Stroke, new: Stroke) {
+        val list = pages.getOrNull(page) ?: return
+        val i = list.indexOf(old)
+        if (i >= 0) list[i] = new else list.add(new)
+        changed()
+    }
+
+    /** 오답 항목 자체를 고쳤음을 알린다 (저장할 것이 생긴다) */
+    fun wrongEdited() = changed()
+
+    /** 저장할 오답 정보 (쪽마다 한 줄 글, 목차) */
+    fun wrongSave(): WrongSave {
+        val metas = HashMap<Int, String>()
+        val items = ArrayList<WrongOutlineItem>()
+        for (i in pages.indices) {
+            val es = wrongs[pages[i]]?.takeIf { it.isNotEmpty() } ?: continue
+            val sorted = es.sortedBy { it.slot }
+            metas[i] = WrongNote.encode(sorted) { e -> pages.indexOfFirst { it === e.srcList } }
+            sorted.forEach { items.add(WrongOutlineItem(i, WrongNote.slotTop(it.slot), it)) }
+        }
+        return WrongSave(metas, items)
+    }
+
+    /** 파일에서 읽은 쪽별 오답 정보를 단다 ([load] 다음에) */
+    fun loadWrongs(metas: Map<Int, String>) {
+        for ((i, s) in metas) {
+            val list = pages.getOrNull(i) ?: continue
+            val es = WrongNote.decode(s).map { (e, src) -> e.also { it.srcList = pages.getOrNull(src) } }
+            if (es.isNotEmpty()) wrongs[list] = es.toMutableList()
+        }
     }
 
     fun add(page: Int, stroke: Stroke) {
@@ -985,6 +1066,10 @@ class InkDocument(pageCount: Int) {
             is Action.Move -> a.strokes.forEach { it.translate(-a.dx, -a.dy) }
             is Action.AddAll -> { val set = a.strokes.toSet(); a.page.removeAll { it in set } }
             is Action.Edit -> a.strokes.forEachIndexed { i, s -> s.restore(a.before[i]) }
+            is Action.Wrong -> {
+                a.adds.forEach { (p, st) -> p.remove(st) }
+                restoreWrongs(a.list, a.before)
+            }
             is Action.Pages, is Action.Jump -> {}  // swapIfPages, jumpIf
         }
         redoStack.addLast(a)
@@ -1004,6 +1089,10 @@ class InkDocument(pageCount: Int) {
             is Action.Move -> a.strokes.forEach { it.translate(a.dx, a.dy) }
             is Action.AddAll -> a.page.addAll(a.strokes)
             is Action.Edit -> a.strokes.forEachIndexed { i, s -> s.restore(a.after[i]) }
+            is Action.Wrong -> {
+                a.adds.forEach { (p, st) -> p.add(st) }
+                restoreWrongs(a.list, a.after)
+            }
             is Action.Pages, is Action.Jump -> {}  // swapIfPages, jumpIf
         }
         undoStack.addLast(a)

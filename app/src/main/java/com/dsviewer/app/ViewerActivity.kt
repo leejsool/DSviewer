@@ -266,6 +266,15 @@ class ViewerActivity : AppCompatActivity() {
                 }
             }
 
+            override fun onWrongPicked(page: Int, rect: RectF) = captureWrong(page, rect)
+
+            override fun onWrongPickEnded() {
+                wrongHint?.let {
+                    wrongHint = null
+                    it.dismiss()
+                }
+            }
+
             override fun onFillFailed() {
                 Toast.makeText(
                     this@ViewerActivity, "닫힌 영역을 찾지 못했어요. 도형 안을 누르거나, 선이 끊긴 곳을 이어 그려 주세요.",
@@ -541,10 +550,11 @@ class ViewerActivity : AppCompatActivity() {
         t.sourcePdf = file
         // 이 앱으로 저장한 필기가 있으면 꺼내서 편집 가능한 상태로 만든다
         val marks = HashSet<Int>()
+        val wrongs = HashMap<Int, String>()
         val (renderFile, strokes) = withContext(Dispatchers.IO) {
             if (PdfInk.containsInk(file)) {
                 val clean = FileUtil.tempFile(this@ViewerActivity, "clean", "pdf")
-                clean to PdfInk.extract(file, clean, marks)
+                clean to PdfInk.extract(file, clean, marks, wrongs)
             } else file to null
         }
         t.renderPdf = renderFile
@@ -556,6 +566,7 @@ class ViewerActivity : AppCompatActivity() {
         }
         val inkDoc = InkDocument(d.pageCount)
         strokes?.let { inkDoc.load(it, marks) }
+        inkDoc.loadWrongs(wrongs)
         inkDoc.onChanged = {
             if (current === t) {
                 updateActions()
@@ -719,6 +730,7 @@ class ViewerActivity : AppCompatActivity() {
      */
     private fun followLinkAt(page: Int, x: Float, y: Float) {
         docView.inkLinkAt(page, x, y)?.let { openWebLink(it); return }
+        current?.ink?.wrongLinkAt(page, x, y)?.let { (p, yy) -> goToSpot(p, yy); return }
         val links = currentLinks() ?: return
         links.whenReady { l ->
             val t = current
@@ -1173,6 +1185,10 @@ class ViewerActivity : AppCompatActivity() {
             .isEnabled = ink != null && !docView.readOnly
         popup.menu.add(0, 7, 1, "포스트잇 메모").setIcon(R.drawable.ic_sticky_note)
             .isEnabled = ink != null && !docView.readOnly
+        popup.menu.add(0, 8, 1, "오답 담기 (영역 선택)").setIcon(R.drawable.ic_wrong_note)
+            .isEnabled = ink != null && !docView.readOnly
+        popup.menu.add(0, 9, 1, "오답노트 목록 · 분류").setIcon(R.drawable.ic_wrong_note)
+            .isEnabled = ink != null
         popup.menu.add(0, 5, 2, "링크").setIcon(R.drawable.ic_link)
         popup.setForceShowIcon(true)
         popup.setOnMenuItemClickListener { item ->
@@ -1187,6 +1203,8 @@ class ViewerActivity : AppCompatActivity() {
                 item.itemId == 5 -> showInsertLink()
                 item.itemId == 6 -> showInsertBlankPage()
                 item.itemId == 7 -> startNotePlacement()
+                item.itemId == 8 -> startWrongPick()
+                item.itemId == 9 -> showWrongList()
                 item.itemId == 1 || item.itemId == 3 -> {
                     imageImportMode = if (item.itemId == 3) ImageImportMode.NEW_PAGE else ImageImportMode.IN_PAGE
                     pickImage.launch("image/*")
@@ -1221,6 +1239,156 @@ class ViewerActivity : AppCompatActivity() {
                 }
             })
             .also { it.show() }
+    }
+
+    // ================= 오답노트 =================
+
+    private val wrongUi by lazy { WrongUi(this, prefs) }
+
+    /** '문제 영역을 끌어 고르세요' 안내 (고르거나 취소하면 닫는다) */
+    private var wrongHint: Snackbar? = null
+
+    /** 삽입 ▸ 오답 담기: 안내를 띄우고, 끌어서 고른 네모 영역을 오답노트에 담는다 */
+    private fun startWrongPick() {
+        textEditor.commit()
+        if (current?.pagesBusy == true) return
+        if (!docView.startWrongPick()) return
+        wrongHint?.dismiss()
+        wrongHint = Snackbar.make(findViewById(R.id.docFrame), "오답으로 담을 문제 영역을 끌어서 고르세요. (두 손가락: 이동 · 확대)", Snackbar.LENGTH_INDEFINITE)
+            .setAction("취소") { docView.cancelWrongPick() }
+            .addCallback(object : Snackbar.Callback() {
+                override fun onDismissed(bar: Snackbar?, event: Int) {
+                    // 새 안내로 바뀌며 닫힌 옛 안내는 새로 시작한 고르기를 건드리지 않는다
+                    if (wrongHint !== bar) return
+                    wrongHint = null
+                    docView.cancelWrongPick()
+                }
+            })
+            .also { it.show() }
+    }
+
+    private fun wrongTagsByUse(inkDoc: InkDocument): List<String> =
+        inkDoc.allWrongs().flatMap { it.second.tags }.groupingBy { it }.eachCount().entries
+            .sortedByDescending { it.value }.map { it.key }
+
+    /** 고른 영역을 PDF 내용 + 필기 그대로 그림으로 만들어 분류 창을 띄운다 */
+    private fun captureWrong(page: Int, rect: RectF) {
+        val t = current ?: return
+        val d = t.pdf ?: return
+        val inkDoc = t.ink ?: return
+        lifecycleScope.launch {
+            progress.visibility = View.VISIBLE
+            val capture = try {
+                val scale = WrongNote.captureScale(rect)
+                val w = (rect.width() * scale).roundToInt().coerceAtLeast(1)
+                val h = (rect.height() * scale).roundToInt().coerceAtLeast(1)
+                val base = withContext(d.dispatcher) { d.render(page, scale, rect.left, rect.top, w, h) }
+                WrongNote.compose(base, inkDoc.pages[page].toList(), rect, scale)
+            } catch (e: Exception) {
+                toast("영역을 가져오지 못했습니다.")
+                docView.clearWrongRect()
+                return@launch
+            } finally {
+                if (current === t && !t.pagesBusy) progress.visibility = View.GONE
+            }
+            if (current !== t || t.ink !== inkDoc) {
+                docView.clearWrongRect()
+                return@launch
+            }
+            wrongUi.showCapture(
+                capture, wrongTagsByUse(inkDoc),
+                onOk = { choice -> addWrong(t, page, rect, capture, choice) },
+                onRetry = { startWrongPick() },
+                onDismiss = { docView.clearWrongRect() },
+            )
+        }
+    }
+
+    /**
+     * 오답 한 문제를 문서 맨 뒤의 오답 쪽에 담는다. 반 쪽 배치인데 맨 뒤 쪽이 위 칸만 쓴 오답 쪽이면 그 아래 칸에,
+     * 아니면 새 쪽을 맨 뒤에 붙인다. 원문 쪽에는 '오답 #번호' 배지를 붙인다
+     */
+    private fun addWrong(t: DocTab, srcPage: Int, rect: RectF, capture: Bitmap, c: WrongUi.Choice) {
+        val d = t.pdf ?: return
+        val inkDoc = t.ink ?: return
+        if (t.pagesBusy) return
+        val srcList = inkDoc.pages.getOrNull(srcPage) ?: return
+        val last = d.pageCount - 1
+        val lastEntries = inkDoc.wrongEntries(last)
+        val reuse = c.half && lastEntries.size == 1 && lastEntries[0].slot == 1
+        val slot = when {
+            !c.half -> 0
+            reuse -> 2
+            else -> 1
+        }
+        val number = inkDoc.nextWrongNumber()
+        val entry = WrongEntry(number, c.symbol, c.tags, c.title, WrongNote.today(), slot, srcList, RectF(rect))
+        val built = WrongNote.build(entry, capture, rect, d.sizes[srcPage].width)
+        if (reuse) {
+            val adds = listOfNotNull(last to built.header, last to built.body, built.badge?.let { srcPage to it })
+            inkDoc.addWrongToPage(last, entry, adds)
+            docView.scrollToPageY(last, WrongNote.slotTop(slot))
+            toast("오답 #$number 을(를) ${last + 1}쪽 아래 칸에 담았습니다.")
+            return
+        }
+        val index = d.pageCount
+        editPages(t, { src, out -> PdfPages.insert(src, out, index, c.paper, WrongNote.PAGE_W, WrongNote.PAGE_H) },
+            onDone = {
+                built.badge?.let { badge ->
+                    val i = inkDoc.pages.indexOfFirst { it === srcList }
+                    if (i >= 0) inkDoc.add(i, badge)
+                }
+                toast("오답 #$number 을(를) ${index + 1}쪽에 담았습니다. 아래 빈 곳에 풀이를 써 보세요.")
+            }) { pages ->
+            val list = mutableListOf(built.header, built.body)
+            pages.add(index, list)
+            inkDoc.attachWrong(list, entry)
+            index
+        }
+    }
+
+    /** 링크·목록으로 [page]쪽 [y] 높이로 간다 (실행 취소하면 돌아온다) */
+    private fun goToSpot(page: Int, y: Float) {
+        val before = docView.topSpot()
+        val to = Spot(page, y)
+        docView.scrollToPageY(to.page, to.y)
+        if (before != null) current?.ink?.jumped(Spot(before.first, before.second), to)
+    }
+
+    /** 오답노트 목록: 기호·해시태그로 거르고, 누르면 그 오답으로 간다 */
+    private fun showWrongList() {
+        val t = current ?: return
+        val inkDoc = t.ink ?: return
+        wrongUi.showList(
+            provider = { inkDoc.allWrongs() },
+            onGo = { page, e -> goToSpot(page, WrongNote.slotTop(e.slot)) },
+            onSource = { e ->
+                val idx = inkDoc.pages.indexOfFirst { it === e.srcList }
+                if (idx >= 0) goToSpot(idx, ((e.srcRect?.top ?: 0f) - 24f).coerceAtLeast(0f))
+            },
+            onEdit = { e, done -> editWrong(t, e, done) },
+        )
+    }
+
+    /** 담은 오답의 기호·해시태그·제목을 고치고 머리줄과 원문 쪽 배지를 다시 그린다 */
+    private fun editWrong(t: DocTab, e: WrongEntry, done: () -> Unit) {
+        val inkDoc = t.ink ?: return
+        wrongUi.showEdit(e, wrongTagsByUse(inkDoc)) { symbol, tags, title ->
+            e.symbol = symbol
+            e.tags = tags
+            e.title = title
+            for ((i, list) in inkDoc.pages.withIndex()) for (st in list.toList()) {
+                val role = st.role ?: continue
+                if (st.image == null || st.count < 4 || role.length < 3 || role.substring(2).toIntOrNull() != e.number) continue
+                val box = wrongBounds(st)
+                when {
+                    role.startsWith(WrongNote.ROLE_HEADER) -> inkDoc.swapWrongStroke(i, st, WrongNote.rebuildHeader(e, box))
+                    role.startsWith(WrongNote.ROLE_BADGE) -> inkDoc.swapWrongStroke(i, st, WrongNote.rebuildBadge(e, box))
+                }
+            }
+            inkDoc.wrongEdited()
+            done()
+        }
     }
 
     /** 포스트잇 메모 글 고치기: 여러 줄 입력 창 */
@@ -2017,13 +2185,14 @@ class ViewerActivity : AppCompatActivity() {
         val src = t.sourcePdf ?: return
         val snapshot = inkDoc.snapshot()
         val marks = inkDoc.bookmarkedPages()
+        val wrongSave = inkDoc.wrongSave()
         lifecycleScope.launch {
             progress.visibility = View.VISIBLE
             try {
                 withContext(Dispatchers.IO) {
                     val tmp = FileUtil.tempFile(this@ViewerActivity, "out", "pdf")
                     try {
-                        PdfInk.save(src, tmp, snapshot, marks)
+                        PdfInk.save(src, tmp, snapshot, marks, wrongSave)
                         val out = contentResolver.openOutputStream(target, "wt") ?: error("저장 위치를 열 수 없습니다.")
                         out.use { o -> tmp.inputStream().use { it.copyTo(o, 1 shl 16) } }
                     } finally {

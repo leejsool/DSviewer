@@ -28,6 +28,9 @@ import com.tom_roush.pdfbox.pdmodel.interactive.annotation.PDAnnotationLink
 import com.tom_roush.pdfbox.pdmodel.interactive.annotation.PDBorderStyleDictionary
 import com.tom_roush.pdfbox.pdmodel.interactive.annotation.PDAppearanceDictionary
 import com.tom_roush.pdfbox.pdmodel.interactive.annotation.PDAppearanceStream
+import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.destination.PDPageXYZDestination
+import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.outline.PDDocumentOutline
+import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineItem
 import com.tom_roush.pdfbox.util.Matrix
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -47,6 +50,10 @@ object PdfInk {
     private val KEY_NAME: COSName = COSName.getPDFName(KEY)
     /** 북마크한 쪽: 쪽 사전에 이 키를 true로 */
     private val MARK_NAME: COSName = COSName.getPDFName("DSViewerMark")
+    /** 오답노트 쪽: 쪽 사전에 이 키로 그 쪽의 오답 항목들을 한 줄 글로 ([WrongNote.encode]) */
+    private val WRONG_NAME: COSName = COSName.getPDFName("DSViewerWrong")
+    /** 이 앱이 만든 오답노트 목차 항목: 목차 맨 위 단계에 이 키를 true로 (다시 저장할 때 이것만 갈아 끼운다) */
+    private val WRONG_OUTLINE: COSName = COSName.getPDFName("DSViewerWrongOutline")
     /** 글에 단 링크 주소: 글 주석 사전에 이 키로. 다른 앱에서도 눌리도록 따로 넣는 /Link 주석에는 [KEY_NAME]을 [LINK_MARK]로 */
     private val LINK_NAME: COSName = COSName.getPDFName("DSViewerLink")
     private const val LINK_MARK = "link"
@@ -75,14 +82,15 @@ object PdfInk {
 
     /**
      * 이 앱의 필기를 꺼내고, 필기를 뺀 PDF를 [clean]에 저장한다 (화면 렌더링용).
-     * [marks]를 주면 북마크한 쪽 번호(0부터)를 담는다
+     * [marks]를 주면 북마크한 쪽 번호(0부터)를, [wrongs]를 주면 쪽 번호별 오답 정보 글을 담는다
      */
-    fun extract(src: File, clean: File, marks: MutableSet<Int>? = null): List<List<Stroke>> {
+    fun extract(src: File, clean: File, marks: MutableSet<Int>? = null, wrongs: MutableMap<Int, String>? = null): List<List<Stroke>> {
         val result = ArrayList<MutableList<Stroke>>()
         PDDocument.load(src).use { doc ->
             if (doc.isEncrypted) doc.isAllSecurityToBeRemoved = true
             for ((pi, page) in doc.pages.withIndex()) {
                 if (page.cosObject.getBoolean(MARK_NAME, false)) marks?.add(pi)
+                page.cosObject.getString(WRONG_NAME)?.let { wrongs?.put(pi, it) }
                 val strokes = mutableListOf<Stroke>()
                 val annots = page.annotations
                 val keep = ArrayList<PDAnnotation>()
@@ -121,8 +129,11 @@ object PdfInk {
         }
     }
 
-    /** 원본 [src]에 필기를 주석으로 넣고 [marks] 쪽(0부터)에 북마크를 달아 [out]에 저장 */
-    fun save(src: File, out: File, pages: List<List<Stroke>>, marks: Set<Int> = emptySet()) {
+    /**
+     * 원본 [src]에 필기를 주석으로 넣고 [marks] 쪽(0부터)에 북마크를 달아 [out]에 저장.
+     * [wrongs]를 주면 오답 쪽 정보를 쪽 사전에 넣고 PDF 목차에 '오답노트' 항목을 새로 쓴다
+     */
+    fun save(src: File, out: File, pages: List<List<Stroke>>, marks: Set<Int> = emptySet(), wrongs: WrongSave? = null) {
         // 글 외형을 그린 임시 PDF (다 저장한 뒤에 닫는다)
         var texts: TextForms? = null
         try {
@@ -152,12 +163,72 @@ object PdfInk {
                     page.annotations = list
                     if (i in marks) page.cosObject.setBoolean(MARK_NAME, true)
                     else page.cosObject.removeItem(MARK_NAME)
+                    if (wrongs != null) {
+                        val meta = wrongs.metas[i]
+                        if (meta != null) page.cosObject.setString(WRONG_NAME, meta) else page.cosObject.removeItem(WRONG_NAME)
+                    }
                 }
+                // 목차가 잘못돼도 필기 저장은 막지 않는다
+                if (wrongs != null) runCatching { writeWrongOutline(doc, wrongs.outline) }
                 doc.save(out)
             }
         } finally {
             texts?.src?.close()
         }
+    }
+
+    /**
+     * 오답노트 목차: 맨 위 단계에 '오답노트' 하나, 그 아래 기호별 묶음(별 5개 → 1개, 세모, 엑스, 네모, 분류 없음),
+     * 그 아래 '#번호 제목 #태그' 항목이 그 오답 쪽(반 쪽이면 그 칸 위)으로 간다.
+     * 원래 있던 다른 목차 항목은 그대로 두고, 이 앱이 전에 만든 '오답노트' 항목만 갈아 끼운다
+     */
+    private fun writeWrongOutline(doc: PDDocument, items: List<WrongOutlineItem>) {
+        val catalog = doc.documentCatalog
+        val old = catalog.documentOutline
+        val keep = ArrayList<PDOutlineItem>()
+        var hadOurs = false
+        if (old != null) for (item in old.children()) {
+            if (item.cosObject.getBoolean(WRONG_OUTLINE, false)) hadOurs = true else keep.add(item)
+        }
+        if (items.isEmpty() && !hadOurs) return
+        if (items.isEmpty() && keep.isEmpty()) {
+            catalog.documentOutline = null
+            return
+        }
+        val root = PDDocumentOutline()
+        // 남길 항목들을 이웃 관계에서 떼어 새 목차에 차례로 붙인다
+        for (item in keep) {
+            item.cosObject.removeItem(COSName.NEXT)
+            item.cosObject.removeItem(COSName.PREV)
+            item.cosObject.removeItem(COSName.PARENT)
+            root.addLast(item)
+        }
+        if (items.isNotEmpty()) {
+            val top = PDOutlineItem()
+            top.title = "오답노트 (${items.size})"
+            top.cosObject.setBoolean(WRONG_OUTLINE, true)
+            root.addLast(top)
+            val groups = items.groupBy { it.entry.symbol }.toSortedMap(compareBy { WrongSymbol.order(it) })
+            for ((symbol, list) in groups) {
+                val group = PDOutlineItem()
+                group.title = "${WrongSymbol.label(symbol)} (${list.size})"
+                top.addLast(group)
+                for (item in list.sortedBy { it.entry.number }) {
+                    val page = doc.getPage(item.page.coerceIn(0, doc.numberOfPages - 1))
+                    val dest = PDPageXYZDestination()
+                    dest.page = page
+                    dest.top = (page.cropBox.upperRightY - item.top).roundToInt()
+                    val node = PDOutlineItem()
+                    node.title = WrongNote.outlineTitle(item.entry)
+                    node.destination = dest
+                    group.addLast(node)
+                }
+                group.openNode()
+            }
+            top.openNode()
+        }
+        root.openNode()
+        catalog.documentOutline = root
     }
 
     /** 글 상자 외형들: 한 임시 PDF의 쪽들 ([index]는 글 획 → 쪽 번호) */
@@ -746,6 +817,7 @@ object PdfInk {
 
     // 형식: 1|P|ff000000|1.2|x,y,p;x,y,p;...  (도구: P 펜(사인펜), H 형광펜, D 점선 펜, I 그림, T 글, K 테이프 — 그림·글은 네 모서리)
     // 다른 펜 종류는 PenStyle.code: B 볼펜, F 만년필, R 붓펜, C 연필, G 캘리그래피 (예전 버전은 모르는 글자를 사인펜으로 읽는다)
+    // 그림은 끝에 오답노트 이름표(|WH번호 · |WS번호)가 붙을 수 있다
     // 글은 굵기 자리에 글자 크기, 끝에 |글(UTF-8 Base64)|줄 바꾸는 폭|서식(JSON, UTF-8 Base64)을 붙인다
     // 테이프는 끝에 |R(네모) 또는 P(펜)|무늬 이름, 지우개로 뚫은 구멍이 있으면 |x,y,r;x,y,r;... 을 붙인다
     // 채우기(A)는 점들이 윤곽들 (필압 1이 윤곽의 첫 점), 끝에 |무늬 이름, 구멍이 있으면 |x,y,r;... 을 붙인다
@@ -768,6 +840,7 @@ object PdfInk {
             if (i > 0) sb.append(';')
             sb.append(r2(s.x(i))).append(',').append(r2(s.y(i))).append(',').append(r2(s.p(i)))
         }
+        if (s.image != null) s.role?.let { sb.append('|').append(it) }
         s.text?.let {
             sb.append('|').append(Base64.encodeToString(it.text.toByteArray(), Base64.NO_WRAP))
             val rich = !it.rich.isPlain
@@ -831,6 +904,7 @@ object PdfInk {
                     if (v.size == 3) s.withHole(v[0].toFloat(), v[1].toFloat(), v[2].toFloat())?.let { s.copyHolesFrom(it) }
                 }
             }
+            if (parts[1] == "I") s.role = parts.getOrNull(5)?.takeIf { it.isNotEmpty() }
             if (isText) {
                 val txt = String(Base64.decode(parts[5], Base64.NO_WRAP))
                 val rich = parts.getOrNull(7)?.let { RichDoc.fromJson(txt, String(Base64.decode(it, Base64.NO_WRAP))) }
