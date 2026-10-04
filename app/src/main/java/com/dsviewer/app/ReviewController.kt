@@ -28,10 +28,10 @@ internal class ReviewProblem(val entry: WrongEntry, val stroke: Stroke, val sour
 
 /**
  * 복습 한 번. 오답마다 쪽 하나씩 가진 복습용 문서를 새 탭으로 열고, 쪽마다 문제 그림만 맨 위에 둔다.
- * 그 아래 빈 곳에 평소 필기 도구로 바로 풀면 된다 (풀이는 저장하지 않는다).
+ * 그 아래 빈 곳에 평소 필기 도구로 바로 풀면 된다. 풀이는 [saveFile](복습을 시작한 날짜·시간이 이름에 든 PDF)에 자동으로 저장된다.
  * 채점은 끝낼 때 한꺼번에 원래 문서의 오답 항목에 반영한다.
  */
-internal class ReviewSession(val source: DocTab, val problems: List<ReviewProblem>) {
+internal class ReviewSession(val source: DocTab, val problems: List<ReviewProblem>, val saveFile: File) {
     /** 이번에 채점한 결과 */
     val results = IdentityHashMap<WrongEntry, ReviewResult>()
     /** 복습 문서의 쪽(획 목록 자체) → 그 쪽의 오답. 쪽을 옮기거나 지워도 따라간다 */
@@ -70,6 +70,8 @@ internal class ReviewController(
     private val openReviewTab: (ReviewSession, File) -> Unit,
     /** 확인 없이 탭을 닫는다 */
     private val removeTab: (DocTab) -> Unit,
+    /** 이 탭의 마지막 필기까지 곧바로 파일에 적는다 */
+    private val saveNow: (DocTab) -> Unit,
 ) {
     private val density = activity.resources.displayMetrics.density
     private fun dp(v: Int) = (v * density).roundToInt()
@@ -153,10 +155,14 @@ internal class ReviewController(
             return
         }
         val skipped = entries.size - problems.size
-        val session = ReviewSession(source, problems)
         activity.lifecycleScope.launch {
             progress.visibility = View.VISIBLE
             try {
+                val saveFile = withContext(Dispatchers.IO) {
+                    val dir = reviewDir(source)
+                    File(dir, ReviewFiles.unique(ReviewFiles.fileName(source.name, System.currentTimeMillis())) { File(dir, it).exists() })
+                }
+                val session = ReviewSession(source, problems, saveFile)
                 val out = withContext(Dispatchers.IO) {
                     val paper = PdfPages.paperOf(renderPdf, problems[0].sourcePage)
                     FileUtil.tempFile(activity, "review", "pdf").also {
@@ -171,6 +177,20 @@ internal class ReviewController(
                 progress.visibility = View.GONE
             }
         }
+    }
+
+    /**
+     * 복습 풀이를 저장할 폴더: 원본 문서가 있는 폴더 안의 '복습' 폴더. 원본이 앱 임시 저장소에 있거나(저장하지 않은 새 노트)
+     * 폴더에 쓸 수 없으면 문서 폴더의 'DSnote/복습'
+     */
+    private fun reviewDir(source: DocTab): File {
+        val parent = if (source.uri.scheme == "file") source.uri.path?.let(::File)?.parentFile else null
+        if (parent != null && !parent.absolutePath.startsWith(activity.cacheDir.absolutePath) && parent.canWrite()) {
+            File(parent, "복습").let { if (it.isDirectory || it.mkdirs()) return it }
+        }
+        val docs = File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS), "DSnote/복습")
+        if (docs.isDirectory || docs.mkdirs()) return docs
+        return File(activity.getExternalFilesDir(null) ?: activity.filesDir, "복습").apply { mkdirs() }
     }
 
     // ================= 화면 =================
@@ -325,8 +345,9 @@ internal class ReviewController(
             finish(t, apply = false)
             return
         }
-        val msg = if (s.results.isEmpty()) "채점한 문제가 없습니다. 쓴 풀이는 저장되지 않습니다."
-        else "채점한 ${s.results.size}개를 오답노트에 반영합니다. (${summary(s)})\n쓴 풀이는 저장되지 않습니다."
+        val saved = if (wrote) "\n쓴 풀이는 '${s.saveFile.parentFile?.name}' 폴더에 자동 저장됩니다." else ""
+        val msg = if (s.results.isEmpty()) "채점한 문제가 없습니다.$saved"
+        else "채점한 ${s.results.size}개를 오답노트에 반영합니다. (${summary(s)})$saved"
         MaterialAlertDialogBuilder(activity)
             .setTitle("복습을 끝낼까요?")
             .setMessage(msg)
@@ -344,15 +365,24 @@ internal class ReviewController(
         val text = if (applied) summary(s) else null
         if (applied) {
             val today = ReviewSchedule.today()
-            for ((e, r) in s.results) e.grade(r, today)
-            src.ink?.wrongEdited()
+            val ink = src.ink
+            for ((e, r) in s.results) {
+                e.grade(r, today)
+                ink?.rebuildWrongStrokes(e)  // 머리줄에 복습 단계·다음 복습일·정답률을 새로 그린다
+            }
+            ink?.wrongEdited()
         }
+        // 쓴 풀이가 있으면 마지막 필기까지 파일에 적은 뒤 닫는다
+        val wrote = (t.ink?.pages?.sumOf { it.size } ?: 0) > s.problems.size
+        if (wrote) saveNow(t)
         release(s)
         removeTab(t)
+        val savedNote = if (wrote) "복습 풀이를 저장했습니다: ${s.saveFile.parentFile?.name}/${s.saveFile.name}" else null
+        if (text == null && savedNote != null) toast(savedNote)
         if (text != null) {
             MaterialAlertDialogBuilder(activity)
                 .setTitle("복습 끝")
-                .setMessage("$text\n\n복습 기록은 문서를 저장해야 남습니다. 지금 저장할까요?")
+                .setMessage("$text\n" + (savedNote?.let { "$it\n" } ?: "") + "\n복습 기록은 문서를 저장해야 남습니다. 지금 저장할까요?")
                 .setPositiveButton("저장") { _, _ -> saver.save(src, asNew = false) }
                 .setNegativeButton("나중에", null)
                 .show()

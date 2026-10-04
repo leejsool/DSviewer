@@ -1,6 +1,8 @@
 package com.dsviewer.app
 
 import java.time.LocalDate
+import java.util.Locale
+import kotlin.math.roundToInt
 
 /** 복습 채점: 맞음 · 애매 · 틀림 */
 internal enum class ReviewResult(val code: Char) {
@@ -70,6 +72,17 @@ internal object ReviewSchedule {
             d == 1L -> "내일"
             else -> "${d}일 뒤"
         }
+    }
+
+    /**
+     * 오답 쪽 머리줄에 그릴 복습 글: '복습 2단계 · 다음 10.08 · 정답률 67%'. 그림이라 '오늘·내일'처럼 날마다 변하는 말은 못 쓰고
+     * 날짜로 적는다. 한 번도 복습하지 않았으면 null (머리줄에 아무것도 넣지 않는다)
+     */
+    fun headerText(stage: Int, dueDay: Long, history: String): String? {
+        if (stage <= 0) return null
+        val d = LocalDate.ofEpochDay(dueDay)
+        val acc = accuracy(history)?.let { " · 정답률 ${(it * 100).roundToInt()}%" } ?: ""
+        return "복습 ${stage}단계 · 다음 " + String.format(Locale.US, "%d.%02d", d.monthValue, d.dayOfMonth) + acc
     }
 
     // ---- 날짜 ----

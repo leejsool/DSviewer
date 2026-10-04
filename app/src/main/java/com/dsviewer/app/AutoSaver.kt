@@ -3,6 +3,7 @@ package com.dsviewer.app
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -26,6 +27,8 @@ internal class DraftState {
     /** 자동 저장본의 이름표 (문서 주소가 바뀌어도 옛 것을 지울 수 있게) */
     var draftId: String? = null
     var scheduled: Runnable? = null
+    /** 탭을 닫는 중: 탭 목록에서 빠진 뒤에도 마지막 필기를 적는다 */
+    var closing = false
 }
 
 /**
@@ -43,7 +46,6 @@ internal class AutoSaver(
 
     /** 탭의 필기가 바뀔 때마다 (저장돼서 깨끗해졌으면 자동 저장본을 지운다) */
     fun onInkChanged(t: DocTab) {
-        if (t.review != null) return  // 복습 풀이는 저장하지 않는다
         val st = t.draft
         if (t.ink?.dirty != true) {
             discard(t)
@@ -67,6 +69,7 @@ internal class AutoSaver(
 
     /** 저장했거나 '저장 안 함'으로 닫아서 더 필요 없는 자동 저장본을 지운다 */
     fun discard(t: DocTab) {
+        if (t.review != null) return  // 복습 풀이는 파일로 남기는 것이라 지우지 않는다
         val st = t.draft
         st.generation++
         st.scheduled?.let(handler::removeCallbacks)
@@ -77,6 +80,19 @@ internal class AutoSaver(
         st.draftId?.let(store::delete)
         st.draftId = null
         store.delete(store.idOf(t.uri.toString()))
+    }
+
+    /** 탭을 닫기 전에 마지막 필기까지 곧바로 적는다 (복습 풀이처럼 닫아도 남아야 하는 것) */
+    fun saveNow(t: DocTab) {
+        val st = t.draft
+        st.closing = true
+        st.scheduled?.let(handler::removeCallbacks)
+        st.scheduled = null
+        if (st.saving) {  // 쓰는 중이면 끝난 뒤 바로 이어서 적는다
+            st.urgent = true
+            return
+        }
+        if (t.ink?.dirty == true && st.lastChange > st.savedChange) run(t)
     }
 
     private fun schedule(t: DocTab) {
@@ -94,7 +110,7 @@ internal class AutoSaver(
         val st = t.draft
         val inkDoc = t.ink ?: return
         val src = t.sourcePdf ?: return
-        if (!inkDoc.dirty || t !in tabs()) return
+        if (!inkDoc.dirty || (t !in tabs() && !st.closing)) return
         if (t.pagesBusy) {  // 쪽을 넣고 빼는 중에는 PDF가 바뀌고 있으니 잠시 뒤에
             handler.postDelayed({ schedule(t) }, BUSY_RETRY_MS)
             return
@@ -110,8 +126,11 @@ internal class AutoSaver(
         val started = System.currentTimeMillis()
         st.saving = true
         st.urgent = false
+        // 복습 풀이는 자동 저장본이 아니라 그 파일에 바로 쓴다 (같은 폴더의 임시 파일에 다 쓴 뒤 바꿔 끼운다)
+        val reviewFile = t.review?.saveFile
         scope.launch {
-            val tmp = store.tmp(id)
+            val tmp = if (reviewFile != null) File(reviewFile.parentFile, reviewFile.name + ".tmp").also { it.parentFile?.mkdirs() }
+            else store.tmp(id)
             val ok = try {
                 withContext(Dispatchers.IO) { PdfInk.save(src, tmp, snapshot, marks, wrongSave) }
                 true
@@ -121,8 +140,10 @@ internal class AutoSaver(
             }
             val now = System.currentTimeMillis()
             st.saving = false
-            if (ok && gen == st.generation && store.commit(meta.copy(time = now), tmp)) {
-                st.draftId = id
+            val committed = ok && gen == st.generation &&
+                if (reviewFile != null) moveReview(tmp, reviewFile) else store.commit(meta.copy(time = now), tmp)
+            if (committed) {
+                if (reviewFile == null) st.draftId = id
                 st.savedChange = startedChange
             } else {
                 tmp.delete()
@@ -139,6 +160,15 @@ internal class AutoSaver(
                 st.urgent = false
             }
         }
+    }
+
+    /** 다 쓴 임시 파일을 복습 풀이 파일로 바꿔 끼우고 목록에 보이게 한다 */
+    private fun moveReview(tmp: File, target: File): Boolean = try {
+        java.nio.file.Files.move(tmp.toPath(), target.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+        android.media.MediaScannerConnection.scanFile(appContext, arrayOf(target.path), null, null)
+        true
+    } catch (e: Exception) {
+        false
     }
 
     companion object {

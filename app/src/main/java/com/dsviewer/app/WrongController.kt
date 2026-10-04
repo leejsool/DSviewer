@@ -197,15 +197,7 @@ internal class WrongController(
             e.symbol = symbol
             e.tags = tags
             e.title = title
-            for ((i, list) in inkDoc.pages.withIndex()) for (st in list.toList()) {
-                val role = st.role ?: continue
-                if (st.image == null || st.count < 4 || role.length < 3 || role.substring(2).toIntOrNull() != e.number) continue
-                val box = wrongBounds(st)
-                when {
-                    role.startsWith(WrongNote.ROLE_HEADER) -> inkDoc.swapWrongStroke(i, st, WrongNote.rebuildHeader(e, box))
-                    role.startsWith(WrongNote.ROLE_BADGE) -> inkDoc.swapWrongStroke(i, st, WrongNote.rebuildBadge(e, box))
-                }
-            }
+            inkDoc.rebuildWrongStrokes(e)
             inkDoc.wrongEdited()
             done()
         }

@@ -922,11 +922,11 @@ class InkDocument(pageCount: Int) {
     }
 
     /** 오답의 머리줄·배지 그림을 바꿔 끼운다 (분류를 고친 뒤). 실행 취소 기록에는 남기지 않는다 */
-    fun swapWrongStroke(page: Int, old: Stroke, new: Stroke) {
+    fun swapWrongStroke(page: Int, old: Stroke, new: Stroke, notify: Boolean = true) {
         val list = pages.getOrNull(page) ?: return
         val i = list.indexOf(old)
         if (i >= 0) list[i] = new else list.add(new)
-        changed()
+        if (notify) changed()
     }
 
     /** 오답 항목 자체를 고쳤음을 알린다 (저장할 것이 생긴다) */

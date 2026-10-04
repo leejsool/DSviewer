@@ -477,7 +477,7 @@ class ViewerActivity : AppCompatActivity() {
         }
         docs.removeAt(index)
         // 저장했거나 '저장 안 함'으로 닫았으니 자동 저장본은 더 필요 없다 (열다 만 복구 탭은 남겨 둔다)
-        if (t.ink != null) autoSaver.discard(t)
+        if (t.ink != null && t.review == null) autoSaver.discard(t)
         t.review?.let { review.release(it) }
         t.search?.cancel()
         t.handwriting?.onProgress = null
@@ -596,6 +596,8 @@ class ViewerActivity : AppCompatActivity() {
         val inkDoc = InkDocument(d.pageCount)
         strokes?.let { inkDoc.load(it, marks) }
         inkDoc.loadWrongs(wrongs)
+        // 복습한 적 있는 오답은 머리줄에 복습 상태가 보이도록 다시 그린다 (복습 기능 전에 만든 머리줄에는 없다). 저장할 변경으로는 치지 않는다
+        for ((_, e) in inkDoc.allWrongs()) if (e.stage > 0) inkDoc.rebuildWrongStrokes(e, notify = false)
         // 복습용 문서: 쪽마다 문제 그림을 넣는다 (저장하지 않은 필기로 치지 않는다)
         t.review?.populate(inkDoc)
         // 자동 저장본에서 열었으면 아직 저장하지 않은 필기로 (탭에 디스켓 표시, 닫을 때 저장 여부를 묻는다)
@@ -1328,7 +1330,7 @@ class ViewerActivity : AppCompatActivity() {
         ReviewController(
             this, docView, findViewById(R.id.docFrame), findViewById(R.id.reviewBar), findViewById(R.id.reviewRow),
             findViewById(R.id.bottomOverlay), progress, { current }, saver, ::toast, ::openReviewTab, ::removeTab,
-        )
+        ) { autoSaver.saveNow(it) }
     }
 
     private val wrong: WrongController by lazy {

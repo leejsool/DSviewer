@@ -381,11 +381,18 @@ object WrongNote {
         val t = Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Typeface.DEFAULT_BOLD; textSize = 13f; color = 0xFF263238.toInt() }
         val head = "#${e.number}" + if (e.title.isNotBlank()) "  ${e.title.trim()}" else ""
         c.drawText(fit(head, t, leftW), x, 16f, t)
+        // 둘째 줄 오른쪽: 복습 상태(복습한 적이 있으면)와 날짜. 해시태그는 그 왼쪽까지만
+        val review = ReviewSchedule.headerText(e.stage, e.dueDay, e.history)
+        val metaPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 9.5f }
+        val dateW = metaPaint.measureText(e.date)
+        metaPaint.typeface = Typeface.DEFAULT_BOLD
+        val reviewW = review?.let { metaPaint.measureText(it) + 10f } ?: 0f
         if (e.tags.isNotEmpty()) {
             t.typeface = Typeface.DEFAULT
             t.textSize = 10.5f
             t.color = 0xFF1565C0.toInt()
-            c.drawText(fit(tagsText(e.tags), t, widthPt - LINK_W - 9f - 4f), 9f, 30f, t)
+            val maxW = if (review != null) widthPt - dateW - reviewW - 9f - 14f else widthPt - LINK_W - 9f - 4f
+            c.drawText(fit(tagsText(e.tags), t, maxW), 9f, 30f, t)
         }
         t.textAlign = Paint.Align.RIGHT
         if (e.srcList != null) {
@@ -398,6 +405,11 @@ object WrongNote {
         t.textSize = 9.5f
         t.color = 0xFF78909C.toInt()
         c.drawText(e.date, widthPt - 10f, 30f, t)
+        if (review != null) {
+            t.typeface = Typeface.DEFAULT_BOLD
+            t.color = 0xFF00796B.toInt()
+            c.drawText(review, widthPt - 10f - dateW - 10f, 30f, t)
+        }
         return InkImage(bmp, null)
     }
 
@@ -461,6 +473,23 @@ fun InkDocument.wrongLinkAt(page: Int, x: Float, y: Float): Pair<Int, Float>? {
         }
     }
     return null
+}
+
+/**
+ * 오답 [e]의 머리줄과 원문 쪽 배지를 지금 분류·복습 상태대로 다시 그려 바꿔 끼운다
+ * (분류를 고치거나 복습을 채점한 뒤). [notify]가 false면 '저장할 것이 생김'으로 치지 않는다 (문서를 열 때 옛 머리줄을 새로 그리는 경우).
+ * 알림을 켜면 부르는 쪽이 [InkDocument.wrongEdited]로
+ */
+fun InkDocument.rebuildWrongStrokes(e: WrongEntry, notify: Boolean = true) {
+    for ((i, list) in pages.withIndex()) for (st in list.toList()) {
+        val role = st.role ?: continue
+        if (st.image == null || st.count < 4 || role.length < 3 || role.substring(2).toIntOrNull() != e.number) continue
+        val box = wrongBounds(st)
+        when {
+            role.startsWith(WrongNote.ROLE_HEADER) -> swapWrongStroke(i, st, WrongNote.rebuildHeader(e, box), notify)
+            role.startsWith(WrongNote.ROLE_BADGE) -> swapWrongStroke(i, st, WrongNote.rebuildBadge(e, box), notify)
+        }
+    }
 }
 
 /** 원문 쪽 오른쪽 바깥 여백에 붙는 '오답 #n' 배지 획인가 */

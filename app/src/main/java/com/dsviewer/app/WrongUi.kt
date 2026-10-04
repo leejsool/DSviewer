@@ -328,10 +328,19 @@ class WrongUi(private val a: AppCompatActivity, private val prefs: SharedPrefere
             setTextColor(0xFF1565C0.toInt())
         })
         mid.addView(TextView(a).apply {
-            text = "${page + 1}쪽 · ${e.date} · " + ReviewSchedule.label(e.stage, e.dueDay, ReviewSchedule.today()) +
-                (ReviewSchedule.accuracy(e.history)?.let { " · 정답률 ${(it * 100).roundToInt()}%" } ?: "")
+            text = "${page + 1}쪽 · ${e.date}"
             textSize = 11f
             setTextColor(0xFF78909C.toInt())
+        })
+        // 복습 상태: 오늘 복습할 차례면 주황 굵게
+        val today = ReviewSchedule.today()
+        mid.addView(TextView(a).apply {
+            text = ReviewSchedule.label(e.stage, e.dueDay, today) +
+                (ReviewSchedule.accuracy(e.history)?.let { " · 정답률 ${(it * 100).roundToInt()}%" } ?: "")
+            textSize = 12f
+            val due = e.isDue(today)
+            setTextColor(if (due) 0xFFE65100.toInt() else 0xFF00796B.toInt())
+            if (due) setTypeface(typeface, Typeface.BOLD)
         })
         line.addView(mid, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         fun action(text: String, f: () -> Unit) = TextView(a).apply {
