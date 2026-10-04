@@ -916,11 +916,11 @@ class DocumentView @JvmOverloads constructor(
      * (선택 막대는 보통 상자 위에 뜨므로 겹치지 않게 아래를 먼저)
      */
     private fun rotateHandlePos(rect: RectF): Pair<Float, Float> {
-        val off = ROT_OFFSET_DP * density
-        val hr = ROT_HANDLE_DP * density
-        val below = rect.bottom + off
-        val y = if (below + hr <= height - bottomInset - 4f * density || rect.top - off - hr < 0f) below else rect.top - off
-        return rect.centerX() to y
+        val p = SelectionTransform.rotateHandle(
+            floatArrayOf(rect.left, rect.top, rect.right, rect.bottom),
+            ROT_OFFSET_DP * density, ROT_HANDLE_DP * density, height - bottomInset, 4f * density,
+        )
+        return p[0] to p[1]
     }
 
     /** 상자에서 뻗은 줄 끝의 동그란 회전 손잡이 (둥근 화살표 그림) */
@@ -964,30 +964,20 @@ class DocumentView @JvmOverloads constructor(
 
     /** 선택 영역(페이지 좌표)에 옮기기·크기 조절 중인 변화를 반영한다 */
     private fun previewBounds(out: RectF): RectF {
-        out.set(selBounds)
-        if (resizing) {
-            out.set(
-                anchorX + (out.left - anchorX) * scaleK, anchorY + (out.top - anchorY) * scaleKy,
-                anchorX + (out.right - anchorX) * scaleK, anchorY + (out.bottom - anchorY) * scaleKy,
-            )
-            out.sort()
-        }
-        out.offset(moveDx, moveDy)
-        return out
+        val b = SelectionTransform.previewBounds(
+            floatArrayOf(selBounds.left, selBounds.top, selBounds.right, selBounds.bottom),
+            resizing, anchorX, anchorY, scaleK, scaleKy, moveDx, moveDy,
+        )
+        return out.apply { set(b[0], b[1], b[2], b[3]) }
     }
 
     /** 선택 상자(여백 포함)를 화면 좌표로 */
     private fun selectionScreenRect(out: RectF): RectF {
-        val s = scale
-        val pad = 6f * density
         val b = previewBounds(previewRect)
-        out.set(
-            (lefts[selPage] + b.left) * s - offX - pad,
-            (tops[selPage] + b.top) * s - offY - pad,
-            (lefts[selPage] + b.right) * s - offX + pad,
-            (tops[selPage] + b.bottom) * s - offY + pad,
+        val r = SelectionTransform.toScreen(
+            floatArrayOf(b.left, b.top, b.right, b.bottom), lefts[selPage], tops[selPage], scale, offX, offY, 6f * density,
         )
-        return out
+        return out.apply { set(r[0], r[1], r[2], r[3]) }
     }
 
     private fun drawStroke(c: Canvas, st: Stroke, alphaMul: Float = 1f) = drawInkStroke(c, strokePaint, st, alphaMul)
@@ -1563,9 +1553,7 @@ class DocumentView @JvmOverloads constructor(
 
     /** 화면 좌표 점이 회전 중심에서 이루는 각 (도) */
     private fun angleAt(sx: Float, sy: Float): Float {
-        val px = toPageX(selPage, sx)
-        val py = toPageY(selPage, sy)
-        return Math.toDegrees(kotlin.math.atan2((py - rotCy).toDouble(), (px - rotCx).toDouble())).toFloat()
+        return SelectionTransform.angleDeg(toPageX(selPage, sx), toPageY(selPage, sy), rotCx, rotCy)
     }
 
     private fun movePen(sx: Float, sy: Float, p: Float, t: Long = 0L) {
@@ -1591,16 +1579,12 @@ class DocumentView @JvmOverloads constructor(
             return
         }
         if (resizing) {
-            val px = toPageX(selPage, sx)
-            val py = toPageY(selPage, sy)
-            when (resizeAxis) {
-                1 -> scaleK = ((px - anchorX) * resizeDir / startDist).coerceIn(0.05f, 20f)
-                2 -> scaleKy = ((py - anchorY) * resizeDir / startDist).coerceIn(0.05f, 20f)
-                else -> {
-                    scaleK = (hypot(px - anchorX, py - anchorY) / startDist).coerceIn(0.1f, 20f)
-                    scaleKy = scaleK
-                }
-            }
+            val k = SelectionTransform.resizeScale(
+                SelectionTransform.ResizeSetup(anchorX, anchorY, startDist, resizeAxis, resizeDir),
+                toPageX(selPage, sx), toPageY(selPage, sy), scaleK, scaleKy,
+            )
+            scaleK = k[0]
+            scaleKy = k[1]
             invalidate()
             return
         }
@@ -1974,27 +1958,14 @@ class DocumentView @JvmOverloads constructor(
             rotStart = angleAt(sx, sy)
             rotDeg = 0f
             rotating = true
-        } else if (handle in 0..3) {
-            // 모서리 손잡이: 반대쪽 모서리를 기준으로 크기 조절
-            val b = selBounds
-            val left = handle == 0 || handle == 2
-            val top = handle == 0 || handle == 1
-            anchorX = if (left) b.right else b.left
-            anchorY = if (top) b.bottom else b.top
-            startDist = max(hypot((if (left) b.left else b.right) - anchorX, (if (top) b.top else b.bottom) - anchorY), 1f)
-            scaleK = 1f
-            scaleKy = 1f
-            resizeAxis = 0
-            resizing = true
-        } else if (handle >= 4) {
-            // 변 가운데 손잡이: 맞은편 변을 기준으로 위아래로만(4·5) 또는 옆으로만(6·7)
-            val b = selBounds
-            resizeAxis = if (handle <= 5) 2 else 1
-            anchorX = when (handle) { 6 -> b.right; 7 -> b.left; else -> b.centerX() }
-            anchorY = when (handle) { 4 -> b.bottom; 5 -> b.top; else -> b.centerY() }
-            val edge = when (handle) { 4 -> b.top - anchorY; 5 -> b.bottom - anchorY; 6 -> b.left - anchorX; else -> b.right - anchorX }
-            resizeDir = if (edge < 0f) -1f else 1f
-            startDist = max(abs(edge), 1f)
+        } else if (handle >= 0) {
+            // 모서리 손잡이(0~3)는 반대쪽 모서리를, 변 가운데 손잡이(4~7)는 맞은편 변을 기준으로 크기 조절
+            val su = SelectionTransform.resizeSetup(handle, floatArrayOf(selBounds.left, selBounds.top, selBounds.right, selBounds.bottom))
+            anchorX = su.anchorX
+            anchorY = su.anchorY
+            startDist = su.startDist
+            resizeAxis = su.axis
+            resizeDir = su.dir
             scaleK = 1f
             scaleKy = 1f
             resizing = true
@@ -2031,23 +2002,16 @@ class DocumentView @JvmOverloads constructor(
     private fun finishLasso() {
         val inkDoc = ink ?: return
         // 그림 위를 톡 누르면(올가미가 아주 작으면) 그 그림을 고른다
-        var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE; var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
-        for (k in 0 until lassoCount) {
-            minX = min(minX, lasso[k * 2]); maxX = max(maxX, lasso[k * 2])
-            minY = min(minY, lasso[k * 2 + 1]); maxY = max(maxY, lasso[k * 2 + 1])
-        }
-        if (max(maxX - minX, maxY - minY) * scale < 10 * density) {
+        if (SelectionTransform.isTap(SelectionTransform.lassoBounds(lasso, lassoCount), scale, density)) {
             (boxAt(lassoPage, lasso[0], lasso[1]) ?: tapeAt(lassoPage, lasso[0], lasso[1]) ?: fillAt(lassoPage, lasso[0], lasso[1]))
                 ?.let { select(lassoPage, listOf(it)) }
             return
         }
         if (lassoRect || lassoTap) {
             // 두 점을 네 모서리로 바꿔 자유 선택과 같은 규칙으로 고른다
-            val x0 = min(lasso[0], lasso[2]); val y0 = min(lasso[1], lasso[3])
-            val x1 = max(lasso[0], lasso[2]); val y1 = max(lasso[1], lasso[3])
-            if ((x1 - x0) * scale < 4 * density || (y1 - y0) * scale < 4 * density) return
+            val r = SelectionTransform.rectSelection(lasso[0], lasso[1], lasso[2], lasso[3], scale, density) ?: return
             lassoCount = 0
-            addLassoPoint(x0, y0); addLassoPoint(x1, y0); addLassoPoint(x1, y1); addLassoPoint(x0, y1)
+            addLassoPoint(r[0], r[1]); addLassoPoint(r[2], r[1]); addLassoPoint(r[2], r[3]); addLassoPoint(r[0], r[3])
         }
         if (lassoCount < 3) return
         val picked = SelectionHit.pickByLasso(inkDoc.pages[lassoPage], lasso, lassoCount)
