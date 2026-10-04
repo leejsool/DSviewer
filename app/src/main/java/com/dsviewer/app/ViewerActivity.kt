@@ -379,6 +379,8 @@ class ViewerActivity : AppCompatActivity() {
     }
 
     private fun closeTab(t: DocTab) {
+        // 치던 글(과 포스트잇 입력)을 먼저 쪽에 넣는다: 그래야 '저장하지 않은 필기'로 잡혀 물어본다
+        if (current === t) textEditor.commit()
         if (t.ink?.dirty != true) {
             removeTab(t)
             return
