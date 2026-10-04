@@ -2636,20 +2636,11 @@ class DocumentView @JvmOverloads constructor(
     private fun handleAt(sx: Float, sy: Float): Int {
         if (selection.isEmpty()) return -1
         val r = selectionScreenRect(RectF())
-        val reach = HANDLE_TOUCH_DP * density
-        val corners = arrayOf(r.left to r.top, r.right to r.top, r.left to r.bottom, r.right to r.bottom)
-        corners.indices.firstOrNull { hypot(sx - corners[it].first, sy - corners[it].second) <= reach }?.let { return it }
-        val (topBottom, leftRight) = sideHandles(r)
-        val sides = arrayOf(r.centerX() to r.top, r.centerX() to r.bottom, r.left to r.centerY(), r.right to r.centerY())
-        val side = (if (topBottom) listOf(0, 1) else emptyList()) + (if (leftRight) listOf(2, 3) else emptyList())
-        return side.firstOrNull { hypot(sx - sides[it].first, sy - sides[it].second) <= reach * 0.8f }?.let { it + 4 } ?: -1
+        return SelectionHit.handleAt(r.left, r.top, r.right, r.bottom, sx, sy, HANDLE_TOUCH_DP * density)
     }
 
     /** 변 가운데 손잡이를 둘 만큼 상자가 넓은지 (위·아래 변, 왼쪽·오른쪽 변). 작으면 모서리 손잡이와 겹친다 */
-    private fun sideHandles(r: RectF): Pair<Boolean, Boolean> {
-        val need = HANDLE_TOUCH_DP * density * 2.2f
-        return (r.width() >= need) to (r.height() >= need)
-    }
+    private fun sideHandles(r: RectF): Pair<Boolean, Boolean> = SelectionHit.sideHandles(r.width(), r.height(), HANDLE_TOUCH_DP * density)
 
     private fun startLasso(sx: Float, sy: Float) {
         val handle = handleAt(sx, sy)
@@ -2751,12 +2742,7 @@ class DocumentView @JvmOverloads constructor(
             addLassoPoint(x0, y0); addLassoPoint(x1, y0); addLassoPoint(x1, y1); addLassoPoint(x0, y1)
         }
         if (lassoCount < 3) return
-        val picked = inkDoc.pages[lassoPage].filter { st ->
-            if (st.note != null) return@filter false  // 메모는 끌어 옮기고 메모의 단추로 지운다
-            var inside = 0
-            for (k in 0 until st.count) if (inLasso(st.x(k), st.y(k))) inside++
-            inside * 2 >= st.count && inside > 0
-        }
+        val picked = SelectionHit.pickByLasso(inkDoc.pages[lassoPage], lasso, lassoCount)
         if (picked.isEmpty()) return
         select(lassoPage, picked)
     }
@@ -2766,16 +2752,8 @@ class DocumentView @JvmOverloads constructor(
         selPage = page
         selection = picked
         selSet = picked.toHashSet()
-        // RectF.union은 넓이 0인 사각형을 무시하므로(굵기 0인 그림의 모서리) 직접 최소·최대를 잰다
-        var l = Float.MAX_VALUE; var t = Float.MAX_VALUE; var r = -Float.MAX_VALUE; var b = -Float.MAX_VALUE
-        for (st in picked) {
-            val half = st.halfWidth
-            for (k in 0 until st.count) {
-                l = min(l, st.x(k) - half); r = max(r, st.x(k) + half)
-                t = min(t, st.y(k) - half); b = max(b, st.y(k) + half)
-            }
-        }
-        if (l <= r) selBounds.set(l, t, r, b) else selBounds.setEmpty()
+        val box = SelectionHit.boundsOf(picked)
+        if (box != null) selBounds.set(box[0], box[1], box[2], box[3]) else selBounds.setEmpty()
     }
 
     /**
@@ -2784,62 +2762,15 @@ class DocumentView @JvmOverloads constructor(
      */
     private fun objectAt(page: Int, x: Float, y: Float): Stroke? {
         val list = ink?.pages?.getOrNull(page) ?: return null
-        val tol = TAP_SELECT_DP * density / scale
-        list.lastOrNull { st ->
-            when {
-                st.image != null || st.fill != null || st.note != null -> false
-                st.isBox -> st.count >= 4 && boxContains(st, x, y)
-                st.tool == Tool.TAPE && st.tapeContains(x, y) -> true
-                else -> strokeNear(st, x, y, tol)
-            }
-        }?.let { return it }
-        // 채우기는 선 아래에 깔리므로 선 다음에 본다
-        fillAt(page, x, y)?.let { return it }
-        return list.lastOrNull { it.image != null && it.count >= 4 && boxContains(it, x, y) }
+        return SelectionHit.objectAt(list, x, y, TAP_SELECT_DP * density / scale)
     }
 
-    private fun boxContains(st: Stroke, x: Float, y: Float): Boolean {
-        var inside = false
-        var j = 3
-        for (i in 0 until 4) {
-            val xi = st.x(i); val yi = st.y(i); val xj = st.x(j); val yj = st.y(j)
-            if ((yi > y) != (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside
-            j = i
-        }
-        return inside
-    }
-
-    /** 획의 선에서 굵기 절반 + [tol] 안인지 */
-    private fun strokeNear(st: Stroke, x: Float, y: Float, tol: Float): Boolean {
-        if (st.count == 0) return false
-        val r = st.halfWidth + tol
-        if (st.count == 1) return hypot(st.x(0) - x, st.y(0) - y) <= r
-        for (k in 1 until st.count) {
-            val ax = st.x(k - 1); val ay = st.y(k - 1)
-            val dx = st.x(k) - ax; val dy = st.y(k) - ay
-            val len2 = dx * dx + dy * dy
-            val t = if (len2 == 0f) 0f else (((x - ax) * dx + (y - ay) * dy) / len2).coerceIn(0f, 1f)
-            if (hypot(ax + dx * t - x, ay + dy * t - y) <= r) return true
-        }
-        return false
-    }
+    private fun boxContains(st: Stroke, x: Float, y: Float) = SelectionHit.quadContains(st, x, y)
 
     /** 쪽 좌표 (x, y)를 덮고 있는 맨 위 그림·글 ([textOnly]면 글만) */
     private fun boxAt(page: Int, x: Float, y: Float, textOnly: Boolean = false): Stroke? {
         val list = ink?.pages?.getOrNull(page) ?: return null
-        for (k in list.indices.reversed()) {
-            val st = list[k]
-            if (!st.isBox || st.count < 4 || (textOnly && st.text == null)) continue
-            var inside = false
-            var j = 3
-            for (i in 0 until 4) {
-                val xi = st.x(i); val yi = st.y(i); val xj = st.x(j); val yj = st.y(j)
-                if ((yi > y) != (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside
-                j = i
-            }
-            if (inside) return st
-        }
-        return null
+        return SelectionHit.boxAt(list, x, y, textOnly)
     }
 
     /**
@@ -3213,18 +3144,6 @@ class DocumentView @JvmOverloads constructor(
         }
         inkDoc.replace(page, old, st)
         invalidate()
-    }
-
-    private fun inLasso(x: Float, y: Float): Boolean {
-        var inside = false
-        var j = lassoCount - 1
-        for (i in 0 until lassoCount) {
-            val xi = lasso[i * 2]; val yi = lasso[i * 2 + 1]
-            val xj = lasso[j * 2]; val yj = lasso[j * 2 + 1]
-            if ((yi > y) != (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside
-            j = i
-        }
-        return inside
     }
 
     fun clearSelection() {
