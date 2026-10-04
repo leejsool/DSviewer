@@ -282,7 +282,7 @@ class WrongUi(private val a: AppCompatActivity, private val prefs: SharedPrefere
                     (query.isEmpty() || e.title.contains(query, true) || e.tags.any { it.contains(query.trimStart('#'), true) })
             }
             lastShown = shown.map { it.second }
-            countText.text = if (all.isEmpty()) "아직 담은 오답이 없습니다. 삽입 ▸ 오답 담기로 시작하세요." else "${shown.size}개 (전체 ${all.size}개)"
+            countText.text = if (all.isEmpty()) "아직 담은 오답이 없습니다. 오답 ▸ 오답 담기로 시작하세요." else "${shown.size}개 (전체 ${all.size}개)"
             rows.removeAllViews()
             for ((page, e) in shown) rows.addView(row(page, e, go, goSource) { onEdit(e) { render() } })
         }
@@ -360,7 +360,7 @@ class WrongUi(private val a: AppCompatActivity, private val prefs: SharedPrefere
         }
         var dialog: androidx.appcompat.app.AlertDialog? = null
         if (entries.isEmpty()) {
-            root.addView(smallText("아직 담은 오답이 없습니다. 삽입 ▸ 오답 담기로 시작하세요."))
+            root.addView(smallText("아직 담은 오답이 없습니다. 오답 ▸ 오답 담기로 시작하세요."))
         } else {
             root.addView(smallText("오답 ${s.total}개 · 복습한 것 ${s.reviewed}개" + (s.accuracy?.let { " · 최근 정답률 ${pct(it)}%" } ?: ""), bold = true).apply { textSize = 15f })
             root.addView(smallText("오늘 복습할 것 ${s.dueToday}개 · 내일 ${s.dueTomorrow}개 · 일주일 안에 ${s.dueWithinWeek}개").apply { setPadding(0, dp(4), 0, 0) })

@@ -70,6 +70,13 @@
             android:src="@drawable/ic_insert"
             android:tooltipText="삽입" />
 
+        <ImageButton
+            android:id="@+id/actionWrong"
+            style="@style/TabBarAction"
+            android:contentDescription="오답"
+            android:src="@drawable/ic_wrong_note"
+            android:tooltipText="오답 (담기 · 목록 · 복습 · 문제지 · 통계)" />
+
         <!-- 보기: 양쪽 보기 · 페이지 관리 · 쪽 한눈에 보기 · 읽기 모드 · 전체 화면 (켜진 것은 바탕에 동그라미) -->
         <ImageButton
             android:id="@+id/actionTwoPage"

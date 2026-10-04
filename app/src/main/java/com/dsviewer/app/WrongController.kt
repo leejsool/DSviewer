@@ -14,7 +14,7 @@ import java.io.File
 import kotlin.math.roundToInt
 
 /**
- * 삽입 ▸ 오답 담기와 오답노트 목록: 문제 영역을 골라 PDF·필기 그대로 캡처해 문서 맨 뒤 오답 쪽에 담고,
+ * 오답 ▸ 오답 담기와 오답노트 목록: 문제 영역을 골라 PDF·필기 그대로 캡처해 문서 맨 뒤 오답 쪽에 담고,
  * 담은 오답을 목록에서 거르고 찾아가고 고친다. 탭과 화면은 뷰어가 쥐고 있고 여기서는 넘겨받은 것만 쓴다.
  */
 internal class WrongController(
@@ -38,7 +38,7 @@ internal class WrongController(
     /** '문제 영역을 끌어 고르세요' 안내 (고르거나 취소하면 닫는다) */
     private var wrongHint: Snackbar? = null
 
-    /** 삽입 ▸ 오답 담기: 안내를 띄우고, 끌어서 고른 네모 영역을 오답노트에 담는다 */
+    /** 오답 ▸ 오답 담기: 안내를 띄우고, 끌어서 고른 네모 영역을 오답노트에 담는다 */
     fun startPick() {
         textEditor.commit()
         if (current()?.pagesBusy == true) return
@@ -204,7 +204,7 @@ internal class WrongController(
         if (t.pagesBusy) return
         val all = inkDoc.allWrongs().map { it.second }
         if (all.isEmpty()) {
-            toast("담은 오답이 없습니다. 삽입 ▸ 오답 담기로 먼저 담아 주세요.")
+            toast("담은 오답이 없습니다. 오답 ▸ 오답 담기로 먼저 담아 주세요.")
             return
         }
         val today = ReviewSchedule.today()

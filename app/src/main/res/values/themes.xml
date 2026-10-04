@@ -30,11 +30,12 @@
         <item name="android:forceDarkAllowed">false</item>
     </style>
 
-    <!-- 뷰어 탭 줄 오른쪽의 작은 아이콘 버튼 (아이콘 20dp) -->
+    <!-- 뷰어 탭 줄 오른쪽의 작은 아이콘 버튼 (아이콘 20dp, 좌우는 촘촘하게 30dp) -->
     <style name="TabBarAction">
-        <item name="android:layout_width">38dp</item>
+        <item name="android:layout_width">30dp</item>
         <item name="android:layout_height">38dp</item>
-        <item name="android:padding">9dp</item>
+        <item name="android:paddingHorizontal">5dp</item>
+        <item name="android:paddingVertical">9dp</item>
         <item name="android:scaleType">fitCenter</item>
         <item name="android:background">?attr/selectableItemBackgroundBorderless</item>
     </style>

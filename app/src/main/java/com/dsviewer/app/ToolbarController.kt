@@ -34,7 +34,7 @@ internal class ToolbarController(
     private val prefs: SharedPreferences,
     /** 지금 보는 문서의 필기 */
     private val ink: () -> InkDocument?,
-    /** 삽입 ▸ 오답 담기 */
+    /** 오답 ▸ 오답 담기 */
     private val startWrongPick: () -> Unit,
     /** 옵션 창 (⋮ ▸ 옵션, 툴바 손잡이 톡) */
     private val showOptions: (start: Int) -> Unit,
@@ -722,7 +722,7 @@ internal class ToolbarController(
                 item(R.drawable.ic_lasso, "자유 선택", !docView.lassoRect && !docView.lassoTap),
                 item(R.drawable.ic_select_rect, "네모 선택", docView.lassoRect),
                 item(R.drawable.ic_select_tap, "대상 선택", docView.lassoTap),
-                // 선택 방식이 아니라 한 번 하는 동작: 삽입 ▸ 오답 담기와 같다
+                // 선택 방식이 아니라 한 번 하는 동작: 오답 ▸ 오답 담기와 같다
                 item(R.drawable.ic_wrong_note, "오답 담기", false),
             ), separatorBefore = setOf(3)) { i -> if (i == 3) startWrongPick() else setLassoMode(i) }
             Tool.LASER -> {

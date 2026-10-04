@@ -60,6 +60,7 @@ class ViewerActivity : AppCompatActivity() {
     private lateinit var saveButton: View
     private lateinit var overviewButton: ImageButton
     private lateinit var insertButton: View
+    private lateinit var wrongButton: View
     private lateinit var overview: PagePanel
     private lateinit var pagePanel: PagePanel
     private lateinit var pagesButton: ImageButton
@@ -155,6 +156,7 @@ class ViewerActivity : AppCompatActivity() {
         saveButton = findViewById(R.id.actionSave)
         overviewButton = findViewById(R.id.actionOverview)
         insertButton = findViewById(R.id.actionInsert)
+        wrongButton = findViewById(R.id.actionWrong)
 
         docView = findViewById(R.id.docView)
         textEditor = InlineTextEditor(findViewById(R.id.textEditHost), docView)
@@ -669,6 +671,7 @@ class ViewerActivity : AppCompatActivity() {
         overview = PagePanel(findViewById(R.id.overviewPanel), lifecycleScope, overview = true, host = pageHost(true))
         overviewButton.setOnClickListener { toggleOverview() }
         insertButton.setOnClickListener { showInsertMenu(it) }
+        wrongButton.setOnClickListener { showWrongMenu(it) }
         findViewById<View>(R.id.actionMore).setOnClickListener { showMoreMenu(it) }
 
         pagePanel = PagePanel(findViewById(R.id.pagePanel), lifecycleScope, overview = false, host = pageHost(false))
@@ -708,6 +711,7 @@ class ViewerActivity : AppCompatActivity() {
         overviewButton.setEnabledAlpha(inkDoc != null)
         overviewButton.setActive(overview.isShowing)
         insertButton.setEnabledAlpha(inkDoc != null)
+        wrongButton.setEnabledAlpha(inkDoc != null)
         pagesButton.setActive(pagePanel.isShowing)
         twoPageButton.setActive(docView.twoPage)
         readModeButton.setActive(readMode)
@@ -1279,16 +1283,6 @@ class ViewerActivity : AppCompatActivity() {
             .isEnabled = ink != null && !docView.readOnly
         popup.menu.add(0, 7, 1, "포스트잇 메모").setIcon(R.drawable.ic_sticky_note)
             .isEnabled = ink != null && !docView.readOnly
-        popup.menu.add(0, 8, 1, "오답 담기 (영역 선택)").setIcon(R.drawable.ic_wrong_note)
-            .isEnabled = ink != null && !docView.readOnly
-        popup.menu.add(0, 9, 1, "오답노트 목록 · 분류").setIcon(R.drawable.ic_wrong_note)
-            .isEnabled = ink != null
-        popup.menu.add(0, 10, 1, "오답 복습 시작").setIcon(R.drawable.ic_wrong_note)
-            .isEnabled = ink != null && current?.review == null
-        popup.menu.add(0, 13, 1, "오답 문제지 PDF 만들기").setIcon(R.drawable.ic_wrong_note)
-            .isEnabled = ink != null && current?.review == null
-        popup.menu.add(0, 12, 1, "오답 통계").setIcon(R.drawable.ic_wrong_note)
-            .isEnabled = ink != null && current?.review == null
         popup.menu.add(0, 5, 2, "링크").setIcon(R.drawable.ic_link)
         popup.setForceShowIcon(true)
         popup.setOnMenuItemClickListener { item ->
@@ -1303,11 +1297,6 @@ class ViewerActivity : AppCompatActivity() {
                 item.itemId == 5 -> showInsertLink()
                 item.itemId == 6 -> showInsertBlankPage()
                 item.itemId == 7 -> startNotePlacement()
-                item.itemId == 8 -> wrong.startPick()
-                item.itemId == 9 -> wrong.showList()
-                item.itemId == 10 -> wrong.askReview()
-                item.itemId == 12 -> wrong.showStats()
-                item.itemId == 13 -> wrong.askExport()
                 item.itemId == 1 || item.itemId == 3 -> {
                     imageImportMode = if (item.itemId == 3) ImageImportMode.NEW_PAGE else ImageImportMode.IN_PAGE
                     pickImage.launch("image/*")
@@ -1316,6 +1305,31 @@ class ViewerActivity : AppCompatActivity() {
                     pdfInsertAt = at
                     pickPdf.launch(arrayOf("application/pdf"))
                 }
+            }
+            true
+        }
+        popup.show()
+    }
+
+    /** 오답 메뉴: 담기 · 목록 · 복습 · 문제지 · 통계 (예전에는 삽입 메뉴 안에 있었다) */
+    private fun showWrongMenu(anchor: View) {
+        val popup = PopupMenu(this, anchor)
+        val noReview = ink != null && current?.review == null
+        popup.menu.add(0, 1, 0, "오답 담기 (영역 선택)").setIcon(R.drawable.ic_wrong_note)
+            .isEnabled = ink != null && !docView.readOnly
+        popup.menu.add(0, 2, 1, "오답노트 목록 · 분류").setIcon(R.drawable.ic_wrong_note)
+            .isEnabled = ink != null
+        popup.menu.add(0, 3, 2, "오답 복습 시작").setIcon(R.drawable.ic_wrong_note).isEnabled = noReview
+        popup.menu.add(0, 4, 3, "오답 문제지 PDF 만들기").setIcon(R.drawable.ic_wrong_note).isEnabled = noReview
+        popup.menu.add(0, 5, 4, "오답 통계").setIcon(R.drawable.ic_wrong_note).isEnabled = noReview
+        popup.setForceShowIcon(true)
+        popup.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                1 -> wrong.startPick()
+                2 -> wrong.showList()
+                3 -> wrong.askReview()
+                4 -> wrong.askExport()
+                5 -> wrong.showStats()
             }
             true
         }
@@ -2025,6 +2039,7 @@ class ViewerActivity : AppCompatActivity() {
             TopAction("redo", "다시 실행", { redoButton }, R.drawable.ic_redo),
             TopAction("save", "저장", { saveButton }, R.drawable.ic_save),
             TopAction("insert", "삽입", { insertButton }, R.drawable.ic_insert),
+            TopAction("wrong", "오답", { wrongButton }, R.drawable.ic_wrong_note),
             TopAction("twoPage", "양쪽 보기", { twoPageButton }, R.drawable.ic_two_page),
             TopAction("pages", "페이지 관리", { pagesButton }, R.drawable.ic_page_panel),
             TopAction("overview", "쪽 한눈에 보기", { overviewButton }, R.drawable.ic_grid_view),
