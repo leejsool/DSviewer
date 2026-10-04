@@ -8,11 +8,14 @@ import com.tom_roush.pdfbox.pdmodel.common.PDRectangle
 import java.io.File
 
 /** 빈 쪽의 바탕 */
-enum class Paper(val label: String) { PLAIN("흰 바탕"), GRID("모눈"), LINED("줄") }
+enum class Paper(val label: String) {
+    PLAIN("흰 바탕"), GRID("모눈"), LINED("줄"),
+    DOTS("점 격자"), CORNELL("코넬 노트"), MANUSCRIPT("원고지"), ENGLISH("영어 4선"), AXES("좌표평면"), TIMETABLE("시간표"), STAFF("오선지"),
+}
 
 /**
  * 쪽 다루기: 필기용 빈 쪽 만들기 · 문서에 끼워 넣기 · 다른 PDF의 쪽 넣기 · 쪽 지우기.
- * 모눈·줄은 PDF 내용으로 그려 넣으므로 저장한 파일을 다른 앱에서 열어도 그대로 보인다.
+ * 바탕(모눈·줄·점 격자 등)은 PDF 내용으로 그려 넣으므로 저장한 파일을 다른 앱에서 열어도 그대로 보인다.
  */
 object PdfPages {
     /** A4 (포인트) */
@@ -141,7 +144,7 @@ object PdfPages {
             val streams = page.contentStreams.asSequence().map { s -> s.createInputStream().use { it.readBytes() } }.toList()
             if (streams.isEmpty()) return Paper.PLAIN
             val box = page.mediaBox
-            for (paper in listOf(Paper.GRID, Paper.LINED)) {
+            for (paper in Paper.entries.filter { it != Paper.PLAIN }) {
                 val ref = PDDocument().use { tmp ->
                     blankPage(tmp, paper, box.width, box.height).contentStreams.next().createInputStream().use { it.readBytes() }
                 }
@@ -159,6 +162,7 @@ object PdfPages {
                 Paper.GRID -> drawGrid(cs, w, h)
                 Paper.LINED -> drawLines(cs, w, h)
                 Paper.PLAIN -> {}
+                else -> drawLayout(cs, PaperLayout.of(paper, w, h))
             }
         }
         return page
@@ -195,6 +199,30 @@ object PdfPages {
             y -= LINE_STEP
         }
         cs.stroke()
+    }
+
+    /** [PaperLayout]이 계산한 칠할 네모와 선을 그린다 (같은 모양의 선끼리 묶어 한 번에 긋는다) */
+    private fun drawLayout(cs: PDPageContentStream, d: PaperDrawing) {
+        for (f in d.fills) {
+            cs.setNonStrokingColor((f.rgb shr 16 and 0xFF) / 255f, (f.rgb shr 8 and 0xFF) / 255f, (f.rgb and 0xFF) / 255f)
+            cs.addRect(f.x, f.y, f.w, f.h)
+            cs.fill()
+        }
+        val groups = LinkedHashMap<List<Any?>, MutableList<PaperSeg>>()
+        for (sg in d.segs) groups.getOrPut(listOf(sg.rgb, sg.width, sg.dash?.toList(), sg.round)) { ArrayList() }.add(sg)
+        for (list in groups.values) {
+            val first = list[0]
+            setColor(cs, first.rgb, first.width)
+            cs.setLineCapStyle(if (first.round) 1 else 0)
+            cs.setLineDashPattern(first.dash ?: floatArrayOf(), 0f)
+            for (sg in list) {
+                cs.moveTo(sg.x1, sg.y1)
+                cs.lineTo(sg.x2, sg.y2)
+            }
+            cs.stroke()
+        }
+        cs.setLineCapStyle(0)
+        cs.setLineDashPattern(floatArrayOf(), 0f)
     }
 
     private fun setColor(cs: PDPageContentStream, rgb: Int, width: Float) {

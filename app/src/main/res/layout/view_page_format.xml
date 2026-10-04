@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 빈 쪽 서식 고르기: 바탕(흰 바탕·모눈·줄)과 방향(세로·가로)을 그림 단추로.
+<!-- 빈 쪽 서식 고르기: 바탕(흰 바탕·모눈·줄·점 격자 등)은 미리보기 카드로, 방향(세로·가로)은 그림 단추로.
      새 노트 만들기 창(dialog_new_note)과 빈 쪽 넣기 창(dialog_insert_page)이 같이 쓴다 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
@@ -13,35 +13,12 @@
         android:text="바탕"
         android:textAppearance="?attr/textAppearanceLabelLarge" />
 
-    <com.google.android.material.button.MaterialButtonToggleGroup
-        android:id="@+id/paperGroup"
-        android:layout_width="wrap_content"
+    <!-- 바탕 미리보기 카드들 (PaperPicker가 채운다) -->
+    <FrameLayout
+        android:id="@+id/paperPickerHost"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
-        app:selectionRequired="true"
-        app:singleSelection="true">
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/paperPlain"
-            style="@style/PageFormatChoice"
-            android:contentDescription="흰 바탕"
-            android:tooltipText="흰 바탕"
-            app:icon="@drawable/ic_paper_plain" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/paperGrid"
-            style="@style/PageFormatChoice"
-            android:contentDescription="모눈"
-            android:tooltipText="모눈"
-            app:icon="@drawable/ic_paper_grid" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/paperLined"
-            style="@style/PageFormatChoice"
-            android:contentDescription="줄"
-            android:tooltipText="줄"
-            app:icon="@drawable/ic_paper_lined" />
-    </com.google.android.material.button.MaterialButtonToggleGroup>
+        android:layout_marginTop="6dp" />
 
     <TextView
         android:id="@+id/orientLabel"

@@ -146,17 +146,15 @@ class WrongUi(private val a: AppCompatActivity, private val prefs: SharedPrefere
         val layout = radioRow(listOf("한 문제 한 쪽", "반 쪽 (한 쪽에 두 문제)"), if (prefs.getBoolean("wrongHalf", false)) 1 else 0)
         form.root.addView(layout)
         form.root.addView(label("풀이 칸 바탕  (새 쪽을 만들 때)"))
-        val papers = listOf(Paper.LINED, Paper.GRID, Paper.PLAIN)
-        val paper = radioRow(papers.map { it.label }, papers.indexOf(
-            Paper.values().firstOrNull { it.name == prefs.getString("wrongPaper", Paper.LINED.name) } ?: Paper.LINED))
-        form.root.addView(paper)
+        val paper = PaperPicker(a, Paper.entries.firstOrNull { it.name == prefs.getString("wrongPaper", Paper.LINED.name) } ?: Paper.LINED)
+        form.root.addView(paper.view)
 
         MaterialAlertDialogBuilder(a)
             .setTitle("오답노트에 담기")
             .setView(ScrollView(a).apply { addView(form.root) })
             .setPositiveButton("담기") { _, _ ->
                 val half = layout.checkedIndex() == 1
-                val p = papers[paper.checkedIndex()]
+                val p = paper.selected
                 prefs.edit().putBoolean("wrongHalf", half).putString("wrongPaper", p.name).apply()
                 onOk(Choice(form.symbol(), form.tags(), form.title(), half, p))
             }

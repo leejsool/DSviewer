@@ -197,6 +197,7 @@ internal class DocSaver(
                 }
                 if (!overwrite) adoptSavedFile(t, target)
                 inkDoc.markSaved()
+                ReviewIndexStore.update(activity, t.uri.toString(), t.name, inkDoc.allWrongs().map { it.second })
                 Toast.makeText(activity, "'${t.name}' 저장했습니다.", Toast.LENGTH_SHORT).show()
                 if (closeAfterSave === t) {
                     closeAfterSave = null

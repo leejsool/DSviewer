@@ -287,7 +287,9 @@ class ViewerActivity : AppCompatActivity() {
         uri ?: return false
         val writable = intent.getBooleanExtra(EXTRA_WRITABLE, false) ||
             (intent.flags and Intent.FLAG_GRANT_WRITE_URI_PERMISSION) != 0
-        openTab(uri, writable, intent.getBooleanExtra(EXTRA_NEW_NOTE, false), intent.getStringExtra(EXTRA_DRAFT))
+        val startReview = intent.getBooleanExtra(EXTRA_START_REVIEW, false)
+        intent.removeExtra(EXTRA_START_REVIEW)
+        openTab(uri, writable, intent.getBooleanExtra(EXTRA_NEW_NOTE, false), intent.getStringExtra(EXTRA_DRAFT), startReview = startReview)
         intent.removeExtra(EXTRA_DRAFT)
         return true
     }
@@ -319,10 +321,15 @@ class ViewerActivity : AppCompatActivity() {
     }
 
     /** [draftId]가 있으면 탐색기에서 고른 복구할 필기: 그 자동 저장본을 연다 */
-    private fun openTab(uri: Uri, writable: Boolean, newNote: Boolean, draftId: String? = null, review: ReviewSession? = null) {
+    private fun openTab(
+        uri: Uri, writable: Boolean, newNote: Boolean, draftId: String? = null, review: ReviewSession? = null,
+        startReview: Boolean = false,
+    ) {
         docs.firstOrNull { it.uri == uri }?.let {
             // 이미 열려 있는 문서면 그 탭으로
             docTabs.select(docs.indexOf(it), notify = true)
+            if (startReview && it.ink != null) docView.post { wrong.reviewDue() }
+            else if (startReview) it.startReviewOnLoad = true
             return
         }
         if (docs.size >= MAX_TABS) {
@@ -338,6 +345,7 @@ class ViewerActivity : AppCompatActivity() {
             t.name = "복습 · " + FileUtil.baseName(review.source.name)
             t.type = DocType.PDF
         }
+        t.startReviewOnLoad = startReview
         docs.add(t)
         openTabs = docs.size
         openUris = docs.mapTo(HashSet()) { it.uri.toString() }
@@ -598,6 +606,8 @@ class ViewerActivity : AppCompatActivity() {
         inkDoc.loadWrongs(wrongs)
         // 복습한 적 있는 오답은 머리줄에 복습 상태가 보이도록 다시 그린다 (복습 기능 전에 만든 머리줄에는 없다). 저장할 변경으로는 치지 않는다
         for ((_, e) in inkDoc.allWrongs()) if (e.stage > 0) inkDoc.rebuildWrongStrokes(e, notify = false)
+        // 탐색기의 '오늘 복습 N개'가 이 문서의 일정을 알도록 색인에 요약해 둔다
+        if (t.review == null) ReviewIndexStore.update(this, t.uri.toString(), t.name, inkDoc.allWrongs().map { it.second })
         // 복습용 문서: 쪽마다 문제 그림을 넣는다 (저장하지 않은 필기로 치지 않는다)
         t.review?.populate(inkDoc)
         // 자동 저장본에서 열었으면 아직 저장하지 않은 필기로 (탭에 디스켓 표시, 닫을 때 저장 여부를 묻는다)
@@ -631,6 +641,10 @@ class ViewerActivity : AppCompatActivity() {
             syncPagePanel()
             progress.visibility = View.GONE
             updateActions()
+        }
+        if (t.startReviewOnLoad) {
+            t.startReviewOnLoad = false
+            if (current === t) docView.post { wrong.reviewDue() }
         }
     }
 
@@ -883,7 +897,7 @@ class ViewerActivity : AppCompatActivity() {
         val marked = inkDoc.isBookmarked(page)
         popup.menu.add(0, 1, 0, if (marked) "북마크 풀기" else "북마크")
             .setIcon(if (marked) R.drawable.ic_bookmark_border else R.drawable.ic_bookmark)
-        val papers = listOf(Paper.PLAIN to "흰 바탕", Paper.GRID to "모눈", Paper.LINED to "줄")
+        val papers = Paper.entries.map { it to it.label }
         val before = popup.menu.addSubMenu(0, 2, 1, "앞에 빈 쪽 넣기")
         before.item.setIcon(R.drawable.ic_add)
         papers.forEachIndexed { i, (_, label) -> before.add(0, 20 + i, i, label) }
@@ -919,8 +933,8 @@ class ViewerActivity : AppCompatActivity() {
         popup.setOnMenuItemClickListener { item ->
             when (val id = item.itemId) {
                 1 -> inkDoc.setBookmark(page, !marked)
-                in 20..22 -> insertBlankPage(papers[id - 20].first, at = page)
-                in 30..32 -> insertBlankPage(papers[id - 30].first, at = page + 1)
+                in 20 until 20 + papers.size -> insertBlankPage(papers[id - 20].first, at = page)
+                in 30 until 30 + papers.size -> insertBlankPage(papers[id - 30].first, at = page + 1)
                 6 -> copyPage(t, page, cut = false)
                 7 -> copyPage(t, page, cut = true)
                 81 -> pastePage(t, page)
@@ -1358,12 +1372,10 @@ class ViewerActivity : AppCompatActivity() {
         val formatGroup = view.findViewById<MaterialButtonToggleGroup>(R.id.formatGroup)
         val hint = view.findViewById<TextView>(R.id.formatHint)
         val custom = view.findViewById<View>(R.id.customFormat)
-        val paperGroup = custom.findViewById<MaterialButtonToggleGroup>(R.id.paperGroup)
         val orientGroup = custom.findViewById<MaterialButtonToggleGroup>(R.id.orientGroup)
         view.findViewById<TextView>(R.id.posAfter).text = "${page + 1}쪽 다음"
 
         val posIds = mapOf(PdfInsertAt.FIRST to R.id.posFirst, PdfInsertAt.AFTER_CURRENT to R.id.posAfter, PdfInsertAt.LAST to R.id.posLast)
-        val paperIds = mapOf(Paper.PLAIN to R.id.paperPlain, Paper.GRID to R.id.paperGrid, Paper.LINED to R.id.paperLined)
         val lastPos = prefs.getString("blankPos", null)?.let { n -> PdfInsertAt.entries.firstOrNull { it.name == n } } ?: PdfInsertAt.AFTER_CURRENT
         val lastPaper = prefs.getString("blankPaper", null)?.let { n -> Paper.entries.firstOrNull { it.name == n } } ?: Paper.GRID
         // 직접 정하기의 방향은 처음엔 지금 쪽 방향으로
@@ -1371,7 +1383,8 @@ class ViewerActivity : AppCompatActivity() {
         val portrait0 = prefs.getString("blankOrient", null)?.let { it == "portrait" } ?: (curSize.height >= curSize.width)
         posGroup.check(posIds.getValue(lastPos))
         formatGroup.check(if (prefs.getBoolean("blankCustom", false)) R.id.formatCustom else R.id.formatSame)
-        paperGroup.check(paperIds.getValue(lastPaper))
+        val picker = PaperPicker(this, lastPaper)
+        custom.findViewById<android.widget.FrameLayout>(R.id.paperPickerHost).addView(picker.view)
         orientGroup.check(if (portrait0) R.id.orientPortrait else R.id.orientLandscape)
 
         fun indexOf(pos: PdfInsertAt) = when (pos) {
@@ -1385,7 +1398,7 @@ class ViewerActivity : AppCompatActivity() {
             custom.visibility = if (isCustom) View.VISIBLE else View.GONE
             hint.visibility = if (isCustom) View.GONE else View.VISIBLE
             val ref = blankPageRef(d, indexOf(pos()))
-            hint.text = "${ref + 1}쪽과 같은 바탕(흰 바탕·모눈·줄)·크기·방향으로 넣습니다."
+            hint.text = "${ref + 1}쪽과 같은 바탕·크기·방향으로 넣습니다."
         }
         posGroup.addOnButtonCheckedListener { _, _, checked -> if (checked) refresh() }
         formatGroup.addOnButtonCheckedListener { _, _, checked -> if (checked) refresh() }
@@ -1397,7 +1410,7 @@ class ViewerActivity : AppCompatActivity() {
             .setPositiveButton("넣기") { _, _ ->
                 val p = pos()
                 val isCustom = formatGroup.checkedButtonId == R.id.formatCustom
-                val paper = paperIds.entries.first { it.value == paperGroup.checkedButtonId }.key
+                val paper = picker.selected
                 val portrait = orientGroup.checkedButtonId == R.id.orientPortrait
                 val e = prefs.edit().putString("blankPos", p.name).putBoolean("blankCustom", isCustom)
                 if (isCustom) e.putString("blankPaper", paper.name).putString("blankOrient", if (portrait) "portrait" else "landscape")
@@ -2100,6 +2113,8 @@ class ViewerActivity : AppCompatActivity() {
         const val EXTRA_NEW_NOTE = "newNote"
         /** 탐색기에서 고른 복구할 자동 저장본의 이름표 ([DraftMeta.id]) */
         const val EXTRA_DRAFT = "draft"
+        /** 탐색기의 '오늘 복습'에서 연 문서: 열리면 오늘 복습할 오답을 바로 복습한다 */
+        const val EXTRA_START_REVIEW = "startReview"
         /** 다른 앱 화면 가져오기로 찍은 PNG 경로 (새 쪽으로 넣는다) */
         const val EXTRA_CAPTURE = "capture"
         /** true면 찍은 화면에서 네모로 부분을 골라 그 부분만 넣는다 */

@@ -265,6 +265,7 @@ class MainActivity : AppCompatActivity() {
         refresh()
         updateOpenTabs()
         updateRecoverItem()
+        updateReviewItem()
     }
 
     /** '종류' 정렬 순서: PDF · 한글 · 워드 · 파워포인트 · 글 · 그림 */
@@ -302,6 +303,7 @@ class MainActivity : AppCompatActivity() {
                 R.id.action_pick -> { openDoc.launch(arrayOf("*/*")); true }
                 R.id.action_open_tabs -> { backToViewer(); true }
                 R.id.action_recover -> { showRecoverDialog(pendingDrafts()); true }
+                R.id.action_review -> { showReviewDialog(); true }
                 R.id.action_lock_password -> { Locks.changePassword(this); true }
                 else -> false
             }
@@ -761,18 +763,17 @@ class MainActivity : AppCompatActivity() {
     /** 새 노트: 바탕·방향을 골라 빈 쪽 문서를 만들어 연다. 처음 저장할 때 저장 위치를 고른다 */
     private fun newNote() {
         val view = layoutInflater.inflate(R.layout.dialog_new_note, null)
-        val paperGroup = view.findViewById<MaterialButtonToggleGroup>(R.id.paperGroup)
         val orientGroup = view.findViewById<MaterialButtonToggleGroup>(R.id.orientGroup)
-        val paperIds = mapOf(Paper.PLAIN to R.id.paperPlain, Paper.GRID to R.id.paperGrid, Paper.LINED to R.id.paperLined)
         val lastPaper = prefs.getString("notePaper", null)?.let { n -> Paper.entries.firstOrNull { it.name == n } } ?: Paper.GRID
-        paperGroup.check(paperIds.getValue(lastPaper))
+        val picker = PaperPicker(this, lastPaper)
+        view.findViewById<android.widget.FrameLayout>(R.id.paperPickerHost).addView(picker.view)
         orientGroup.check(if (prefs.getBoolean("notePortrait", false)) R.id.orientPortrait else R.id.orientLandscape)
         view.findViewById<TextView>(R.id.orientLabel).text = "방향 (A4)"
         MaterialAlertDialogBuilder(this)
             .setTitle("새 노트")
             .setView(view)
             .setPositiveButton("만들기") { _, _ ->
-                val paper = paperIds.entries.first { it.value == paperGroup.checkedButtonId }.key
+                val paper = picker.selected
                 val portrait = orientGroup.checkedButtonId == R.id.orientPortrait
                 prefs.edit().putString("notePaper", paper.name).putBoolean("notePortrait", portrait).apply()
                 createNote(paper, portrait)
@@ -807,7 +808,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun openViewer(uri: Uri, newNote: Boolean = false) {
+    private fun openViewer(uri: Uri, newNote: Boolean = false, startReview: Boolean = false) {
         val writable = if (newNote) false else if (uri.scheme == "file") File(uri.path ?: "").canWrite()
         else contentResolver.persistedUriPermissions.any { it.uri == uri && it.isWritePermission }
         // 뷰어가 이미 떠 있으면 그 뷰어에 새 탭으로 연다
@@ -818,6 +819,7 @@ class MainActivity : AppCompatActivity() {
                 .putExtra(ViewerActivity.EXTRA_WRITABLE, writable)
                 .putExtra(ViewerActivity.EXTRA_FROM_BROWSER, true)
                 .putExtra(ViewerActivity.EXTRA_NEW_NOTE, newNote)
+                .putExtra(ViewerActivity.EXTRA_START_REVIEW, startReview)
         )
         setPickMode(false)
     }
@@ -831,6 +833,43 @@ class MainActivity : AppCompatActivity() {
     private fun setPickMode(on: Boolean) {
         pickMode = on
         toolbar.subtitle = if (on) "새 탭에 열 문서를 고르세요" else null
+    }
+
+    // ================= 오늘 복습 =================
+
+    /** 오늘 복습할 오답이 있는 문서들과 그 개수 (지워진 파일은 뺀다) */
+    private fun dueDocs(): List<Pair<ReviewIndexItem, Int>> =
+        ReviewIndex.dueItems(ReviewIndexStore.load(this), ReviewSchedule.today()).filter { (item, _) ->
+            !item.uri.startsWith("file:") || Uri.parse(item.uri).path?.let { File(it).exists() } == true
+        }
+
+    private fun updateReviewItem() {
+        toolbar.menu.findItem(R.id.action_review)?.apply {
+            val n = dueDocs().sumOf { it.second }
+            isVisible = n > 0 && !pickMode
+            title = "오늘 복습 $n"
+        }
+    }
+
+    /** 문서별로 오늘 복습할 오답 수를 보이고, 고르면 그 문서를 열어 바로 복습을 시작한다 */
+    private fun showReviewDialog() {
+        val due = dueDocs()
+        if (due.isEmpty()) {
+            android.widget.Toast.makeText(this, "오늘 복습할 오답이 없습니다.", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        val items = due.map { (item, n) ->
+            val name = if (Locks.isLocked(this, item.uri)) "잠긴 문서" else item.name
+            "$name\n오답 ${n}개"
+        }.toTypedArray()
+        MaterialAlertDialogBuilder(this)
+            .setTitle("오늘 복습할 오답 ${due.sumOf { it.second }}개")
+            .setItems(items) { _, i ->
+                val uri = due[i].first.uri
+                unlockThen(uri) { openViewer(Uri.parse(uri), startReview = true) }
+            }
+            .setNegativeButton("닫기", null)
+            .show()
     }
 
     // ================= 자동 저장 복구 =================

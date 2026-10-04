@@ -88,6 +88,7 @@ object FileOps {
         if (ok) {
             Recents.remove(ctx, uri.toString())
             Locks.forget(ctx, uri.toString())
+            ReviewIndexStore.remove(ctx, uri.toString())
         }
         return ok
     }
@@ -95,6 +96,7 @@ object FileOps {
     private fun relink(ctx: Context, old: String, new: String, name: String) {
         Recents.relink(ctx, old, new, name)
         Locks.relink(ctx, old, new)
+        ReviewIndexStore.relink(ctx, old, new, name)
     }
 
     /** 미디어 색인('모든 문서' 탭이 쓰는 목록)에 알린다. 없어진 파일은 색인에서 빠진다 */

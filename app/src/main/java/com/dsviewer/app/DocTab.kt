@@ -29,6 +29,8 @@ internal class DocTab(var uri: Uri, var canOverwrite: Boolean, var isNewNote: Bo
     var handwriting: HandwritingIndex? = null
     /** 오답 복습용 탭이면 그 복습 (풀이는 저장하지 않고 자동 저장도 하지 않는다) */
     var review: ReviewSession? = null
+    /** 탐색기의 '오늘 복습'에서 열었으면 다 열린 뒤 바로 오늘 복습할 오답을 복습한다 */
+    var startReviewOnLoad = false
 }
 
 /** 쪽을 넣고 빼기 전·후의 PDF 파일과 그때 보던 쪽 (실행 취소하면 이 상태로 돌아간다) */
