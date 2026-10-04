@@ -1314,7 +1314,7 @@ class DocumentView @JvmOverloads constructor(
         if (penPointerId != -1) {
             // 손가락 필기 중 손바닥처럼 넓게 닿거나, 여러 손가락이 한꺼번에 닿으면 손바닥 지우개로 바꾼다
             if (palmReady() && (action == MotionEvent.ACTION_MOVE || action == MotionEvent.ACTION_POINTER_DOWN)) {
-                if (anyPalm(ev) || (ev.pointerCount >= 3 && ev.eventTime - ev.downTime < PALM_GATHER_MS)) {
+                if (anyPalm(ev) || PalmMath.gathered(ev.pointerCount, ev.eventTime - ev.downTime)) {
                     switchToPalm(ev)
                     return true
                 }
@@ -1375,7 +1375,7 @@ class DocumentView @JvmOverloads constructor(
         // 두 손가락으로 넘기기를 막 시작했는데 곧바로 손가락이 더 닿거나 손바닥이면 손바닥 지우기.
         // 이미 넘기기·확대 중이어도 손바닥만큼 넓은 것이 닿으면 (손이 닿는 면이 점점 넓어지며 시작하는 경우) 확대를 멈추고 지우기로
         if (fingerDrawing && penPointerId == -1 && palmToolOk() &&
-            ((action == MotionEvent.ACTION_POINTER_DOWN && ev.eventTime - ev.downTime < PALM_GATHER_MS && ev.pointerCount >= 3) ||
+            ((action == MotionEvent.ACTION_POINTER_DOWN && PalmMath.gathered(ev.pointerCount, ev.eventTime - ev.downTime)) ||
                 ((action == MotionEvent.ACTION_POINTER_DOWN || action == MotionEvent.ACTION_MOVE) && ev.pointerCount >= 2 && anyPalm(ev)))
         ) {
             cancelFingerGesture(ev)
@@ -1412,17 +1412,17 @@ class DocumentView @JvmOverloads constructor(
 
     /** 보통 손가락이 닿는 크기 (최근 손가락 획들의 가운뎃값, 아직 모르면 9mm) */
     private fun fingerSize(): Float {
-        if (fingerSizes.size >= 3) return fingerSizes.sorted()[fingerSizes.size / 2]
-        return 9f * resources.displayMetrics.xdpi / 25.4f
+        return PalmMath.medianSize(fingerSizes, PalmMath.mm(resources.displayMetrics.xdpi, 9f))
     }
 
     /** 닿은 것 중에 손바닥만큼 넓은 것이 있는지 (보통 손가락의 2.5배 넘게) */
     private fun anyPalm(ev: MotionEvent): Boolean {
-        val limit = max(fingerSize() * PALM_RATIO, 3f * resources.displayMetrics.xdpi / 25.4f)
-        for (i in 0 until ev.pointerCount) {
-            if (ev.getToolType(i) == MotionEvent.TOOL_TYPE_FINGER && ev.getTouchMajor(i) >= limit) return true
-        }
-        return false
+        val n = ev.pointerCount
+        val limit = PalmMath.palmLimit(fingerSize(), resources.displayMetrics.xdpi)
+        return PalmMath.anyPalm(
+            BooleanArray(n) { ev.getToolType(it) == MotionEvent.TOOL_TYPE_FINGER },
+            FloatArray(n) { ev.getTouchMajor(it) }, n, limit,
+        )
     }
 
     /** 그리던 손가락 획을 버리고 손바닥 지우개로 */
@@ -1444,28 +1444,19 @@ class DocumentView @JvmOverloads constructor(
      * 반지름은 닿은 범위를 다 덮도록. [leaving]은 막 떨어지는 손가락 (빼고 셈)
      */
     private fun palmMove(ev: MotionEvent, leaving: Int, first: Boolean = false) {
-        var n = 0
-        var cx = 0f
-        var cy = 0f
-        for (i in 0 until ev.pointerCount) {
-            if (i == leaving) continue
-            cx += ev.getX(i); cy += ev.getY(i); n++
-        }
-        if (n == 0) return
-        cx /= n
-        cy /= n
-        var r = 0f
-        for (i in 0 until ev.pointerCount) {
-            if (i == leaving) continue
-            r = max(r, hypot(ev.getX(i) - cx, ev.getY(i) - cy) + ev.getTouchMajor(i) / 2f)
-        }
-        palmRadius = r.coerceIn(PALM_MIN_DP * density, PALM_MAX_DP * density)
+        val n = ev.pointerCount
+        val c = PalmMath.cover(
+            FloatArray(n) { ev.getX(it) }, FloatArray(n) { ev.getY(it) }, FloatArray(n) { ev.getTouchMajor(it) }, n, leaving,
+        ) ?: return
+        val cx = c[0]
+        val cy = c[1]
+        palmRadius = PalmMath.clampRadius(c[2], PalmMath.MIN_DP * density, PalmMath.MAX_DP * density)
         if (first) {
             lastSx = cx
             lastSy = cy
         }
         val dist = hypot(cx - lastSx, cy - lastSy)
-        val steps = max(1, (dist / (palmRadius / 2f)).toInt())
+        val steps = PalmMath.steps(dist, palmRadius / 2f)
         for (k in (if (first) 0 else 1)..steps) {
             val x = lastSx + (cx - lastSx) * k / steps
             val y = lastSy + (cy - lastSy) * k / steps
@@ -1605,7 +1596,7 @@ class DocumentView @JvmOverloads constructor(
             // 지우개는 움직인 경로 사이도 촘촘히 검사
             val dist = hypot(sx - lastSx, sy - lastSy)
             val step = eraserRadiusDp * density / 2f
-            val n = max(1, (dist / step).toInt())
+            val n = PalmMath.steps(dist, step)
             for (k in 1..n) {
                 val x = lastSx + (sx - lastSx) * k / n
                 val y = lastSy + (sy - lastSy) * k / n
@@ -1865,8 +1856,7 @@ class DocumentView @JvmOverloads constructor(
         }
         // 손바닥이 아니었던 손가락 획으로 보통 손가락 크기를 익힌다
         if (penIsFinger && !palmErasing && penMaxMajor > 0f) {
-            fingerSizes.addLast(penMaxMajor)
-            while (fingerSizes.size > 15) fingerSizes.removeFirst()
+            PalmMath.remember(fingerSizes, penMaxMajor)
         }
         penMaxMajor = 0f
         erased.clear()
@@ -2370,14 +2360,8 @@ class DocumentView @JvmOverloads constructor(
         private const val TAP_SLOP_DP = 12f
         /** 테이프를 톡 누른 것으로 보는 시간 (ms) */
         private const val TAP_MS = 500L
-        /** 손바닥: 보통 손가락보다 이만큼 넓게 닿으면 */
-        private const val PALM_RATIO = 2.5f
         /** 긁어서 지우기: 긁은 선이 아래 필기를 적어도 이만큼 가로질러야 지운다 */
         private const val SCRIBBLE_CROSSINGS = 3
-        /** 손바닥: 처음 닿고 이 안에 손가락 셋 넘게 닿으면 (ms) */
-        private const val PALM_GATHER_MS = 250L
-        private const val PALM_MIN_DP = 24f
-        private const val PALM_MAX_DP = 220f
         /** 회전 손잡이 반지름과 상자에서 떨어진 거리 */
         private const val ROT_HANDLE_DP = 14f
         private const val ROT_OFFSET_DP = 34f
