@@ -154,7 +154,7 @@ class DocumentView @JvmOverloads constructor(
             relayout()
         }
     /** 지금 두 쪽씩 놓여 있는지 */
-    private var spread = false
+    private val spread get() = pageLayout.spread
     /** 글자 찾기 결과: 쪽마다 강조할 상자 (쪽 좌표) */
     var searchHits: Map<Int, List<RectF>> = emptyMap()
         set(v) {
@@ -242,11 +242,13 @@ class DocumentView @JvmOverloads constructor(
     private var doc: PdfDoc? = null
     private var ink: InkDocument? = null
     private var sizes: List<SizeF> = emptyList()
-    private var tops = FloatArray(0)
-    private var lefts = FloatArray(0)
-    private var docW = 0f
-    private var docH = 0f
     private val gap = 10f
+    /** 쪽 배치와 '지금 보이는 쪽' 계산 (순수 계산이라 PageLayout에서) */
+    private val pageLayout = PageLayout(gap)
+    private val tops get() = pageLayout.tops
+    private val lefts get() = pageLayout.lefts
+    private val docW get() = pageLayout.docW
+    private val docH get() = pageLayout.docH
     /** 쪽마다 오른쪽에 붙는 바깥 여백 (pt). 배지·포스트잇이 있는 문서만 [PAGE_SIDE_MARGIN] */
     private var rightMargin = 0f
 
@@ -493,29 +495,10 @@ class DocumentView @JvmOverloads constructor(
 
     /** 쪽을 한 줄에 하나(양쪽 보기면 둘)씩 쌓아 [tops]·[lefts]·[docW]·[docH]를 정한다 */
     private fun layoutPages() {
-        val n = sizes.size
-        spread = twoPage && width > height && n > 1
-        tops = FloatArray(n)
-        lefts = FloatArray(n)
-        val per = if (spread) 2 else 1
-        val rows = (0 until n step per).map { it until min(n, it + per) }
-        // 줄 너비 = 쪽 너비의 합 + 쪽 사이 여백. 문서 너비는 가장 넓은 줄에 맞춘다
-        // 쪽마다 오른쪽에 바깥 여백(rightMargin)이 붙는다
-        val rowW = rows.map { r -> r.sumOf { (sizes[it].width + rightMargin).toDouble() }.toFloat() + gap * (r.count() - 1) }
-        docW = (rowW.maxOrNull() ?: 600f) + gap * 2
-        var y = gap
-        for ((k, r) in rows.withIndex()) {
-            var x = (docW - rowW[k]) / 2f
-            var rowH = 0f
-            for (i in r) {
-                lefts[i] = x
-                tops[i] = y
-                x += sizes[i].width + rightMargin + gap
-                rowH = max(rowH, sizes[i].height)
-            }
-            y += rowH + gap
-        }
-        docH = y
+        pageLayout.layout(
+            FloatArray(sizes.size) { sizes[it].width }, FloatArray(sizes.size) { sizes[it].height },
+            rightMargin, twoPage, width, height,
+        )
     }
 
     /** 쪽 배치를 다시 하고, 보던 쪽이 화면 위에 오도록 */
@@ -605,23 +588,8 @@ class DocumentView @JvmOverloads constructor(
         return out
     }
 
-    private fun visibleRange(): IntRange {
-        if (sizes.isEmpty()) return IntRange.EMPTY
-        val s = scale
-        val topDoc = offY / s
-        val bottomDoc = (offY + height) / s
-        var first = -1
-        var last = -1
-        for (i in sizes.indices) {
-            val t = tops[i]
-            val b = t + sizes[i].height
-            if (b >= topDoc && t <= bottomDoc) {
-                if (first < 0) first = i
-                last = i
-            } else if (first >= 0 && t > bottomDoc) break
-        }
-        return if (first < 0) IntRange.EMPTY else first..last
-    }
+    private fun visibleRange(): IntRange =
+        if (sizes.isEmpty()) IntRange.EMPTY else pageLayout.visibleRange(offY, scale, height.toFloat())
 
     /**
      * 배지·포스트잇이 처음 생기면 모든 쪽에 바깥 여백을 붙인다 (보던 자리는 그대로).
@@ -646,47 +614,15 @@ class DocumentView @JvmOverloads constructor(
      * 화면 좌표 → (페이지, 페이지 x, 페이지 y). 페이지 사이 여백은 가까운 페이지로.
      * [wide]면 쪽 오른쪽 바깥 여백도 그 쪽으로 (배지·포스트잇을 누를 때). 아니면 필기할 수 없는 곳이라 null
      */
-    private fun hitPage(sx: Float, sy: Float, wide: Boolean = false): Triple<Int, Float, Float>? {
-        val s = scale
-        val dx = (sx + offX) / s
-        val dy = (sy + offY) / s
-        // 높이가 맞는 쪽 가운데 가로로 가장 가까운 쪽 (양쪽 보기면 한 줄에 둘)
-        var best = -1
-        var bestDist = Float.MAX_VALUE
-        for (i in sizes.indices) {
-            val t = tops[i] - gap / 2
-            val b = tops[i] + sizes[i].height + gap / 2
-            if (dy !in t..b) {
-                if (best >= 0 && t > dy) break
-                continue
-            }
-            val px = dx - lefts[i]
-            val dist = if (px < 0) -px else max(0f, px - sizes[i].width - (if (wide) rightMargin else 0f))
-            if (dist < bestDist) { best = i; bestDist = dist }
-        }
-        if (best < 0 || bestDist > gap) return null
-        return Triple(best, dx - lefts[best], dy - tops[best])
-    }
+    private fun hitPage(sx: Float, sy: Float, wide: Boolean = false): Triple<Int, Float, Float>? =
+        if (sizes.isEmpty()) null else pageLayout.hitPage(offX, offY, scale, sx, sy, wide)
 
     /** 화면 가운데 줄의 첫 쪽 (문서가 없으면 -1) */
-    private fun rowFirstPage(): Int {
-        if (sizes.isEmpty()) return -1
-        val centerDoc = (offY + height / 2f) / scale
-        return sizes.indices.firstOrNull { tops[it] + sizes[it].height + gap / 2 >= centerDoc } ?: sizes.lastIndex
-    }
+    private fun rowFirstPage(): Int = if (sizes.isEmpty()) -1 else pageLayout.rowFirstPage(offY, scale, height.toFloat())
 
     /** 화면 가운데에 걸친 쪽 (문서가 없으면 -1). 양쪽 보기면 그 줄에서 화면 가운데에 걸친 쪽 */
-    fun currentPage(): Int {
-        val first = rowFirstPage()
-        if (!spread || first < 0) return first
-        val cx = (offX + width / 2f) / scale
-        var page = first
-        for (i in first + 1 until sizes.size) {
-            if (tops[i] != tops[first]) break
-            if (cx >= lefts[i]) page = i
-        }
-        return page
-    }
+    fun currentPage(): Int =
+        if (sizes.isEmpty()) -1 else pageLayout.currentPage(offX, offY, scale, width.toFloat(), height.toFloat())
 
     /** 양쪽 보기로 두 쪽씩 놓여 있는지 */
     val isSpread get() = spread
@@ -703,12 +639,7 @@ class DocumentView @JvmOverloads constructor(
     }
 
     /** 화면 맨 위에 걸친 (쪽, 그 쪽 안 높이). 링크로 옮기기 전 자리를 기억해 둘 때 ([scrollToPageY]로 돌아온다) */
-    fun topSpot(): Pair<Int, Float>? {
-        if (sizes.isEmpty()) return null
-        val docY = (offY + topInset) / scale
-        val page = sizes.indices.lastOrNull { tops[it] - gap / 2 <= docY } ?: 0
-        return page to docY - tops[page]
-    }
+    fun topSpot(): Pair<Int, Float>? = if (sizes.isEmpty()) null else pageLayout.topSpot(offY, topInset, scale)
 
     /** 쪽 좌표 (x, y)에 있는 링크 단 글의 주소 (맨 위 것) */
     fun inkLinkAt(page: Int, x: Float, y: Float): String? = boxAt(page, x, y, textOnly = true)?.link
