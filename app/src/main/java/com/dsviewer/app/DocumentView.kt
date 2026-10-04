@@ -2343,9 +2343,11 @@ class DocumentView @JvmOverloads constructor(
             return true
         }
 
-        // 두 손가락으로 넘기기를 막 시작했는데 곧바로 손가락이 더 닿거나 손바닥이면 손바닥 지우기
-        if (fingerDrawing && penPointerId == -1 && palmToolOk() && action == MotionEvent.ACTION_POINTER_DOWN &&
-            ev.eventTime - ev.downTime < PALM_GATHER_MS && (ev.pointerCount >= 3 || anyPalm(ev))
+        // 두 손가락으로 넘기기를 막 시작했는데 곧바로 손가락이 더 닿거나 손바닥이면 손바닥 지우기.
+        // 이미 넘기기·확대 중이어도 손바닥만큼 넓은 것이 닿으면 (손이 닿는 면이 점점 넓어지며 시작하는 경우) 확대를 멈추고 지우기로
+        if (fingerDrawing && penPointerId == -1 && palmToolOk() &&
+            ((action == MotionEvent.ACTION_POINTER_DOWN && ev.eventTime - ev.downTime < PALM_GATHER_MS && ev.pointerCount >= 3) ||
+                ((action == MotionEvent.ACTION_POINTER_DOWN || action == MotionEvent.ACTION_MOVE) && ev.pointerCount >= 2 && anyPalm(ev)))
         ) {
             cancelFingerGesture(ev)
             listener?.onPenDown()

@@ -165,20 +165,16 @@ class ViewerActivity : AppCompatActivity() {
     private var captureTab: DocTab? = null
     private var captureIndex = 0
 
-    /** 알림 권한(안드로이드 13부터)을 받으면 이어서 화면 전송 허락을 묻는다. '이 화면 가져오기' 단추가 알림에 있어서 */
-    private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
-        if (ok) requestProjection()
-        else {
-            captureTab = null
-            toast("알림을 허용해야 알림창의 '이 화면 가져오기' 단추로 화면을 가져올 수 있습니다.")
-        }
+    /** '다른 앱 위에 표시' 권한 설정에서 돌아오면 이어서 화면 전송 허락을 묻는다 */
+    private val overlayPermission = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        if (android.provider.Settings.canDrawOverlays(this)) requestProjection()
+        else toast("'다른 앱 위에 표시'를 허용해야 화면을 가져올 수 있습니다.")
     }
 
     private val projectionConsent = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
         val data = r.data
         if (r.resultCode != RESULT_OK || data == null) { captureTab = null; return@registerForActivityResult }
         CaptureService.start(this, r.resultCode, data)
-        Toast.makeText(this, "가져올 화면을 띄운 뒤 알림창을 내려 '이 화면 가져오기'를 누르세요.", Toast.LENGTH_LONG).show()
         // 뷰어를 뒤로 보내 바로 전에 쓰던 앱이 보이게 한다
         moveTaskToBack(true)
     }
@@ -334,7 +330,9 @@ class ViewerActivity : AppCompatActivity() {
     private fun handleIntent(intent: Intent): Boolean {
         intent.getStringExtra(EXTRA_CAPTURE)?.let { path ->
             intent.removeExtra(EXTRA_CAPTURE)
-            insertCapturedPage(File(path))
+            val region = intent.getBooleanExtra(EXTRA_CAPTURE_REGION, false)
+            intent.removeExtra(EXTRA_CAPTURE_REGION)
+            if (region) pickCaptureRegion(File(path)) else insertCapturedPage(File(path))
             return true
         }
         if (intent.getBooleanExtra(EXTRA_FROM_BROWSER, false)) fromBrowser = true
@@ -1636,17 +1634,25 @@ class ViewerActivity : AppCompatActivity() {
 
     // ================= 다른 앱 화면 가져오기 =================
 
-    /** 화면 전송 허락을 받고 알림에 '이 화면 가져오기' 단추를 둔다. 안드로이드 13부터는 알림 권한부터 */
+    /** 화면 전송 허락을 받고 떠 있는 캡처 단추(화면 전체 · 일부분)를 띄운다. 처음엔 '다른 앱 위에 표시' 권한부터 */
     private fun startScreenCapture() {
         val t = current ?: return
         val d = t.pdf ?: return
         if (t.pagesBusy) return
         captureTab = t
         captureIndex = docView.currentPage().coerceIn(0, d.pageCount - 1) + 1
-        if (android.os.Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
-        ) notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-        else requestProjection()
+        if (android.provider.Settings.canDrawOverlays(this)) { requestProjection(); return }
+        MaterialAlertDialogBuilder(this)
+            .setTitle("다른 앱 화면 가져오기")
+            .setMessage("다른 앱 위에 캡처 단추를 띄우려면 'DSnote'의 '다른 앱 위에 표시'를 허용해 주세요.\n허용한 뒤 뒤로 가기를 누르면 이어서 진행합니다.")
+            .setPositiveButton("설정 열기") { _, _ ->
+                val pkg = Uri.parse("package:$packageName")
+                runCatching { overlayPermission.launch(Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkg)) }
+                    .recoverCatching { overlayPermission.launch(Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION)) }
+                    .onFailure { toast("이 기기에서는 권한 설정 화면을 열 수 없습니다.") }
+            }
+            .setNegativeButton("취소") { _, _ -> captureTab = null }
+            .show()
     }
 
     private fun requestProjection() {
@@ -1657,6 +1663,75 @@ class ViewerActivity : AppCompatActivity() {
             mpm.createScreenCaptureIntent(android.media.projection.MediaProjectionConfig.createConfigForDefaultDisplay())
         else mpm.createScreenCaptureIntent()
         runCatching { projectionConsent.launch(consent) }.onFailure { toast("이 기기에서는 화면을 가져올 수 없습니다.") }
+    }
+
+    /**
+     * 일부분 가져오기: 찍어 온 화면을 크게 보여 주고 끌어서 네모로 고르면 그 부분만 새 쪽으로 넣는다.
+     * [고른 부분 가져오기]·[전체]·[취소]
+     */
+    private fun pickCaptureRegion(png: File) {
+        val bmp = android.graphics.BitmapFactory.decodeFile(png.path)
+        if (bmp == null) {
+            png.delete(); captureTab = null
+            toast("찍은 화면을 열지 못했습니다.")
+            return
+        }
+        val d = resources.displayMetrics.density
+        fun dp(v: Int) = (v * d).toInt()
+        val dialog = android.app.Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
+        val picker = RegionPickView(this, bmp)
+        val hint = TextView(this).apply {
+            text = "가져올 부분을 끌어서 네모로 고르세요. 모서리·변을 끌면 크기, 안쪽을 끌면 옮겨집니다."
+            setTextColor(Color.WHITE)
+            textSize = 14f
+            setPadding(dp(16), dp(10), dp(16), dp(10))
+            setBackgroundColor(0xAA000000.toInt())
+        }
+        fun button(text: String) = com.google.android.material.button.MaterialButton(this).apply {
+            this.text = text
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                .apply { marginStart = dp(4); marginEnd = dp(4) }
+        }
+        val cancel = button("취소")
+        val whole = button("전체")
+        val ok = button("고른 부분 가져오기").apply { isEnabled = false }
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            setBackgroundColor(0xAA000000.toInt())
+            addView(cancel); addView(whole); addView(ok)
+        }
+        val root = android.widget.FrameLayout(this).apply {
+            setBackgroundColor(Color.BLACK)
+            addView(picker, android.widget.FrameLayout.LayoutParams(-1, -1).apply { topMargin = dp(40); bottomMargin = dp(64) })
+            addView(hint, android.widget.FrameLayout.LayoutParams(-1, -2, android.view.Gravity.TOP))
+            addView(bar, android.widget.FrameLayout.LayoutParams(-1, -2, android.view.Gravity.BOTTOM))
+        }
+        picker.onSelectionChanged = { ok.isEnabled = it }
+        fun finish(file: File?) {
+            dialog.setOnDismissListener(null)
+            dialog.dismiss()
+            bmp.recycle()
+            if (file == null) { png.delete(); captureTab = null } else insertCapturedPage(file)
+        }
+        cancel.setOnClickListener { finish(null) }
+        whole.setOnClickListener { finish(png) }
+        ok.setOnClickListener {
+            val r = picker.selection() ?: return@setOnClickListener
+            val out = runCatching {
+                val crop = Bitmap.createBitmap(bmp, r.left, r.top, r.width(), r.height())
+                val f = FileUtil.tempFile(this, "capture", "png")
+                f.outputStream().use { crop.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                crop.recycle()
+                png.delete()
+                f
+            }.getOrNull()
+            if (out == null) toast("고른 부분을 만들지 못했습니다.")
+            else finish(out)
+        }
+        dialog.setContentView(root)
+        dialog.setOnCancelListener { finish(null) }
+        dialog.show()
     }
 
     /** 떠 있는 단추로 찍어 온 화면을 시작할 때 보던 쪽 다음에 넣는다 */
@@ -2895,10 +2970,15 @@ class ViewerActivity : AppCompatActivity() {
                     prefs.edit().putBoolean("scribbleErase", docView.scribbleErase).apply()
                     toast(if (docView.scribbleErase) "펜으로 좌우나 위아래로 마구 긁으면 긁은 자리가 지워집니다." else "긁어서 지우기를 껐습니다.")
                 }
-                addOption(R.drawable.ic_palm_erase, "손바닥 지우기", docView.palmErase) {
-                    docView.palmErase = !docView.palmErase
-                    prefs.edit().putBoolean("palmErase", docView.palmErase).apply()
-                    toast(if (docView.palmErase) "손가락으로 쓰기 중 손바닥으로 문지르면 지워집니다." else "손바닥 지우기를 껐습니다.")
+                if (docView.fingerDrawing) {
+                    addOption(R.drawable.ic_palm_erase, "손바닥 지우기", docView.palmErase) {
+                        docView.palmErase = !docView.palmErase
+                        prefs.edit().putBoolean("palmErase", docView.palmErase).apply()
+                        toast(if (docView.palmErase) "손가락으로 쓰기 중 손바닥으로 문지르면 지워집니다." else "손바닥 지우기를 껐습니다.")
+                    }
+                } else {
+                    // 손가락으로 쓰기가 꺼져 있으면 동작하지 않으므로 흐리게 두고, 누르면 켤지 묻는다
+                    addOption(R.drawable.ic_palm_erase, "손바닥 지우기", false, closeBar = false, dimmed = true) { askEnableFingerForPalm() }
                 }
                 addOptionSeparator()
                 addOption(R.drawable.ic_eraser_page, if (hl) "쪽 형광펜 모두 지우기" else "쪽 전체 지우기", false) {
@@ -3333,17 +3413,33 @@ class ViewerActivity : AppCompatActivity() {
      * 옵션 줄의 칸 하나 (아이콘 + 이름). 누르면 옵션 줄을 닫고 실행한다.
      * [closeBar]가 false면 옵션 줄을 둔 채 실행한다 (칸에서 창을 펼칠 때). onClick은 누른 칸을 받는다
      */
-    private fun addOption(icon: Int, label: String, selected: Boolean, closeBar: Boolean = true, onClick: (View) -> Unit) =
-        addOption(getDrawable(icon)!!, label, selected, closeBar, onClick)
+    private fun addOption(
+        icon: Int, label: String, selected: Boolean, closeBar: Boolean = true, dimmed: Boolean = false, onClick: (View) -> Unit,
+    ) = addOption(getDrawable(icon)!!, label, selected, closeBar, dimmed, onClick)
 
     private fun addOption(
         icon: android.graphics.drawable.Drawable, label: String, selected: Boolean,
-        closeBar: Boolean = true, onClick: (View) -> Unit,
+        closeBar: Boolean = true, dimmed: Boolean = false, onClick: (View) -> Unit,
     ) {
         optionRow.addView(optionItem(icon, label, selected) {
             if (closeBar) hideOptionBar()
             onClick(it)
-        })
+        }.also { if (dimmed) it.alpha = 0.38f })
+    }
+
+    /** 손바닥 지우기는 '손가락으로 쓰기'가 켜져 있을 때만 동작한다: 꺼져 있을 때 누르면 켤지 묻는다 */
+    private fun askEnableFingerForPalm() {
+        MaterialAlertDialogBuilder(this)
+            .setMessage("\"손가락으로 쓰기\"가 켜져 있을 때만 동작합니다.\n손가락으로 쓰기 옵션을 켜시겠습니까?")
+            .setNegativeButton("취소", null)
+            .setPositiveButton("켜기") { _, _ ->
+                docView.fingerDrawing = true
+                docView.palmErase = true
+                prefs.edit().putBoolean("finger", true).putBoolean("palmErase", true).apply()
+                toast("손가락으로 쓰기와 손바닥 지우기를 켰습니다.")
+                if (optionTool == Tool.ERASER) showOptionBar(Tool.ERASER)
+            }
+            .show()
     }
 
     /** 아이콘 아래 이름이 붙은 칸 (옵션 줄, 무늬 고르기 창) */
@@ -3746,7 +3842,8 @@ class ViewerActivity : AppCompatActivity() {
                 else -> label
             }
             val index = shapeRow.childCount
-            shapeRow.addView(optionItem(ShapeIconDrawable(this, cur, kind.isGuideLine && lineDashed(kind)), text, selected) { v ->
+            shapeRow.addView(optionItem(ShapeIconDrawable(this, cur, kind.isGuideLine && lineDashed(kind),
+                if (kind in GUIDE_KINDS) guideStyle(kind) else GuideStyle.DASHED), text, selected) { v ->
                 when {
                     // 보조선(화살표·길이 표시): 바로 고르고, 모양·실선/점선을 고르는 창
                     kind.isGuideLine -> {
@@ -3754,14 +3851,21 @@ class ViewerActivity : AppCompatActivity() {
                         // 칸을 새로 만들었으니 자리가 잡힌 뒤에 그 옆에 띄운다
                         shapeRow.post { showGuideLineFlyout(shapeRow.getChildAt(index) ?: v, family ?: listOf(kind)) }
                     }
-                    // 무리: 펼쳐서 하나 고른다
-                    family != null -> showFlyout(v, family.map { k ->
-                        Triple(ShapeIconDrawable(this, k), k.label, k == docView.shapeKind)
-                    }) { i -> selectShapeKind(family[i]) }
+                    // 무리: 칸에 보이는 종류로 바로 바꾸고, 펼친 창에서 다른 종류를 고를 수도 있다
+                    family != null -> {
+                        selectShapeKind(cur)
+                        // 칸을 새로 만들었으니 자리가 잡힌 뒤에 그 옆에 띄운다
+                        shapeRow.post {
+                            showFlyout(shapeRow.getChildAt(index) ?: v, family.map { k ->
+                                Triple(ShapeIconDrawable(this, k), k.label, k == docView.shapeKind)
+                            }) { i -> selectShapeKind(family[i]) }
+                        }
+                    }
                     // 점근선·축이 있는 도형: 고르고 보조선 방식 고르는 창
                     kind in GUIDE_KINDS -> {
                         selectShapeKind(kind)
-                        showGuideMenu(shapeRow.getChildAt(index) ?: v, kind)
+                        // 칸을 새로 만들었으니 자리가 잡힌 뒤에 그 옆에 띄운다
+                        shapeRow.post { showGuideMenu(shapeRow.getChildAt(index) ?: v, kind) }
                     }
                     else -> selectShapeKind(kind)
                 }
@@ -3814,18 +3918,15 @@ class ViewerActivity : AppCompatActivity() {
         val styles = if (kind == ShapeKind.SINE) GuideStyle.entries else listOf(GuideStyle.NONE, GuideStyle.DASHED)
         val names = mapOf(GuideStyle.NONE to "안 그림", GuideStyle.DASHED to "점선", GuideStyle.SOLID to "실선")
         val cur = guideStyle(kind)
-        PopupMenu(this, anchor).apply {
-            styles.forEachIndexed { i, st ->
-                menu.add(1, i, i, "$what ${names.getValue(st)}").isChecked = st == cur
-            }
-            menu.setGroupCheckable(1, true, true)
-            setOnMenuItemClickListener { item ->
-                val st = styles[item.itemId]
-                prefs.edit().putString("guide_${kind.name}", st.name).apply()
-                if (docView.shapeKind == kind) docView.shapeGuide = st
-                true
-            }
-            show()
+        // 창 밖을 누르면 닫히되 그 누름은 아래 문서로 전달되는 펼침 창 (PopupMenu는 그 누름을 삼킨다)
+        val items = styles.map { st -> Triple<android.graphics.drawable.Drawable, String, Boolean>(
+            ShapeIconDrawable(this, kind, guideStyle = st), "$what ${names.getValue(st)}", st == cur) }
+        showFlyout(anchor, items) { i ->
+            val st = styles[i]
+            prefs.edit().putString("guide_${kind.name}", st.name).apply()
+            if (docView.shapeKind == kind) docView.shapeGuide = st
+            // 칸의 아이콘에도 고른 방식이 보이게
+            buildShapeBar()
         }
     }
 
@@ -4042,6 +4143,8 @@ class ViewerActivity : AppCompatActivity() {
         const val EXTRA_NEW_NOTE = "newNote"
         /** 다른 앱 화면 가져오기로 찍은 PNG 경로 (새 쪽으로 넣는다) */
         const val EXTRA_CAPTURE = "capture"
+        /** true면 찍은 화면에서 네모로 부분을 골라 그 부분만 넣는다 */
+        const val EXTRA_CAPTURE_REGION = "captureRegion"
         private const val MAX_TABS = 6
         /** 이미지로 저장할 때 해상도 */
         private const val EXPORT_DPI = 150f

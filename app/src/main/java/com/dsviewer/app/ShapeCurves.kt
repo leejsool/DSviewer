@@ -487,27 +487,154 @@ internal object ShapeCurves {
     // ================= 쌍곡선 =================
 
     /**
-     * 축에 나란한 쌍곡선 x²/a² − y²/b² = ±1 (중심은 옮길 수 있음).
-     * 한 가지를 그리면: 꼭짓점(가장 바깥 점)이 획 가운데쪽에 있는 축으로 열린 것으로 보고 맞춘 뒤,
-     * 중심에 대칭인 반대쪽 가지와 두 점근선을 만든다.
+     * 쌍곡선 한 가지를 그린 획 → 두 가지와 두 점근선. 축이 기울어도 된다 (y = 1/x 꼴의 가지도).
+     * 중심·축 각도·a·b를 '곡선까지의 거리'가 가장 작게 맞추되 대충 그린 획에 너그럽게:
+     * 시작 각도를 여러 개(꼭짓점 쪽 방향, 45° 배수) 두고 처음 점수가 좋은 셋만 다듬는다.
+     * 두 점근선이 가로·세로에 12° 안이면(y = 1/x 꼴) 딱 맞추고, 아니면 축이 수평·수직·45°에서 10° 안일 때 축을 맞춘다.
      */
     fun hyperbola(p: Pair<DoubleArray, DoubleArray>): Fitted? {
-        val (xs, ys) = p
+        val (x0, y0) = p
+        val mx = x0.average(); val my = y0.average()
+        val sc = max(x0.max() - x0.min(), y0.max() - y0.min()) / 2
+        if (sc < 2) return null
+        val xs = thin(DoubleArray(x0.size) { (x0[it] - mx) / sc }, 120)
+        val ys = thin(DoubleArray(y0.size) { (y0[it] - my) / sc }, 120)
         val n = xs.size
-        fun vertexCentrality(a: DoubleArray): Double {
-            var iMin = 0; var iMax = 0
-            for (i in a.indices) {
-                if (a[i] < a[iMin]) iMin = i
-                if (a[i] > a[iMax]) iMax = i
+        val lnMax = ln(12.0)
+
+        // q = [cx, cy, θ, ln a, ln b]: u = (cosθ, sinθ) 쪽으로 열린 가지 (X − Xc)²/a² − (Y − Yc)²/b² = 1, X > Xc
+        fun score(q: DoubleArray): Double {
+            val cu = cos(q[2]); val su = sin(q[2])
+            val ra = exp(q[3]); val rb = exp(q[4])
+            var sum = 0.0
+            for (i in 0 until n) {
+                val dx = xs[i] - q[0]; val dy = ys[i] - q[1]
+                val gx = dx * cu + dy * su
+                val gy = -dx * su + dy * cu
+                val z = gy / rb
+                val root = sqrt(1 + z * z)
+                val r = gx - ra * root
+                val g = ra * z / (rb * root)
+                sum += r * r / (1 + g * g)
             }
-            fun c(i: Int) = min(i, n - 1 - i).toDouble() / n
-            return max(c(iMin), c(iMax))
+            // a:b가 12배보다 납작·길쭉해지는 것은 막는다
+            val over = abs(q[3] - q[4]) - lnMax
+            return if (over > 0) sum + over * over else sum
         }
-        val leftRight = vertexCentrality(xs) >= vertexCentrality(ys)
-        if (leftRight) return branch(xs, ys)
-        // 위아래로 열림: 가로·세로를 바꿔 맞추고 되돌린다
-        val f = branch(ys, xs) ?: return null
-        return Fitted(f.curves.map(::swapXY), f.guides.map(::swapXY))
+
+        // 열린 방향 θ에서 꼭짓점(축 방향 가장 안쪽)과 세로 폭으로 중심·a·b를 잡은 시작 모수
+        fun init(theta: Double, aFrac: Double): DoubleArray? {
+            val cu = cos(theta); val su = sin(theta)
+            var xMin = Double.MAX_VALUE; var xMax = -Double.MAX_VALUE
+            var yMin = Double.MAX_VALUE; var yMax = -Double.MAX_VALUE
+            for (i in 0 until n) {
+                val gx = xs[i] * cu + ys[i] * su
+                val gy = -xs[i] * su + ys[i] * cu
+                xMin = min(xMin, gx); xMax = max(xMax, gx)
+                yMin = min(yMin, gy); yMax = max(yMax, gy)
+            }
+            val half = max((yMax - yMin) / 2, 0.05)
+            val depth = xMax - xMin
+            if (depth < 0.02) return null
+            val ra = aFrac * half
+            val coshT = (ra + depth) / ra
+            val rb = (half / sqrt(coshT * coshT - 1)).coerceIn(ra / 10, ra * 10)
+            val gxc = xMin - ra; val gyc = (yMin + yMax) / 2
+            return doubleArrayOf(gxc * cu - gyc * su, gxc * su + gyc * cu, theta, ln(ra), ln(rb))
+        }
+
+        // 후보 각도: 꼭짓점(현에서 가장 먼 점) → 현 가운데 방향, 그리고 45° 배수 여덟 개
+        val ex = xs[n - 1] - xs[0]; val ey = ys[n - 1] - ys[0]
+        val clen = hypot(ex, ey)
+        val thetas = ArrayList<Double>()
+        if (clen > 0.2) {
+            var vi = 0; var vd = -1.0
+            for (i in 0 until n) {
+                val d = abs((xs[i] - xs[0]) * ey - (ys[i] - ys[0]) * ex) / clen
+                if (d > vd) { vd = d; vi = i }
+            }
+            thetas += atan2((ys[0] + ys[n - 1]) / 2 - ys[vi], (xs[0] + xs[n - 1]) / 2 - xs[vi])
+        }
+        for (k in 0 until 8) thetas += k * PI / 4
+        val starts = thetas.flatMap { th -> listOf(0.25, 0.6).mapNotNull { init(th, it) } }
+            .sortedBy(::score).take(3)
+        var best: DoubleArray? = null
+        var bestScore = Double.MAX_VALUE
+        for (st in starts) {
+            val q = nelderMead(st, 0.1, ::score, 500)
+            val sq = score(q)
+            if (sq < bestScore) { bestScore = sq; best = q }
+        }
+        var q = best ?: return null
+
+        // y = 1/x 꼴 (점근선이 가로·세로, 축 45°)은 가지 일부만 그리면 다른 모양과 구별이 안 되므로,
+        // 그렇게 맞춘 것이 크게 나쁘지 않으면 그쪽을 고른다
+        var rect: DoubleArray? = null
+        var rectScore = Double.MAX_VALUE
+        for (k in intArrayOf(1, 3, 5, 7)) {
+            val th = k * PI / 4
+            val st = init(th, 0.4) ?: continue
+            val r = nelderMead(doubleArrayOf(st[0], st[1], (st[3] + st[4]) / 2), 0.1, { v -> score(doubleArrayOf(v[0], v[1], th, v[2], v[2])) }, 300)
+            val cand = doubleArrayOf(r[0], r[1], th, r[2], r[2])
+            val cs = score(cand)
+            if (cs < rectScore) { rectScore = cs; rect = cand }
+        }
+        if (rect != null && rectScore <= bestScore * 3 + n * 0.0004) q = rect
+
+        // 두 점근선이 모두 가로·세로에 12° 안이면 딱 맞추고 중심·크기를 다시 다듬는다.
+        // 아니면 축이 수평·수직·45°에서 10° 안일 때 축만 맞춘다
+        val half = PI / 2
+        fun snapTo(a: Double, tol: Double): Double? {
+            val t = round(a / half) * half
+            return if (abs(a - t) <= tol * PI / 180) t else null
+        }
+        val phi = atan2(exp(q[4]), exp(q[3]))
+        val s1 = snapTo(q[2] + phi, 12.0)
+        val s2 = snapTo(q[2] - phi, 12.0)
+        if (s1 != null && s2 != null && abs(s1 - s2) > 1e-6) {
+            val th = (s1 + s2) / 2
+            val ph = abs(s1 - s2) / 2
+            val ratio = ln(tan(ph))
+            val r = nelderMead(doubleArrayOf(q[0], q[1], q[3]), 0.05, { v -> score(doubleArrayOf(v[0], v[1], th, v[2], v[2] + ratio)) }, 300)
+            q = doubleArrayOf(r[0], r[1], th, r[2], r[2] + ratio)
+        } else {
+            val quarter = PI / 4
+            val th = round(q[2] / quarter) * quarter
+            if (abs(q[2] - th) <= 10 * PI / 180) {
+                val r = nelderMead(doubleArrayOf(q[0], q[1], q[3], q[4]), 0.05, { v -> score(doubleArrayOf(v[0], v[1], th, v[2], v[3])) }, 300)
+                q = doubleArrayOf(r[0], r[1], th, r[2], r[3])
+            }
+        }
+
+        val cx = q[0]; val cy = q[1]; val th = q[2]
+        val ra = exp(q[3]); val rb = exp(q[4])
+        if (ra.isNaN() || rb.isNaN() || cx.isNaN() || cy.isNaN() || ra < 1e-3 || rb < 1e-3 || rb / ra > 12.5 || ra / rb > 12.5) return null
+        val cu = cos(th); val su = sin(th)
+        // 그린 가지의 매개변수 범위 (Y = b·sinh t 는 가지를 따라 한 방향으로 변한다)
+        fun localY(i: Int) = -(xs[i] - cx) * su + (ys[i] - cy) * cu
+        val tStart = asinh(localY(0) / rb)
+        val tEnd = asinh(localY(n - 1) / rb)
+        if (abs(tEnd - tStart) < 0.15) return null
+        // 지역 좌표(X: 축 방향, Y: 수직) → 페이지 좌표
+        fun page(gx: Double, gy: Double, out: FloatArray, i: Int) {
+            out[i * 2] = (mx + (cx + gx * cu - gy * su) * sc).toFloat()
+            out[i * 2 + 1] = (my + (cy + gx * su + gy * cu) * sc).toFloat()
+        }
+        val m = 120
+        fun branchPts(sd: Double) = FloatArray(m * 2).also { out ->
+            for (i in 0 until m) {
+                val t = tStart + (tEnd - tStart) * i / (m - 1)
+                page(sd * ra * cosh(t), rb * sinh(t), out, i)
+            }
+        }
+        // 점근선 Y = ±(b/a)X: 가지들이 닿는 범위보다 조금 길게
+        val len = ra * cosh(max(abs(tStart), abs(tEnd))) * 1.1
+        val slope = rb / ra
+        fun line(sg: Double) = FloatArray(4).also {
+            page(-len, -sg * slope * len, it, 0)
+            page(len, sg * slope * len, it, 1)
+        }
+        return Fitted(listOf(branchPts(1.0), branchPts(-1.0)), listOf(line(1.0), line(-1.0)))
     }
 
     /** 넬더-미드 (기울기 없이 최솟값 찾기). step은 처음 심플렉스 크기 */
@@ -538,76 +665,6 @@ internal object ShapeCurves {
             }
         }
         return pts[(0..n).minBy { vals[it] }]
-    }
-
-    private fun swapXY(a: FloatArray) = FloatArray(a.size) { if (it % 2 == 0) a[it + 1] else a[it - 1] }
-
-    /** 좌우로 열린 (X−h)²/a² − (Y−k)²/b² = 1 의 한 가지 */
-    private fun branch(x0: DoubleArray, y0: DoubleArray): Fitted? {
-        val n = x0.size
-        val mx = x0.average(); val my = y0.average()
-        val sc = max(x0.max() - x0.min(), y0.max() - y0.min()) / 2
-        if (sc < 2) return null
-        val x = DoubleArray(n) { (x0[it] - mx) / sc }
-        val y = DoubleArray(n) { (y0[it] - my) / sc }
-        // X² = 2h·X + s·Y² − 2sk·Y + (a² + s·k² − h²),  s = (a/b)²  → 계수 4개를 선형 최소제곱으로
-        val a = Array(4) { DoubleArray(4) }
-        val b = DoubleArray(4)
-        val row = DoubleArray(4)
-        for (i in 0 until n) {
-            row[0] = x[i]; row[1] = y[i] * y[i]; row[2] = y[i]; row[3] = 1.0
-            val rhs = x[i] * x[i]
-            for (j in 0..3) {
-                for (k in 0..3) a[j][k] += row[j] * row[k]
-                b[j] += row[j] * rhs
-            }
-        }
-        val c = ShapeFit.solve(a, b) ?: return null
-        val h = c[0] / 2
-        val s = c[1]
-        // s ≤ 0이면 타원·포물선 모양 (쌍곡선이 아님). 점근선 기울기 1/√s 가 너무 눕거나 서도 안 됨
-        if (s < 0.02 || s > 50) return null
-        val k0 = -c[2] / (2 * s)
-        val a2 = c[3] - s * k0 * k0 + h * h
-        if (a2 <= 1e-6) return null
-        val side = if (x.average() > h) 1.0 else -1.0
-        // 위 식은 대수적 오차라 한 가지만으로는 중심이 틀어지기 쉽다 (반대쪽 가지가 엉뚱한 곳에).
-        // 곡선까지의 거리(가로 오차를 기울기로 나눈 것)를 직접 줄이도록 다듬는다
-        fun score(q: DoubleArray): Double {
-            val hh = q[0]; val kk = q[1]; val aa = exp(q[2]); val bb = exp(q[3])
-            var sum = 0.0
-            for (i in 0 until n) {
-                val z = (y[i] - kk) / bb
-                val root = sqrt(1 + z * z)
-                val r = x[i] - (hh + side * aa * root)
-                val g = side * aa * z / (bb * root)
-                sum += r * r / (1 + g * g)
-            }
-            return sum
-        }
-        val q = nelderMead(doubleArrayOf(h, k0, ln(sqrt(a2)), ln(sqrt(a2) / sqrt(s))), 0.1, ::score)
-        val hq = q[0]; val k = q[1]; val ra = exp(q[2]); val rb = exp(q[3])
-        if (ra.isNaN() || rb.isNaN() || ra < 1e-3 || rb < 1e-3 || rb / ra > 8 || ra / rb > 8) return null
-        // 그린 가지의 매개변수 범위 (Y = k + b·sinh t 는 가지를 따라 한 방향으로 변한다)
-        val tStart = asinh((y.first() - k) / rb)
-        val tEnd = asinh((y.last() - k) / rb)
-        if (abs(tEnd - tStart) < 0.3) return null
-        val m = 120
-        fun branchPts(sd: Double) = FloatArray(m * 2).also { out ->
-            for (i in 0 until m) {
-                val t = tStart + (tEnd - tStart) * i / (m - 1)
-                out[i * 2] = (mx + (hq + sd * ra * cosh(t)) * sc).toFloat()
-                out[i * 2 + 1] = (my + (k + rb * sinh(t)) * sc).toFloat()
-            }
-        }
-        // 점근선 Y − k = ±(b/a)(X − h): 가지들이 닿는 범위보다 조금 길게
-        val len = ra * cosh(max(abs(tStart), abs(tEnd))) * 1.1
-        val slope = rb / ra
-        fun line(sg: Double) = floatArrayOf(
-            (mx + (hq - len) * sc).toFloat(), (my + (k - sg * slope * len) * sc).toFloat(),
-            (mx + (hq + len) * sc).toFloat(), (my + (k + sg * slope * len) * sc).toFloat(),
-        )
-        return Fitted(listOf(branchPts(side), branchPts(-side)), listOf(line(1.0), line(-1.0)))
     }
 
     // ================= 부채꼴 =================

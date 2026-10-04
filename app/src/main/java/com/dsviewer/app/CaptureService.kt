@@ -1,5 +1,6 @@
 package com.dsviewer.app
 
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -10,8 +11,10 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.content.res.Configuration
 import android.graphics.Bitmap
+import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Rect
+import android.graphics.drawable.GradientDrawable
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.Image
@@ -24,16 +27,23 @@ import android.os.HandlerThread
 import android.os.IBinder
 import android.os.Looper
 import android.util.DisplayMetrics
+import android.util.Log
+import android.view.Gravity
+import android.view.MotionEvent
+import android.view.View
+import android.view.WindowInsets
 import android.view.WindowManager
+import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.Toast
 import androidx.core.content.IntentCompat
 import java.io.File
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
- * 다른 앱 화면 가져오기: 화면 전송 허락을 받은 뒤 알림에 '이 화면 가져오기' 단추를 둔다.
- * 단추를 누르면 알림창이 닫힌 뒤의 화면을 찍어 상태 표시줄·내비게이션 줄을 잘라 내고 뷰어로 돌아가 새 쪽으로 넣게 한다.
- * (다른 앱 위에 단추를 띄우는 '다른 앱 위에 표시' 권한은 쓰지 않는다: 악성 앱으로 의심받는 권한이라)
+ * 다른 앱 화면 가져오기: 화면 전송 허락을 받은 뒤 다른 앱 위에 떠 있는 캡처 단추 둘(화면 전체 · 일부분)을 띄운다.
+ * 단추를 누르면 그 순간의 화면을 찍어 상태 표시줄·내비게이션 줄을 잘라 내고 뷰어로 돌아가 새 쪽으로 넣게 한다.
  */
 class CaptureService : Service() {
 
@@ -41,6 +51,9 @@ class CaptureService : Service() {
     private var projection: MediaProjection? = null
     private var display: VirtualDisplay? = null
     private var reader: ImageReader? = null
+    private var overlay: View? = null
+    /** 화면 전체를 덮는 투명한 창: 상태 표시줄·내비게이션 줄의 두께를 읽는 데만 쓴다 (터치는 통과) */
+    private var probe: View? = null
     private val main = Handler(Looper.getMainLooper())
     private val worker = HandlerThread("capture").apply { start() }
     private val bg = Handler(worker.looper)
@@ -58,11 +71,7 @@ class CaptureService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_CANCEL) {
-            finishCapture(null, cancelled = true)
-            return START_NOT_STICKY
-        }
-        if (intent?.action == ACTION_SHOT) {
-            capture(Rect(intent.getIntExtra("l", 0), intent.getIntExtra("t", 0), intent.getIntExtra("r", 0), intent.getIntExtra("b", 0)))
+            finishCapture(null)
             return START_NOT_STICKY
         }
         val data = intent?.let { IntentCompat.getParcelableExtra(it, EXTRA_DATA, Intent::class.java) }
@@ -92,6 +101,7 @@ class CaptureService : Service() {
         reader = r
         display = mp.createVirtualDisplay("DSViewerCapture", w, h, dpi,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, r.surface, null, bg)
+        showOverlay()
         return START_NOT_STICKY
     }
 
@@ -114,6 +124,7 @@ class CaptureService : Service() {
     }
 
     override fun onDestroy() {
+        removeOverlay()
         release()
         worker.quitSafely()
         running = false
@@ -138,16 +149,150 @@ class CaptureService : Service() {
         return Triple(b.width(), b.height(), resources.displayMetrics.densityDpi)
     }
 
-    // ================= 찍기 =================
+    // ================= 떠 있는 단추 =================
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun showOverlay() {
+        val d = resources.displayMetrics.density
+        fun dp(v: Float) = (v * d).roundToInt()
+        val size = dp(56f)
+
+        fun round(color: Int) = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(color)
+            setStroke(dp(2f), Color.WHITE)
+        }
+        val shot = ImageView(this).apply {
+            setImageResource(R.drawable.ic_screen_capture)
+            imageTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
+            background = round(getColor(R.color.brand))
+            setPadding(dp(14f), dp(14f), dp(14f), dp(14f))
+            contentDescription = "이 화면 가져오기"
+            elevation = dp(6f).toFloat()
+        }
+        val part = ImageView(this).apply {
+            setImageResource(R.drawable.ic_region_capture)
+            imageTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
+            background = round(getColor(R.color.brand))
+            setPadding(dp(11f), dp(11f), dp(11f), dp(11f))
+            contentDescription = "일부분만 가져오기"
+            elevation = dp(6f).toFloat()
+        }
+        val close = ImageView(this).apply {
+            setImageResource(R.drawable.ic_close)
+            imageTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
+            background = round(0xCC555555.toInt())
+            setPadding(dp(6f), dp(6f), dp(6f), dp(6f))
+            contentDescription = "가져오기 그만두기"
+            elevation = dp(6f).toFloat()
+            setOnClickListener { finishCapture(null, cancelled = true) }
+        }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dp(6f), dp(6f), dp(6f), dp(6f))
+            addView(close, LinearLayout.LayoutParams(dp(32f), dp(32f)).apply { bottomMargin = dp(8f) })
+            addView(part, LinearLayout.LayoutParams(dp(44f), dp(44f)).apply { bottomMargin = dp(8f) })
+            addView(shot, LinearLayout.LayoutParams(size, size))
+        }
+        val lp = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT,
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            val (w, h) = screenSize()
+            x = w - size - dp(28f)
+            y = h / 2 - size
+        }
+
+        // 끌어서 옮기고, 거의 안 움직이고 떼면 찍는다
+        var downX = 0f; var downY = 0f; var startX = 0; var startY = 0; var moved = false
+        fun dragOrTap(v: View, onTap: () -> Unit) = v.setOnTouchListener { _, e ->
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downX = e.rawX; downY = e.rawY; startX = lp.x; startY = lp.y; moved = false
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = e.rawX - downX; val dy = e.rawY - downY
+                    if (moved || abs(dx) > dp(8f) || abs(dy) > dp(8f)) {
+                        moved = true
+                        lp.x = startX + dx.roundToInt()
+                        lp.y = startY + dy.roundToInt()
+                        runCatching { wm.updateViewLayout(box, lp) }
+                    }
+                }
+                MotionEvent.ACTION_UP -> if (!moved) onTap()
+            }
+            true
+        }
+        dragOrTap(shot) { capture(box, region = false) }
+        dragOrTap(part) { capture(box, region = true) }
+        runCatching { wm.addView(box, lp) }.onFailure {
+            toast("다른 앱 위에 단추를 띄울 수 없습니다.")
+            finishCapture(null)
+            return
+        }
+        overlay = box
+        addProbe()
+    }
 
     /**
-     * 알림의 '이 화면 가져오기'를 누르면 [ShotActivity]가 알림창을 닫고 그때의 상태 표시줄·내비게이션 줄 두께([bars])를 넘긴다.
-     * 알림창이 다 닫힌 뒤의 화면을 찍어 줄을 잘라 낸다
+     * 줄 두께는 그 줄과 겹치는 창에만 알려지므로, 작은 단추 창 대신 화면 전체 크기의 빈 창에서 읽는다.
+     * 줄을 피해 작아지지 않도록 fitInsetsTypes를 비운다
      */
-    private fun capture(bars: Rect) {
-        if (busy || projection == null) return
+    private fun addProbe() {
+        val v = View(this)
+        val lp = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSPARENT,
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            if (Build.VERSION.SDK_INT >= 30) fitInsetsTypes = 0
+        }
+        if (runCatching { wm.addView(v, lp) }.isSuccess) probe = v
+    }
+
+    private fun removeOverlay() {
+        overlay?.let { runCatching { wm.removeViewImmediate(it) } }
+        overlay = null
+        probe?.let { runCatching { wm.removeViewImmediate(it) } }
+        probe = null
+    }
+
+    /**
+     * 지금 보이는 상태 표시줄·내비게이션 줄(태블릿의 작업 표시줄 포함)·카메라 홈의 두께
+     * (전체 화면 앱이라 숨어 있으면 0)
+     */
+    private fun barInsets(): Rect {
+        val wi = probe?.rootWindowInsets
+        if (Build.VERSION.SDK_INT >= 30) {
+            val types = WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars() or
+                WindowInsets.Type.tappableElement() or WindowInsets.Type.displayCutout()
+            // 빈 창을 못 띄웠으면 화면 크기 정보의 두께를 쓴다
+            val i = wi?.getInsets(types) ?: wm.currentWindowMetrics.windowInsets.getInsets(types)
+            return Rect(i.left, i.top, i.right, i.bottom).also { Log.d("CaptureService", "bars $it (probe=${wi != null})") }
+        }
+        wi ?: return Rect()
+        @Suppress("DEPRECATION")
+        return Rect(wi.systemWindowInsetLeft, wi.systemWindowInsetTop, wi.systemWindowInsetRight, wi.systemWindowInsetBottom)
+    }
+
+    // ================= 찍기 =================
+
+    /** [region]이면 찍은 화면을 뷰어에서 네모로 골라 그 부분만 넣는다 */
+    private fun capture(box: View, region: Boolean) {
+        if (busy) return
         busy = true
+        val bars = barInsets()
         val (sw, sh) = screenSize()
+        // 단추가 찍히지 않게 숨기고, 숨긴 화면이 전송될 때까지 잠깐 기다린다
+        box.visibility = View.INVISIBLE
         bg.postDelayed({
             val file = runCatching {
                 val img = last ?: error("화면을 받지 못했습니다.")
@@ -172,9 +317,9 @@ class CaptureService : Service() {
             }
             main.post {
                 file.onFailure { toast("화면을 가져오지 못했습니다.\n${it.message ?: it.javaClass.simpleName}") }
-                finishCapture(file.getOrNull(), cancelled = file.isFailure)
+                finishCapture(file.getOrNull(), cancelled = file.isFailure, region = region)
             }
-        }, SHOT_DELAY_MS)
+        }, 350)
     }
 
     /** RGBA 버퍼 → 비트맵 (줄 끝 여백을 떼어 낸다) */
@@ -189,12 +334,13 @@ class CaptureService : Service() {
     }
 
     /** 화면 전송을 끝내고 뷰어로 돌아간다. [file]이 있으면 새 쪽으로 넣게 한다 */
-    private fun finishCapture(file: File?, cancelled: Boolean = false) {
+    private fun finishCapture(file: File?, cancelled: Boolean = false, region: Boolean = false) {
+        removeOverlay()
         release()
         if (file != null || cancelled) {
             val back = Intent(this, ViewerActivity::class.java).addFlags(
                 Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            if (file != null) back.putExtra(ViewerActivity.EXTRA_CAPTURE, file.path)
+            if (file != null) back.putExtra(ViewerActivity.EXTRA_CAPTURE, file.path).putExtra(ViewerActivity.EXTRA_CAPTURE_REGION, region)
             runCatching { startActivity(back) }
         }
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -216,24 +362,14 @@ class CaptureService : Service() {
 
     private fun notification(): Notification {
         val nm = getSystemService(NotificationManager::class.java)
-        // 알림창에서 단추가 바로 보이도록 기본 중요도 (소리는 내지 않는다)
-        nm.createNotificationChannel(NotificationChannel(CHANNEL, "다른 앱 화면 가져오기", NotificationManager.IMPORTANCE_DEFAULT).apply {
-            setSound(null, null)
-            enableVibration(false)
-        })
+        nm.createNotificationChannel(NotificationChannel(CHANNEL, "다른 앱 화면 가져오기", NotificationManager.IMPORTANCE_LOW))
         val cancel = PendingIntent.getService(this, 0,
             Intent(this, CaptureService::class.java).setAction(ACTION_CANCEL), PendingIntent.FLAG_IMMUTABLE)
-        // 알림에서 활동을 띄워야 알림창이 저절로 닫힌다
-        val shot = PendingIntent.getActivity(this, 1,
-            Intent(this, ShotActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), PendingIntent.FLAG_IMMUTABLE)
         return Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_screen_capture)
             .setContentTitle("화면 가져오기 준비됨")
-            .setContentText("가져올 화면을 띄우고 알림창에서 '이 화면 가져오기'를 누르세요.")
+            .setContentText("가져올 화면에서 떠 있는 단추를 누르세요. 아래 단추는 일부분만 가져옵니다.")
             .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setContentIntent(shot)
-            .addAction(Notification.Action.Builder(null, "이 화면 가져오기", shot).build())
             .addAction(Notification.Action.Builder(null, "그만두기", cancel).build())
             .build()
     }
@@ -241,13 +377,9 @@ class CaptureService : Service() {
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
 
     companion object {
-        /** 예전 낮은 중요도 채널(capture)과 따로: 채널 중요도는 만든 뒤 바꿀 수 없다 */
-        private const val CHANNEL = "capture_shot"
+        private const val CHANNEL = "capture"
         private const val NOTI_ID = 7301
         private const val ACTION_CANCEL = "com.dsviewer.app.CAPTURE_CANCEL"
-        private const val ACTION_SHOT = "com.dsviewer.app.CAPTURE_SHOT"
-        /** 알림창이 접히고 그 아래 화면이 다시 전송될 때까지 기다리는 시간 */
-        private const val SHOT_DELAY_MS = 700L
         private const val EXTRA_CODE = "code"
         private const val EXTRA_DATA = "data"
 
@@ -259,13 +391,6 @@ class CaptureService : Service() {
             running = true
             ctx.startForegroundService(Intent(ctx, CaptureService::class.java)
                 .putExtra(EXTRA_CODE, resultCode).putExtra(EXTRA_DATA, data))
-        }
-
-        /** [ShotActivity]에서: 상태 표시줄·내비게이션 줄 두께([bars])를 넘기며 찍게 한다 */
-        fun shoot(ctx: Context, bars: Rect) {
-            if (!running) return
-            ctx.startService(Intent(ctx, CaptureService::class.java).setAction(ACTION_SHOT)
-                .putExtra("l", bars.left).putExtra("t", bars.top).putExtra("r", bars.right).putExtra("b", bars.bottom))
         }
 
         fun stop(ctx: Context) {

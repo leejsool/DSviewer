@@ -170,6 +170,42 @@ class ShapeCurvesTest {
         assertEquals(2, f.curves.size)
     }
 
+    @Test fun hyperbolaReciprocal() {
+        // y = 12000/x 의 1사분면 가지 (페이지 좌표: 축 교점 (100, 500), x 180~480). 점근선은 가로·세로
+        val truth = { s: Double -> val x = 180 + 300 * s; x to 500 - 12000 / (x - 100) * 1.0 }
+        val f = ShapeCurves.hyperbola(drawn(f = truth, noise = 3.0, seed = 7))
+        assertNotNull(f)
+        println("역함수 꼴 최대 거리 %.2f".format(maxDist(f!!.curves[0], truth)))
+        assertTrue(maxDist(f.curves[0], truth) < 12)
+        // 점근선이 가로·세로로 맞춰졌는지
+        for (a in f.guides) {
+            val horizontal = abs(a[1] - a[3]) < 1.5
+            val vertical = abs(a[0] - a[2]) < 1.5
+            assertTrue("점근선이 가로·세로가 아님: ${a.toList()}", horizontal || vertical)
+        }
+    }
+
+    @Test fun hyperbolaSloppy() {
+        // 거칠게(흔들림 4pt), 짧게 그린 좌우·위아래·비스듬 가지
+        val cases = listOf(
+            "짧은 좌우" to { s: Double -> val t = -0.9 + 1.8 * s; (300 + 60 * cosh(t)) to (300 + 40 * sinh(t)) },
+            "납작한 위아래" to { s: Double -> val t = -1.2 + 2.4 * s; (300 + 90 * sinh(t)) to (300 - 30 * cosh(t)) },
+            "한쪽 반만" to { s: Double -> val t = 1.8 * s; (300 + 50 * cosh(t)) to (300 + 50 * sinh(t)) },
+            "비스듬(30°)" to { s: Double ->
+                val t = -1.5 + 3.0 * s; val gx = 70 * cosh(t); val gy = 45 * sinh(t)
+                (300 + gx * cos(0.52) - gy * sin(0.52)) to (300 + gx * sin(0.52) + gy * cos(0.52))
+            },
+        )
+        for ((i, c) in cases.withIndex()) {
+            val (name, truth) = c
+            val f = ShapeCurves.hyperbola(drawn(f = truth, noise = 4.0, seed = 30 + i))
+            assertNotNull("$name: 맞추지 못함", f)
+            val d = maxDist(f!!.curves[0], truth)
+            println("쌍곡선 $name: 최대 거리 %.2f".format(d))
+            assertTrue("$name: 너무 멂 ($d)", d < 14)
+        }
+    }
+
     // ----- 이차 × 지수 -----
 
     @Test fun quadExp() {

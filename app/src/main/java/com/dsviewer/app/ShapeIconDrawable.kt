@@ -21,7 +21,11 @@ import kotlin.math.tan
  * 보정 펜 도형 줄의 아이콘: 도형 종류마다 그 모양을 작게 그린다 (이차는 아래로 볼록한 포물선 등).
  * 24 × 24 칸 좌표로 그린다.
  */
-class ShapeIconDrawable(ctx: Context, private val kind: ShapeKind, private val dashed: Boolean = false) : Drawable() {
+class ShapeIconDrawable(
+    ctx: Context, private val kind: ShapeKind, private val dashed: Boolean = false,
+    /** 점근선·축을 그리는 방식 (지수·로그·이차×지수·사인·코사인·탄젠트·쌍곡선): 안 그림 / 점선 / 그래프보다 조금 얇은 실선 */
+    private val guideStyle: GuideStyle = GuideStyle.DASHED,
+) : Drawable() {
 
     private val size = (24 * ctx.resources.displayMetrics.density).toInt()
     private val color = MaterialColors.getColor(ctx, com.google.android.material.R.attr.colorOnSurface, 0xFF1C1B1F.toInt())
@@ -50,6 +54,20 @@ class ShapeIconDrawable(ctx: Context, private val kind: ShapeKind, private val d
         this.color = this@ShapeIconDrawable.color
         alpha = 130
     }
+    /** 도형의 점근선·축: [guideStyle]에 따라 점선 또는 그래프보다 조금 얇은 실선 (안 그림이면 그리지 않는다) */
+    private val asym = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        this.color = this@ShapeIconDrawable.color
+        if (guideStyle == GuideStyle.SOLID) { strokeWidth = 1.2f; alpha = 255 }
+        else { strokeWidth = 1f; pathEffect = DashPathEffect(floatArrayOf(1.6f, 1.6f), 0f); alpha = 130 }
+    }
+    private val asymAlpha = if (guideStyle == GuideStyle.SOLID) 255 else 130
+
+    private fun asymptote(c: Canvas, x0: Float, y0: Float, x1: Float, y1: Float) {
+        if (guideStyle != GuideStyle.NONE) c.drawLine(x0, y0, x1, y1, asym)
+    }
+
     /** 직각 표시 */
     private val thin = Paint(line).apply { strokeWidth = 1f }
     private val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = this@ShapeIconDrawable.color }
@@ -145,8 +163,8 @@ class ShapeIconDrawable(ctx: Context, private val kind: ShapeKind, private val d
             ShapeKind.PARALLELOGRAM -> poly(canvas, 2.5f, 18f, 16.5f, 18f, 21.5f, 6f, 7.5f, 6f)
             ShapeKind.HYPERBOLA -> {
                 // x² − y² = 1 의 두 가지와 점근선 y = ±x
-                canvas.drawLine(4f, 4f, 20f, 20f, guide)
-                canvas.drawLine(4f, 20f, 20f, 4f, guide)
+                asymptote(canvas, 4f, 4f, 20f, 20f)
+                asymptote(canvas, 4f, 20f, 20f, 4f)
                 for (sx in floatArrayOf(-1f, 1f)) {
                     val p = Path()
                     var t = -1.6f
@@ -163,7 +181,7 @@ class ShapeIconDrawable(ctx: Context, private val kind: ShapeKind, private val d
             }
             ShapeKind.EXP_LOG -> {
                 // y = 2^x 와 y = log₂x (y = x 에 대칭)
-                canvas.drawLine(3f, 21f, 21f, 3f, guide)
+                asymptote(canvas, 3f, 21f, 21f, 3f)
                 val e = Path()
                 val l = Path()
                 var x = -2.6f
@@ -192,11 +210,11 @@ class ShapeIconDrawable(ctx: Context, private val kind: ShapeKind, private val d
             }
             ShapeKind.QUAD_EXP -> {
                 // y = x²eˣ: 왼쪽은 점근선 y = 0으로, 극대 하나 지나 y = 0에서 극소, 오른쪽은 치솟음
-                canvas.drawLine(2f, 20f, 22f, 20f, guide)
+                asymptote(canvas, 2f, 20f, 22f, 20f)
                 plot(canvas, -5.5f, 0.75f) { it * it * exp(it) }
             }
             ShapeKind.SINE -> {
-                canvas.drawLine(2f, 12f, 22f, 12f, guide)
+                asymptote(canvas, 2f, 12f, 22f, 12f)
                 val p = Path()
                 for (i in 0..40) {
                     val u = i / 40f
@@ -208,8 +226,8 @@ class ShapeIconDrawable(ctx: Context, private val kind: ShapeKind, private val d
             }
             ShapeKind.TANGENT -> {
                 // 한 가지와 양쪽 점근선
-                canvas.drawLine(5f, 2f, 5f, 22f, guide)
-                canvas.drawLine(19f, 2f, 19f, 22f, guide)
+                asymptote(canvas, 5f, 2f, 5f, 22f)
+                asymptote(canvas, 19f, 2f, 19f, 22f)
                 val p = Path()
                 var first = true
                 var u = -1.33f
@@ -281,6 +299,7 @@ class ShapeIconDrawable(ctx: Context, private val kind: ShapeKind, private val d
         dot.alpha = alpha
         thin.alpha = alpha
         guide.alpha = alpha * 130 / 255
+        asym.alpha = alpha * asymAlpha / 255
     }
 
     override fun setColorFilter(colorFilter: ColorFilter?) {
@@ -288,6 +307,7 @@ class ShapeIconDrawable(ctx: Context, private val kind: ShapeKind, private val d
         dot.colorFilter = colorFilter
         thin.colorFilter = colorFilter
         guide.colorFilter = colorFilter
+        asym.colorFilter = colorFilter
     }
 
     @Deprecated("Deprecated in Java")
