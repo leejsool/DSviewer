@@ -270,3 +270,24 @@ class ToolbarDock(
         ToolbarSide.RIGHT -> Rect(a.right - thickness, a.top, a.right, a.bottom)
     }
 }
+
+/** 창을 [anchor] 옆 문서 쪽에 띄운다 (툴바가 위면 아래로, 아래면 위로, 왼쪽·오른쪽이면 옆으로) */
+internal fun showPopupBeside(window: android.view.Window, side: ToolbarSide, popup: android.widget.PopupWindow, box: View, anchor: View) {
+    val d = anchor.resources.displayMetrics.density
+    box.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
+    val w = box.measuredWidth
+    val h = box.measuredHeight
+    val loc = IntArray(2)
+    anchor.getLocationOnScreen(loc)
+    val gap = (6 * d).toInt()
+    val screenW = window.decorView.width
+    val screenH = window.decorView.height
+    val (x, y) = when (side) {
+        ToolbarSide.LEFT -> loc[0] + anchor.width + gap to loc[1] + anchor.height / 2 - h / 2
+        ToolbarSide.RIGHT -> loc[0] - w - gap to loc[1] + anchor.height / 2 - h / 2
+        ToolbarSide.TOP -> loc[0] + anchor.width / 2 - w / 2 to loc[1] + anchor.height + gap
+        ToolbarSide.BOTTOM -> loc[0] + anchor.width / 2 - w / 2 to loc[1] - h - gap
+    }
+    popup.showAtLocation(anchor, android.view.Gravity.NO_GRAVITY,
+        x.coerceIn(gap, maxOf(gap, screenW - w - gap)), y.coerceIn(gap, maxOf(gap, screenH - h - gap)))
+}
