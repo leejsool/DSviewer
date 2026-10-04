@@ -1672,19 +1672,7 @@ class DocumentView @JvmOverloads constructor(
         quick: Boolean = false,
     ): List<Stroke>? {
         val fitted = ShapeFit.fit(kind, raw, quick) ?: return null
-        var pSum = 0f
-        for (i in 0 until raw.count) pSum += raw.p(i)
-        val pAvg = pSum / raw.count
-        // 맞춘 도형은 지금 펜 종류로 (점선 보조선은 사인펜)
-        fun toStroke(pts: FloatArray, dashed: Boolean) =
-            Stroke(Tool.PEN, raw.color, raw.width, dashed, if (dashed) PenStyle.FELT else penStyle).apply {
-            for (i in 0 until pts.size / 2) add(pts[i * 2], pts[i * 2 + 1], pAvg)
-        }
-        // 화살표·길이 표시는 몸통을 고른 대로 실선·점선, 화살촉은 실선
-        val out = fitted.curves.map { toStroke(it, dashed && kind.isGuideLine) }.toMutableList()
-        fitted.heads.mapTo(out) { toStroke(it, false) }
-        if (guide != GuideStyle.NONE) fitted.guides.mapTo(out) { toStroke(it, guide == GuideStyle.DASHED) }
-        return out
+        return ShapeStrokes.build(raw, fitted, kind, guide, dashed, penStyle)
     }
 
     private fun eraseAt(page: Int, px: Float, py: Float, radiusPx: Float = eraserRadiusDp * density) {
@@ -1695,10 +1683,10 @@ class DocumentView @JvmOverloads constructor(
         val list = inkDoc.pages[page]
         var removed = false
         // 테이프 도구의 지우개는 테이프만 (보이게 한 테이프도), 채우기 도구의 지우개는 채우기만 지운다
-        val tapesOnly = tool == Tool.TAPE && tapeErasing && !palmErasing
-        val fillsOnly = tool == Tool.FILL && fillErasing && !palmErasing
+        val tapesOnly = EraseRules.tapesOnly(tool, tapeErasing, palmErasing)
+        val fillsOnly = EraseRules.fillsOnly(tool, fillErasing, palmErasing)
         // 손바닥은 늘 닿은 부분만 지운다
-        val mode = if (palmErasing) EraserMode.AREA else if (tapesOnly) tapeEraseMode else if (fillsOnly) fillEraseMode else eraserMode
+        val mode = EraseRules.modeFor(palmErasing, tapesOnly, fillsOnly, tapeEraseMode, fillEraseMode, eraserMode)
         val hlOnly = eraseHlOnly && !palmErasing
         /** k번째 획을 지우거나 (영역 지우개면) 닿은 부분만 잘라 낸다. 바뀐 것이 없으면 false */
         fun eraseOne(k: Int, st: Stroke): Boolean {

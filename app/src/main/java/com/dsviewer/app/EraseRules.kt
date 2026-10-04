@@ -64,6 +64,20 @@ internal object EraseRules {
         return t.isTape && t.revealed
     }
 
+    /** 테이프 도구의 지우개이고 손바닥이 아니면 테이프만 지운다 */
+    fun tapesOnly(tool: Tool, tapeErasing: Boolean, palm: Boolean): Boolean = tool == Tool.TAPE && tapeErasing && !palm
+
+    /** 채우기 도구의 지우개이고 손바닥이 아니면 채우기만 지운다 */
+    fun fillsOnly(tool: Tool, fillErasing: Boolean, palm: Boolean): Boolean = tool == Tool.FILL && fillErasing && !palm
+
+    /**
+     * 지우는 방식: 손바닥은 늘 닿은 부분만(AREA), 테이프만·채우기만 지울 때는 그 도구의 방식, 아니면 일반 지우개의 방식
+     */
+    fun modeFor(
+        palm: Boolean, tapesOnly: Boolean, fillsOnly: Boolean,
+        tapeMode: EraserMode, fillMode: EraserMode, eraserMode: EraserMode,
+    ): EraserMode = if (palm) EraserMode.AREA else if (tapesOnly) tapeMode else if (fillsOnly) fillMode else eraserMode
+
     class Result(val removed: Boolean, val decision: FillDecision)
 
     /**
