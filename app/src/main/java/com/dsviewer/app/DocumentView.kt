@@ -710,7 +710,7 @@ class DocumentView @JvmOverloads constructor(
                 drawStroke(canvas, st)
             }
             fillCtl.drawPending(canvas, i)
-            pickRect?.let { if (pickPage == i) drawPickRect(canvas, it) }
+            picker.draw(canvas, i)
             if (dragging) {
                 // 옮기거나 크기를 바꾸는 중인 획은 손을 뗄 때까지 그림만 바꿔 그린다
                 canvas.save()
@@ -892,22 +892,36 @@ class DocumentView @JvmOverloads constructor(
     }
 
     // ================= 오답 영역 고르기 =================
-    // 한 손가락이나 펜으로 문제 영역을 네모로 끌어 고른다. 두 손가락은 그대로 이동·확대
+    // 네모를 끌어 고르는 일은 WrongPicker가 한다. 여기서는 시작할 때 다른 입력 모드를 정리해 준다.
+
+    private val picker: WrongPicker = WrongPicker(this, object : WrongPicker.Host {
+        override val scale get() = this@DocumentView.scale
+        override val offsetX get() = offX
+        override val offsetY get() = offY
+        override val pageCount get() = sizes.size
+        override fun pageWidth(page: Int) = sizes[page].width
+        override fun pageHeight(page: Int) = sizes[page].height
+        override fun pageLeft(page: Int) = lefts[page]
+        override fun pageTop(page: Int) = tops[page]
+        override fun hitPage(sx: Float, sy: Float) = this@DocumentView.hitPage(sx, sy)
+        override fun stopFling() = scroller.forceFinished(true)
+        override fun switchToPinch(ev: MotionEvent) {
+            // 제스처 감지기는 첫 손가락의 DOWN을 못 받았으므로 지금 자리에서 새로 시작
+            fingerActive = true
+            val down = MotionEvent.obtain(ev)
+            down.action = MotionEvent.ACTION_DOWN
+            scaleDetector.onTouchEvent(down)
+            gestureDetector.onTouchEvent(down)
+            down.recycle()
+            scaleDetector.onTouchEvent(ev)
+            gestureDetector.onTouchEvent(ev)
+        }
+        override fun onPickEnded() { listener?.onWrongPickEnded() }
+        override fun onPicked(page: Int, rect: RectF) { listener?.onWrongPicked(page, rect) }
+    })
 
     /** 오답 영역을 고르는 중 */
-    var wrongPicking = false
-        private set
-    private var pickTracking = false
-    private var pickPage = -1
-    private var pickX0 = 0f
-    private var pickY0 = 0f
-    /** 끄는 중이거나 골라 둔 영역 (쪽 [pickPage]의 좌표) */
-    private var pickRect: RectF? = null
-    private val pickFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x302979FF }
-    private val pickLine = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        color = 0xFF2979FF.toInt()
-    }
+    val wrongPicking get() = picker.picking
 
     /** 오답 영역 고르기를 시작한다 (끝나면 [Listener.onWrongPickEnded]) */
     fun startWrongPick(): Boolean {
@@ -915,100 +929,14 @@ class DocumentView @JvmOverloads constructor(
         clearSelection()
         paletteNote = null
         cancelNotePlacement()
-        clearWrongRect()
-        wrongPicking = true
-        invalidate()
+        picker.start()
         return true
     }
 
-    fun cancelWrongPick() {
-        if (!wrongPicking) return
-        wrongPicking = false
-        pickTracking = false
-        pickRect = null
-        listener?.onWrongPickEnded()
-        invalidate()
-    }
+    fun cancelWrongPick() = picker.cancel()
 
     /** 골라 둔 영역 표시를 지운다 */
-    fun clearWrongRect() {
-        if (pickRect == null) return
-        pickRect = null
-        pickTracking = false
-        invalidate()
-    }
-
-    private fun drawPickRect(c: Canvas, r: RectF) {
-        pickLine.strokeWidth = 2f * density / scale
-        c.drawRect(r, pickFill)
-        c.drawRect(r, pickLine)
-    }
-
-    /** 쪽 [page] 안의 점으로 (화면 좌표 → 쪽 좌표, 쪽 밖은 가장자리로) */
-    private fun clampToPage(page: Int, sx: Float, sy: Float, out: FloatArray) {
-        out[0] = ((sx + offX) / scale - lefts[page]).coerceIn(0f, sizes[page].width)
-        out[1] = ((sy + offY) / scale - tops[page]).coerceIn(0f, sizes[page].height)
-    }
-
-    private val pickPoint = FloatArray(2)
-
-    /** 오답 영역 고르는 동안의 터치: 한 손가락·펜으로 끌면 네모, 손가락이 더 닿으면 이동·확대로 */
-    private fun handlePickTouch(ev: MotionEvent): Boolean {
-        when (ev.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                scroller.forceFinished(true)
-                pickRect = null
-                val hit = hitPage(ev.x, ev.y)
-                pickTracking = hit != null && hit.first in sizes.indices
-                if (pickTracking) {
-                    pickPage = hit!!.first
-                    clampToPage(pickPage, ev.x, ev.y, pickPoint)
-                    pickX0 = pickPoint[0]
-                    pickY0 = pickPoint[1]
-                }
-                invalidate()
-            }
-            MotionEvent.ACTION_MOVE -> if (pickTracking) {
-                clampToPage(pickPage, ev.x, ev.y, pickPoint)
-                pickRect = RectF(
-                    min(pickX0, pickPoint[0]), min(pickY0, pickPoint[1]),
-                    max(pickX0, pickPoint[0]), max(pickY0, pickPoint[1]),
-                )
-                invalidate()
-            }
-            MotionEvent.ACTION_POINTER_DOWN -> {
-                // 두 번째 손가락: 네모 고르기를 그만두고 이동·확대. 제스처 감지기는 첫 손가락의 DOWN을 못 받았으므로 지금 자리에서 새로 시작
-                pickTracking = false
-                pickRect = null
-                fingerActive = true
-                val down = MotionEvent.obtain(ev)
-                down.action = MotionEvent.ACTION_DOWN
-                scaleDetector.onTouchEvent(down)
-                gestureDetector.onTouchEvent(down)
-                down.recycle()
-                scaleDetector.onTouchEvent(ev)
-                gestureDetector.onTouchEvent(ev)
-                invalidate()
-            }
-            MotionEvent.ACTION_UP -> if (pickTracking) {
-                pickTracking = false
-                val r = pickRect
-                val minSide = 16f
-                if (r != null && r.width() >= minSide && r.height() >= minSide) {
-                    wrongPicking = false
-                    listener?.onWrongPickEnded()
-                    listener?.onWrongPicked(pickPage, RectF(r))
-                } else pickRect = null
-                invalidate()
-            }
-            MotionEvent.ACTION_CANCEL -> {
-                pickTracking = false
-                pickRect = null
-                invalidate()
-            }
-        }
-        return true
-    }
+    fun clearWrongRect() = picker.clear()
 
     /** 메모 글 고치기 (실행 취소 가능) */
     fun setNoteText(page: Int, old: Stroke, text: String) {
@@ -1160,7 +1088,7 @@ class DocumentView @JvmOverloads constructor(
 
     /** 메모를 누른 동작 (손가락·펜 모두). 메모가 아닌 곳에서 시작했으면 false */
     private fun handleNoteTouch(ev: MotionEvent): Boolean {
-        if (wrongPicking) return handlePickTouch(ev)
+        if (wrongPicking) return picker.onTouch(ev)
         if (notePlacing || placeTracking) return handlePlaceTouch(ev)
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
