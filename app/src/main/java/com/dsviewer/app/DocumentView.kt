@@ -2751,14 +2751,10 @@ class DocumentView @JvmOverloads constructor(
     fun addText(page: Int, left: Float, top: Float, text: InkText, color: Int) {
         val inkDoc = ink ?: return
         if (page !in sizes.indices) return
-        val w = text.boxW.toFloat()
-        val h = text.boxH.toFloat()
+        val c = PlacementMath.upright(left, top, text.boxW.toFloat(), text.boxH.toFloat())
         val st = Stroke(Tool.PEN, color, 0f).apply {
             this.text = text
-            add(left, top, 1f)
-            add(left + w, top, 1f)
-            add(left + w, top + h, 1f)
-            add(left, top + h, 1f)
+            for (i in 0 until 4) add(c[i * 2], c[i * 2 + 1], 1f)
         }
         clearSelection()
         inkDoc.add(page, st)
@@ -2778,24 +2774,13 @@ class DocumentView @JvmOverloads constructor(
             return
         }
         val oldText = old.text ?: return
-        val x0 = old.x(0); val y0 = old.y(0)
-        // 가로 방향(0→1), 세로 방향(0→3) 단위 벡터와 배율
-        val ax = old.x(1) - x0; val ay = old.y(1) - y0
-        val bx = old.x(3) - x0; val by = old.y(3) - y0
-        val aLen = max(hypot(ax, ay), 0.01f)
-        val bLen = max(hypot(bx, by), 0.01f)
-        val kx = aLen / oldText.boxW
-        val ky = bLen / oldText.boxH
-        val w = text.boxW * kx
-        val h = text.boxH * ky
-        val ux = ax / aLen * w; val uy = ay / aLen * w
-        val vx = bx / bLen * h; val vy = by / bLen * h
+        val oldCorners = FloatArray(8) { if (it % 2 == 0) old.x(it / 2) else old.y(it / 2) }
+        val c = PlacementMath.retargetTextBox(
+            oldCorners, oldText.boxW.toFloat(), oldText.boxH.toFloat(), text.boxW.toFloat(), text.boxH.toFloat(),
+        )
         val st = Stroke(Tool.PEN, color, 0f).apply {
             this.text = text
-            add(x0, y0, 1f)
-            add(x0 + ux, y0 + uy, 1f)
-            add(x0 + ux + vx, y0 + uy + vy, 1f)
-            add(x0 + vx, y0 + vy, 1f)
+            for (i in 0 until 4) add(c[i * 2], c[i * 2 + 1], 1f)
             link = old.link
         }
         inkDoc.replace(page, old, st)
@@ -2861,14 +2846,12 @@ class DocumentView @JvmOverloads constructor(
     fun pasteClipboard() {
         val inkDoc = ink ?: return
         if (clipboard.isEmpty() || sizes.isEmpty()) return
-        val centerDoc = (offY + height / 2f) / scale
         val page = currentPage()
-        val cx = (offX + width / 2f) / scale - lefts[page]
-        val cy = (centerDoc - tops[page]).coerceIn(0f, sizes[page].height)
-        val w = clipSize.width(); val h = clipSize.height()
-        val x0 = (cx - w / 2).coerceIn(0f, max(0f, sizes[page].width - w))
-        val y0 = (cy - h / 2).coerceIn(0f, max(0f, sizes[page].height - h))
-        val copies = clipboard.map { it.copy().apply { role = null; translate(x0, y0) } }
+        val at = PlacementMath.pasteOrigin(
+            offX, offY, width.toFloat(), height.toFloat(), scale,
+            lefts[page], tops[page], sizes[page].width, sizes[page].height, clipSize.width(), clipSize.height(),
+        )
+        val copies = clipboard.map { it.copy().apply { role = null; translate(at[0], at[1]) } }
         clearSelection()
         inkDoc.addAll(page, copies)
         select(page, copies)
@@ -2906,7 +2889,6 @@ class DocumentView @JvmOverloads constructor(
         private const val PALM_GATHER_MS = 250L
         private const val PALM_MIN_DP = 24f
         private const val PALM_MAX_DP = 220f
-        /** 테이프를 글자 크기에 맞출 때 가운데에서 위·아래로 찾는 범위 (pt) */
         /** 회전 손잡이 반지름과 상자에서 떨어진 거리 */
         private const val ROT_HANDLE_DP = 14f
         private const val ROT_OFFSET_DP = 34f
