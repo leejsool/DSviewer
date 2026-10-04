@@ -124,6 +124,9 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
 
     fun setIcon(i: Int, icon: Int, tint: Int?) = tabs.getOrNull(i)?.setIcon(icon, tint)
 
+    /** 저장하지 않은 변경이 있는 탭에 디스켓 표시 */
+    fun setUnsaved(i: Int, unsaved: Boolean) = tabs.getOrNull(i)?.setUnsaved(unsaved)
+
     /** i번 탭을 고른다. notify면 바뀌었을 때 listener.onTabSelected를 부른다 */
     fun select(i: Int, notify: Boolean = false) {
         if (i !in tabs.indices) return
@@ -193,7 +196,7 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
         super.onMeasure(widthMeasureSpec, heightMeasureSpec)
     }
 
-    /** 탭 하나: [아이콘] 이름 [×] */
+    /** 탭 하나: [아이콘] 이름 [저장 안 됨] [×] */
     private inner class TabView(private val closable: Boolean) : LinearLayout(context) {
         var active = false
         var divider = false
@@ -203,6 +206,7 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
         private val radius = px(10f).toFloat()   // 위쪽 둥근 모서리
         private val icon = ImageView(context)
         private val title = TextView(context)
+        private val unsaved = ImageView(context)
         private val close = ImageButton(context)
         private val shape = Path()
         private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -217,6 +221,10 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
             title.setSingleLine()
             title.ellipsize = android.text.TextUtils.TruncateAt.END
             addView(title, LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            unsaved.setImageResource(R.drawable.ic_unsaved)
+            unsaved.contentDescription = "저장하지 않음"
+            unsaved.visibility = View.GONE
+            addView(unsaved, LayoutParams(px(18f), px(18f)))
             if (closable) {
                 close.setImageResource(R.drawable.ic_close)
                 close.scaleType = ImageView.ScaleType.FIT_CENTER
@@ -235,6 +243,10 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
             (icon.layoutParams as LayoutParams).apply {
                 width = px(if (c) 14f else 16f); height = width
                 marginEnd = px(if (c) 5f else 8f)
+            }
+            (unsaved.layoutParams as LayoutParams).apply {
+                width = px(if (c) 16f else 18f); height = width
+                marginStart = px(4f)
             }
             title.setTextSize(TypedValue.COMPLEX_UNIT_SP, if (c) 12f else 13f)
             if (closable) {
@@ -261,6 +273,10 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
         fun setTitle(t: CharSequence) {
             title.text = t
             contentDescription = t
+        }
+
+        fun setUnsaved(on: Boolean) {
+            unsaved.visibility = if (on) View.VISIBLE else View.GONE
         }
 
         fun setIcon(res: Int, tint: Int?) {

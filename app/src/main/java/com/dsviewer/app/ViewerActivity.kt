@@ -370,8 +370,9 @@ class ViewerActivity : AppCompatActivity() {
     private fun updateTabTitle(t: DocTab) {
         val i = docs.indexOf(t)
         if (i < 0) return
-        // 저장하지 않은 필기가 있으면 앞에 점
-        docTabs.setTitle(i, if (t.ink?.dirty == true) "● ${t.name}" else t.name)
+        // 저장하지 않은 필기가 있으면 이름 뒤에 디스켓 표시
+        docTabs.setTitle(i, t.name)
+        docTabs.setUnsaved(i, t.ink?.dirty == true)
         val color = if (t.type == DocType.UNKNOWN) TAB_ICON_GRAY else DocColors.of(t.type)
         docTabs.setIcon(i, R.drawable.ic_doc, color)
     }
@@ -567,7 +568,7 @@ class ViewerActivity : AppCompatActivity() {
         val inkDoc = InkDocument(d.pageCount)
         strokes?.let { inkDoc.load(it, marks) }
         inkDoc.loadWrongs(wrongs)
-        // 자동 저장본에서 열었으면 아직 저장하지 않은 필기로 (탭에 ●, 닫을 때 저장 여부를 묻는다)
+        // 자동 저장본에서 열었으면 아직 저장하지 않은 필기로 (탭에 디스켓 표시, 닫을 때 저장 여부를 묻는다)
         if (t.draftFile != null) {
             t.draftFile = null
             inkDoc.restoreDirty()
@@ -587,7 +588,7 @@ class ViewerActivity : AppCompatActivity() {
         inkDoc.jumpTo = { spot -> if (current === t) (spot as Spot).let { docView.scrollToPageY(it.page, it.y) } }
         t.pdf = d
         t.ink = inkDoc
-        updateTabTitle(t)  // 복구한 필기면 ●
+        updateTabTitle(t)  // 복구한 필기면 디스켓 표시
         if (current === t) {
             docView.setDocument(d, inkDoc)
             syncPagePanel()
