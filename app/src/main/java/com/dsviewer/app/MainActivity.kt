@@ -64,19 +64,6 @@ class MainActivity : AppCompatActivity() {
     }
     private enum class Kind { FOLDER, DRIVE, DOC }
 
-    /** 정렬 기준. [descFirst]면 처음 고를 때 큰 것(최근 것)부터 */
-    private enum class SortKey(val label: String, val descFirst: Boolean) {
-        OPENED("연 날짜", true), MODIFIED("수정한 날짜", true), NAME("이름", false), SIZE("크기", true), TYPE("종류", false);
-
-        /** (오름차순, 내림차순) 이름 */
-        val dirLabels get() = when (this) {
-            OPENED, MODIFIED -> "오래된 것 먼저" to "최근 것 먼저"
-            NAME -> "가나다순" to "가나다 거꾸로"
-            SIZE -> "작은 것 먼저" to "큰 것 먼저"
-            TYPE -> "PDF 먼저" to "그림 먼저"
-        }
-    }
-
     private class Row(
         val title: String,
         val sub: String,
@@ -416,7 +403,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun applyFilter() {
         val q = query.trim()
-        val shown = if (q.isEmpty()) rows else rows.filter { it.title.contains(q, ignoreCase = true) }
+        val shown = ListSort.filterByTitle(rows, q, rowFields)
         adapter.submit(shown)
         emptyText.text = if (q.isEmpty()) emptyMsg else "'$q' 이름의 문서가 없습니다."
         emptyText.isVisible = shown.isEmpty() && !progress.isVisible && !permCard.isVisible
@@ -515,8 +502,7 @@ class MainActivity : AppCompatActivity() {
 
     // ================= 정렬 · 보기 =================
 
-    private fun sortKeys(t: Tab) =
-        if (t == Tab.RECENT || t == Tab.FAVORITE) SortKey.entries.toList() else SortKey.entries.filter { it != SortKey.OPENED }
+    private fun sortKeys(t: Tab) = ListSort.keysFor(t == Tab.RECENT || t == Tab.FAVORITE)
 
     private fun defaultSort(t: Tab) = when (t) {
         Tab.RECENT, Tab.FAVORITE -> SortKey.OPENED
@@ -525,8 +511,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun sortKey(): SortKey {
-        val k = prefs.getString("sort_${tab.name}", null)?.let { n -> SortKey.entries.firstOrNull { it.name == n } }
-        return k?.takeIf { it in sortKeys(tab) } ?: defaultSort(tab)
+        return ListSort.resolveKey(prefs.getString("sort_${tab.name}", null), sortKeys(tab), defaultSort(tab))
     }
 
     private fun sortDesc(): Boolean = prefs.getBoolean("sortDesc_${tab.name}", sortKey().descFirst)
@@ -570,14 +555,11 @@ class MainActivity : AppCompatActivity() {
     // ================= 보여 줄 형식 =================
 
     /** 이 탭에서 고를 수 있는 형식. 그림은 기기 사진이 모두 섞이지 않게 '모든 문서'에서는 뺀다 */
-    private fun groupsFor(t: Tab) =
-        if (t == Tab.ALL) DocGroup.entries.filter { it != DocGroup.IMAGE } else DocGroup.entries
+    private fun groupsFor(t: Tab) = ListSort.groupsFor(t == Tab.ALL)
 
     /** 이 탭에서 보여 줄 형식 (처음엔 모두) */
     private fun shownGroups(): List<DocGroup> {
-        val all = groupsFor(tab)
-        val saved = prefs.getStringSet("groups_${tab.name}", null) ?: return all
-        return all.filter { it.name in saved }.ifEmpty { all }
+        return ListSort.shownGroups(groupsFor(tab), prefs.getStringSet("groups_${tab.name}", null))
     }
 
     private fun updateFilterButton() {
@@ -647,34 +629,22 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** 폴더는 늘 먼저. 폴더끼리는 이름이나 날짜로만 (크기·종류가 없으므로 그때는 이름순) */
-    private fun sortRows(rows: List<Row>): List<Row> {
-        if (rows.any { it.kind == Kind.DRIVE }) return rows
-        val key = sortKey()
-        val desc = sortDesc()
-        val byName = Comparator<Row> { a, b -> collator.compare(a.title, b.title) }
-        fun primary(k: SortKey): Comparator<Row> = when (k) {
-            SortKey.NAME -> byName
-            SortKey.OPENED -> compareBy { it.opened }
-            SortKey.MODIFIED -> compareBy { it.modified }
-            SortKey.SIZE -> compareBy { it.size }
-            SortKey.TYPE -> compareBy { typeRank(DocType.ofName(it.title)) }
-        }
-        fun ordered(k: SortKey) = (if (desc) primary(k).reversed() else primary(k)).then(byName)
-        val (folders, docs) = rows.partition { it.isFolder }
-        val folderKey = if (key == SortKey.SIZE || key == SortKey.TYPE) null else key
-        val sortedFolders = if (folderKey == null) folders.sortedWith(byName) else folders.sortedWith(ordered(folderKey))
-        return sortedFolders + docs.sortedWith(ordered(key))
+    private val rowFields = object : ListSort.Fields<Row> {
+        override fun title(r: Row) = r.title
+        override fun isFolder(r: Row) = r.isFolder
+        override fun isDrive(r: Row) = r.kind == Kind.DRIVE
+        override fun opened(r: Row) = r.opened
+        override fun modified(r: Row) = r.modified
+        override fun size(r: Row) = r.size
+        override fun typeRank(r: Row) = typeRank(DocType.ofName(r.title))
     }
 
+    private fun sortRows(rows: List<Row>): List<Row> = ListSort.sort(rows, sortKey(), sortDesc(), collator, rowFields)
+
     private fun spanCount(): Int {
-        if (!grid) {
-            // 목록으로 볼 때 가로 화면이면 두 칸으로 나눠 오른쪽도 쓴다
-            val landscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-            return if (landscape) 2 else 1
-        }
-        val w = list.width - list.paddingLeft - list.paddingRight
-        if (w <= 0) return 3
-        return (w / (140 * resources.displayMetrics.density)).toInt().coerceAtLeast(2)
+        // 목록으로 볼 때 가로 화면이면 두 칸으로 나눠 오른쪽도 쓴다
+        val landscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        return ListSort.spanCount(grid, landscape, list.width - list.paddingLeft - list.paddingRight, resources.displayMetrics.density)
     }
 
     private fun applyViewMode() {
