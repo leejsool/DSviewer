@@ -72,6 +72,8 @@ internal class ReviewController(
     private val removeTab: (DocTab) -> Unit,
     /** 이 탭의 마지막 필기까지 곧바로 파일에 적는다 */
     private val saveNow: (DocTab) -> Unit,
+    /** 만든 PDF를 새 탭으로 연다 */
+    private val openFile: (File) -> Unit,
 ) {
     private val density = activity.resources.displayMetrics.density
     private fun dp(v: Int) = (v * density).roundToInt()
@@ -139,17 +141,77 @@ internal class ReviewController(
 
     // ================= 시작 =================
 
-    /** [entries]를 복습한다: 오답 쪽에서 문제 그림을 찾아 쪽마다 하나씩 담은 복습용 문서를 만들어 새 탭으로 연다 */
-    fun start(source: DocTab, entries: List<WrongEntry>) {
-        val inkDoc = source.ink ?: return
-        val renderPdf = source.renderPdf ?: return
-        if (source.pagesBusy) return
+    /** [entries]의 문제 그림을 원문 문서의 오답 쪽에서 찾는다 (복습 순서: 안 본 것 먼저, 밀린 것 먼저). 그림을 지운 오답은 빠진다 */
+    private fun collectProblems(source: DocTab, entries: List<WrongEntry>): List<ReviewProblem> {
+        val inkDoc = source.ink ?: return emptyList()
         val pageOf = inkDoc.allWrongs().associateByTo(IdentityHashMap(), { it.second }, { it.first })
-        val problems = entries.sortedWith(compareBy({ ReviewSchedule.order(it.stage, it.dueDay) }, { it.number })).mapNotNull { e ->
+        return entries.sortedWith(compareBy({ ReviewSchedule.order(it.stage, it.dueDay) }, { it.number })).mapNotNull { e ->
             val page = pageOf[e] ?: return@mapNotNull null
             val st = WrongNote.problemStroke(inkDoc.pages[page], e.slot) ?: return@mapNotNull null
             ReviewProblem(e, st, page)
         }
+    }
+
+    /**
+     * [entries]의 문제만 모은 문제지 PDF를 만든다: 문제 그림 하나와 아래 풀이 칸이 한 쪽씩, 정답과 전에 쓴 풀이는 없다.
+     * 복습 풀이와 같은 폴더에 '원본이름_오답문제지_날짜시간.pdf'로 저장하고, 열기 · 공유(인쇄)를 묻는다
+     */
+    fun exportSheet(source: DocTab, entries: List<WrongEntry>) {
+        val renderPdf = source.renderPdf ?: return
+        if (source.pagesBusy) return
+        val problems = collectProblems(source, entries)
+        if (problems.isEmpty()) {
+            toast("문제 그림을 찾지 못했습니다.")
+            return
+        }
+        // 필기 획은 화면 스레드에서 만들어 둔다
+        val pages = problems.map { p -> listOf(WrongNote.moved(p.stroke, WrongNote.PROBLEM_TOP - wrongBounds(p.stroke).top)) }
+        activity.lifecycleScope.launch {
+            progress.visibility = View.VISIBLE
+            try {
+                val out = withContext(Dispatchers.IO) {
+                    val dir = reviewDir(source)
+                    val name = ReviewFiles.unique(ReviewFiles.fileName(source.name, System.currentTimeMillis(), label = "오답문제지")) { File(dir, it).exists() }
+                    val target = File(dir, name)
+                    val blank = FileUtil.tempFile(activity, "sheet", "pdf")
+                    try {
+                        PdfPages.create(blank, PdfPages.paperOf(renderPdf, problems[0].sourcePage), WrongNote.PAGE_W, WrongNote.PAGE_H, problems.size)
+                        PdfInk.save(blank, target, pages)
+                    } finally {
+                        blank.delete()
+                    }
+                    android.media.MediaScannerConnection.scanFile(activity.applicationContext, arrayOf(target.path), null, null)
+                    target
+                }
+                MaterialAlertDialogBuilder(activity)
+                    .setTitle("문제지를 만들었습니다")
+                    .setMessage("오답 ${problems.size}문제 · ${out.parentFile?.name}/${out.name}\n인쇄하거나 다른 앱으로 보낼 수 있습니다.")
+                    .setPositiveButton("열기") { _, _ -> openFile(out) }
+                    .setNeutralButton("공유 · 인쇄") { _, _ -> share(out) }
+                    .setNegativeButton("닫기", null)
+                    .show()
+            } catch (e: Exception) {
+                toast("문제지를 만들지 못했습니다.")
+            } finally {
+                progress.visibility = View.GONE
+            }
+        }
+    }
+
+    private fun share(file: File) {
+        val uri = androidx.core.content.FileProvider.getUriForFile(activity, "${activity.packageName}.files", file)
+        val send = android.content.Intent(android.content.Intent.ACTION_SEND)
+            .setType("application/pdf")
+            .putExtra(android.content.Intent.EXTRA_STREAM, uri)
+            .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        activity.startActivity(android.content.Intent.createChooser(send, "문제지 공유 · 인쇄"))
+    }
+
+    /** [entries]를 복습한다: 오답 쪽에서 문제 그림을 찾아 쪽마다 하나씩 담은 복습용 문서를 만들어 새 탭으로 연다 */
+    fun start(source: DocTab, entries: List<WrongEntry>) {
+        val renderPdf = source.renderPdf ?: return
+        if (source.pagesBusy) return
+        val problems = collectProblems(source, entries)
         if (problems.isEmpty()) {
             toast("복습할 문제 그림을 찾지 못했습니다.")
             return

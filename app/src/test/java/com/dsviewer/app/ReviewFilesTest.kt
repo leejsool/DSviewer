@@ -40,6 +40,11 @@ class ReviewFilesTest {
         assertTrue(ReviewFiles.fileName("", millis(2026, 10, 5, 0, 0, 0), seoul).startsWith("문서_복습_"))
     }
 
+    @Test fun labelReplacesWordInName() {
+        assertEquals("시험지_오답문제지_2026-10-05 19.45.12.pdf",
+            ReviewFiles.fileName("시험지.pdf", millis(2026, 10, 5, 19, 45, 12), seoul, label = "오답문제지"))
+    }
+
     @Test fun uniqueSkipsExistingNames() {
         val taken = setOf("a.pdf", "a (2).pdf")
         assertEquals("a (3).pdf", ReviewFiles.unique("a.pdf") { it in taken })

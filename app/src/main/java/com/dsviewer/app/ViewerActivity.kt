@@ -1271,6 +1271,10 @@ class ViewerActivity : AppCompatActivity() {
             .isEnabled = ink != null
         popup.menu.add(0, 10, 1, "오답 복습 시작").setIcon(R.drawable.ic_wrong_note)
             .isEnabled = ink != null && current?.review == null
+        popup.menu.add(0, 13, 1, "오답 문제지 PDF 만들기").setIcon(R.drawable.ic_wrong_note)
+            .isEnabled = ink != null && current?.review == null
+        popup.menu.add(0, 12, 1, "오답 통계").setIcon(R.drawable.ic_wrong_note)
+            .isEnabled = ink != null && current?.review == null
         popup.menu.add(0, 5, 2, "링크").setIcon(R.drawable.ic_link)
         popup.setForceShowIcon(true)
         popup.setOnMenuItemClickListener { item ->
@@ -1288,6 +1292,8 @@ class ViewerActivity : AppCompatActivity() {
                 item.itemId == 8 -> wrong.startPick()
                 item.itemId == 9 -> wrong.showList()
                 item.itemId == 10 -> wrong.askReview()
+                item.itemId == 12 -> wrong.showStats()
+                item.itemId == 13 -> wrong.askExport()
                 item.itemId == 1 || item.itemId == 3 -> {
                     imageImportMode = if (item.itemId == 3) ImageImportMode.NEW_PAGE else ImageImportMode.IN_PAGE
                     pickImage.launch("image/*")
@@ -1330,11 +1336,12 @@ class ViewerActivity : AppCompatActivity() {
         ReviewController(
             this, docView, findViewById(R.id.docFrame), findViewById(R.id.reviewBar), findViewById(R.id.reviewRow),
             findViewById(R.id.bottomOverlay), progress, { current }, saver, ::toast, ::openReviewTab, ::removeTab,
-        ) { autoSaver.saveNow(it) }
+            { autoSaver.saveNow(it) }, { openTab(Uri.fromFile(it), writable = true, newNote = false) },
+        )
     }
 
     private val wrong: WrongController by lazy {
-        WrongController(this, prefs, docView, textEditor, progress, { current }, ::toast, ::editPages) { t, list -> review.start(t, list) }
+        WrongController(this, prefs, docView, textEditor, progress, { current }, ::toast, ::editPages, { t, list -> review.start(t, list) }, { t, list -> review.exportSheet(t, list) })
     }
 
     /**

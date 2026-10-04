@@ -205,6 +205,8 @@ class WrongUi(private val a: AppCompatActivity, private val prefs: SharedPrefere
         onEdit: (e: WrongEntry, done: () -> Unit) -> Unit,
         /** '복습' 단추: 지금 목록에 보이는 오답들을 넘긴다 */
         onReview: (shown: List<WrongEntry>) -> Unit,
+        /** '통계' 단추 */
+        onStats: () -> Unit,
     ) {
         var dueOnly = false
         var lastShown: List<WrongEntry> = emptyList()
@@ -301,6 +303,102 @@ class WrongUi(private val a: AppCompatActivity, private val prefs: SharedPrefere
             .setView(ScrollView(a).apply { addView(root) })
             .setPositiveButton("닫기", null)
             .setNeutralButton("복습") { _, _ -> onReview(lastShown) }
+            .setNegativeButton("통계") { _, _ -> onStats() }
+            .show()
+    }
+
+    // ================= 통계 =================
+
+    private fun pct(f: Float) = (f * 100).roundToInt()
+
+    private fun accuracyColor(f: Float?) = when {
+        f == null -> 0xFF90A4AE.toInt()
+        f >= 0.8f -> 0xFF2E7D32.toInt()
+        f >= 0.5f -> 0xFFEF6C00.toInt()
+        else -> 0xFFD32F2F.toInt()
+    }
+
+    /** 이름 · 막대 · 숫자 한 줄. [fraction]이 null이면 빈 막대 */
+    private fun barRow(left: View, fraction: Float?, color: Int, right: String, onClick: (() -> Unit)? = null): View {
+        val row = LinearLayout(a).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(6), 0, dp(6))
+            if (onClick != null) {
+                isClickable = true
+                setOnClickListener { onClick() }
+            }
+        }
+        row.addView(left, LinearLayout.LayoutParams(dp(104), ViewGroup.LayoutParams.WRAP_CONTENT))
+        row.addView(android.widget.ProgressBar(a, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            progress = ((fraction ?: 0f) * 100).roundToInt()
+            progressTintList = android.content.res.ColorStateList.valueOf(color)
+            progressBackgroundTintList = android.content.res.ColorStateList.valueOf(0xFFE3E8EC.toInt())
+        }, LinearLayout.LayoutParams(0, dp(12), 1f))
+        row.addView(TextView(a).apply {
+            text = right
+            textSize = 12f
+            gravity = Gravity.END
+        }, LinearLayout.LayoutParams(dp(112), ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(8) })
+        return row
+    }
+
+    private fun smallText(text: String, bold: Boolean = false) = TextView(a).apply {
+        this.text = text
+        textSize = 13f
+        if (bold) setTypeface(typeface, Typeface.BOLD)
+    }
+
+    /**
+     * 오답 복습 통계: 요약, 복습 단계별 문제 수, 기호별·해시태그별 정답률 (약한 것부터).
+     * 해시태그 줄을 누르면 그 태그의 오답만 복습한다 ([onReviewTag])
+     */
+    internal fun showStats(entries: List<StatEntry>, onReviewTag: (String) -> Unit, onReviewDue: () -> Unit) {
+        val s = ReviewStats.summary(entries, ReviewSchedule.today())
+        val root = LinearLayout(a).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), dp(8))
+        }
+        var dialog: androidx.appcompat.app.AlertDialog? = null
+        if (entries.isEmpty()) {
+            root.addView(smallText("아직 담은 오답이 없습니다. 삽입 ▸ 오답 담기로 시작하세요."))
+        } else {
+            root.addView(smallText("오답 ${s.total}개 · 복습한 것 ${s.reviewed}개" + (s.accuracy?.let { " · 최근 정답률 ${pct(it)}%" } ?: ""), bold = true).apply { textSize = 15f })
+            root.addView(smallText("오늘 복습할 것 ${s.dueToday}개 · 내일 ${s.dueTomorrow}개 · 일주일 안에 ${s.dueWithinWeek}개").apply { setPadding(0, dp(4), 0, 0) })
+
+            root.addView(label("복습 단계"))
+            val most = s.stages.max().coerceAtLeast(1)
+            for ((i, n) in s.stages.withIndex()) {
+                root.addView(barRow(smallText(if (i == 0) "복습 전" else "${i}단계"), n / most.toFloat(), 0xFF3E82F7.toInt(), "${n}개"))
+            }
+
+            root.addView(label("기호별 정답률"))
+            for (g in ReviewStats.bySymbol(entries)) {
+                val sym = g.key.toInt()
+                val left = if (sym == WrongSymbol.NONE) smallText("분류 없음") else SymbolView(a, sym, dp(13).toFloat())
+                root.addView(barRow(left, g.accuracy, accuracyColor(g.accuracy),
+                    "${g.count}개 · " + (g.accuracy?.let { "${pct(it)}%" } ?: "복습 전")))
+            }
+
+            val tags = ReviewStats.byTag(entries)
+            if (tags.isNotEmpty()) {
+                root.addView(label("해시태그별 정답률 (약한 것부터 · 누르면 그 태그만 복습)"))
+                for (g in tags.take(15)) {
+                    root.addView(barRow(smallText("#${g.key}").apply { setTextColor(0xFF1565C0.toInt()); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END },
+                        g.accuracy, accuracyColor(g.accuracy), "${g.count}개 · " + (g.accuracy?.let { "${pct(it)}%" } ?: "복습 전")) {
+                        dialog?.dismiss()
+                        onReviewTag(g.key)
+                    })
+                }
+                if (tags.size > 15) root.addView(smallText("… 외 ${tags.size - 15}개").apply { setPadding(0, dp(4), 0, 0) })
+            }
+        }
+        dialog = MaterialAlertDialogBuilder(a)
+            .setTitle("오답 통계")
+            .setView(ScrollView(a).apply { addView(root) })
+            .setPositiveButton("닫기", null)
+            .apply { if (s.dueToday > 0) setNeutralButton("오늘 복습 ${s.dueToday}개") { _, _ -> onReviewDue() } }
             .show()
     }
 

@@ -62,6 +62,22 @@ internal object ReviewSchedule {
         return rs.sumOf { if (it == ReviewResult.RIGHT) 2 else if (it == ReviewResult.UNSURE) 1 else 0 } / (2f * rs.size)
     }
 
+    /** 채점 기록 글의 점수: (두 배한 점수 합 (맞음 2, 애매 1, 틀림 0), 채점 수). 묶음 정답률을 기록 전체로 내려고 쓴다 */
+    fun points(history: String): Pair<Int, Int> {
+        var twice = 0
+        var n = 0
+        for (c in history) {
+            val r = ReviewResult.of(c) ?: continue
+            twice += when (r) {
+                ReviewResult.RIGHT -> 2
+                ReviewResult.UNSURE -> 1
+                ReviewResult.WRONG -> 0
+            }
+            n++
+        }
+        return twice to n
+    }
+
     /** 목록에 보일 복습 상태 글 */
     fun label(stage: Int, dueDay: Long, today: Long): String {
         if (stage <= 0) return "복습 전"

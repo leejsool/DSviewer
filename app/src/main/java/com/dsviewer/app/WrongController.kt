@@ -30,6 +30,8 @@ internal class WrongController(
     private val editPages: (DocTab, (File, File) -> Unit, (() -> Unit)?, (MutableList<MutableList<Stroke>>) -> Int) -> Unit,
     /** 고른 오답들로 복습을 시작한다 */
     private val startReview: (DocTab, List<WrongEntry>) -> Unit,
+    /** 고른 오답들의 문제지 PDF를 만든다 */
+    private val exportSheet: (DocTab, List<WrongEntry>) -> Unit,
 ) {
     private val wrongUi by lazy { WrongUi(activity, prefs) }
 
@@ -157,15 +159,46 @@ internal class WrongController(
             },
             onEdit = { e, done -> editWrong(t, e, done) },
             onReview = { shown -> askReview(shown) },
+            onStats = { showStats() },
         )
     }
 
+    /** 오답 통계: 요약·단계·기호·해시태그별 정답률. 태그 줄을 누르면 그 태그만 복습 */
+    fun showStats() {
+        val t = current() ?: return
+        val inkDoc = t.ink ?: return
+        val all = inkDoc.allWrongs().map { it.second }
+        wrongUi.showStats(
+            all.map { StatEntry(it.symbol, it.tags, it.stage, it.dueDay, it.history) },
+            onReviewTag = { tag ->
+                if (t.review != null) toast("복습 중인 문서에서는 새 복습을 시작할 수 없습니다.")
+                else startReview(t, all.filter { tag in it.tags })
+            },
+            onReviewDue = { reviewDue() },
+        )
+    }
+
+    /** 오늘 복습할 오답만 바로 복습한다 */
+    fun reviewDue() {
+        val t = current() ?: return
+        val inkDoc = t.ink ?: return
+        if (t.review != null || t.pagesBusy) return
+        val today = ReviewSchedule.today()
+        val due = inkDoc.allWrongs().map { it.second }.filter { it.isDue(today) }
+        if (due.isEmpty()) toast("오늘 복습할 오답이 없습니다.") else startReview(t, due)
+    }
+
     /** 복습 범위를 고른다: 오늘 복습할 것 / 지금 목록에 보이는 것 / 전체 ([shown]이 null이면 목록 없이 시작한 것) */
-    fun askReview(shown: List<WrongEntry>? = null) {
+    fun askReview(shown: List<WrongEntry>? = null) = askScope("오답 복습", shown, startReview)
+
+    /** 문제지로 만들 범위를 고른다 */
+    fun askExport() = askScope("문제지로 만들 오답", null, exportSheet)
+
+    private fun askScope(title: String, shown: List<WrongEntry>?, action: (DocTab, List<WrongEntry>) -> Unit) {
         val t = current() ?: return
         val inkDoc = t.ink ?: return
         if (t.review != null) {
-            toast("복습 중인 문서에서는 새 복습을 시작할 수 없습니다.")
+            toast("복습 중인 문서에서는 쓸 수 없습니다.")
             return
         }
         if (t.pagesBusy) return
@@ -181,10 +214,10 @@ internal class WrongController(
         if (shown != null && shown.size != all.size && shown.size != due.size) choices.add("지금 목록에 보이는 것 (${shown.size}개)" to shown)
         choices.add("전체 (${all.size}개)" to all)
         MaterialAlertDialogBuilder(activity)
-            .setTitle("오답 복습")
+            .setTitle(title)
             .setItems(choices.map { it.first }.toTypedArray()) { _, i ->
                 val list = choices[i].second
-                if (list.isEmpty()) toast("복습할 오답이 없습니다.") else startReview(t, list)
+                if (list.isEmpty()) toast("해당하는 오답이 없습니다.") else action(t, list)
             }
             .setNegativeButton("취소", null)
             .show()
