@@ -52,6 +52,8 @@ class InlineTextEditor(private val host: TextEditHost, private val docView: Docu
     /** 글 상자가 열리고 닫힐 때 (서식 줄을 보이고 숨긴다) */
     var onEditingChanged: ((Boolean) -> Unit)? = null
     var onFormatChanged: ((FormatState) -> Unit)? = null
+    /** [commit] 때 함께 부를 것 (포스트잇 제자리 입력 [NoteInlineEditor]) */
+    var alsoCommit: (() -> Unit)? = null
 
     private val density = host.resources.displayMetrics.density
     private fun dp(v: Float) = v * density
@@ -281,6 +283,8 @@ class InlineTextEditor(private val host: TextEditHost, private val docView: Docu
 
     /** 친 글을 쪽에 넣고 상자를 닫는다. 비어 있으면 (고치던 글이면 그 글을 지우고) 아무것도 넣지 않는다 */
     fun commit() {
+        // 글 상자를 닫는 자리마다 포스트잇 입력도 함께 닫는다
+        alsoCommit?.invoke()
         if (!isEditing) return
         isEditing = false
         val rich = RichDoc.from(edit.text, paras)

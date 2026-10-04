@@ -120,6 +120,8 @@ class WrongNoteTest {
         assertTrue(ink2.pages[0].any { it.role == "WS1" && it.image != null })
         // 오답 쪽 링크: 원문의 배지 → 오답 쪽, 머리줄 오른쪽 → 원문
         val badge = bounds(ink2.pages[0].first { it.role == "WS1" })
+        // 배지는 쪽 오른쪽 바깥 여백에 있어 원문을 가리지 않는다 (저장·불러오기 뒤에도 그 자리)
+        assertTrue("badge in right margin (${badge.left})", badge.left >= 595f)
         assertEquals(3, ink2.wrongLinkAt(0, badge.centerX(), badge.centerY())?.first)
         val head = bounds(ink2.pages[3].first { it.role == "WH1" })
         assertEquals(0, ink2.wrongLinkAt(3, head.right - 10f, head.centerY())?.first)

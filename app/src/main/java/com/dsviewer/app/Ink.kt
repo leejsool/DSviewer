@@ -893,6 +893,12 @@ class InkDocument(pageCount: Int) {
 
     fun nextWrongNumber() = (allWrongs().maxOfOrNull { it.second.number } ?: 0) + 1
 
+    /** 번호가 [number]인 오답 항목 (배지의 점선이 원문 자리를 찾을 때) */
+    fun wrongByNumber(number: Int): WrongEntry? = wrongs.values.firstNotNullOfOrNull { l -> l.firstOrNull { it.number == number } }
+
+    /** 쪽 밖 여백에 놓일 것(배지·포스트잇)이 하나라도 있는가 */
+    fun hasMarginItems(): Boolean = pages.any { l -> l.any { it.isMarginItem() } }
+
     /** 쪽 구성 바꾸기([changePages])의 edit 안에서 새로 만든 오답 쪽에 항목을 단다 (그 기록이 되돌리는 대로 따라간다) */
     fun attachWrong(list: MutableList<Stroke>, e: WrongEntry) {
         wrongs.getOrPut(list) { mutableListOf() }.add(e)

@@ -78,6 +78,7 @@ class ViewerActivity : AppCompatActivity() {
     private lateinit var toolButtons: Map<Tool, ImageButton>
     private lateinit var dock: ToolbarDock
     private lateinit var textEditor: InlineTextEditor
+    private lateinit var noteEditor: NoteInlineEditor
     private lateinit var topOverlay: LinearLayout
     private lateinit var bottomOverlay: LinearLayout
 
@@ -210,6 +211,9 @@ class ViewerActivity : AppCompatActivity() {
 
         docView = findViewById(R.id.docView)
         textEditor = InlineTextEditor(findViewById(R.id.textEditHost), docView)
+        noteEditor = NoteInlineEditor(findViewById(R.id.textEditHost), docView)
+        // 글 상자를 닫는 모든 자리(도구 바꾸기·저장·탭 전환…)에서 포스트잇 입력도 함께 넣는다
+        textEditor.alsoCommit = { noteEditor.commit() }
         progress = findViewById(R.id.progress)
         pageLabel = findViewById(R.id.pageLabel)
         // 쪽 번호를 누르면 쪽 이동
@@ -245,15 +249,27 @@ class ViewerActivity : AppCompatActivity() {
             override fun onTextTap(page: Int, x: Float, y: Float, existing: Stroke?) =
                 this@ViewerActivity.onTextTap(page, x, y, existing)
 
-            override fun onViewportChanged() = textEditor.reposition()
+            override fun onViewportChanged() {
+                textEditor.reposition()
+                noteEditor.reposition()
+            }
+
+            // 포스트잇 입력칸 밖을 누르면 친 글을 메모에 넣는다 (누름은 그대로 처리된다)
+            override fun onTouchDown() = noteEditor.commit()
 
             override fun onScrolled() = flashPageLabel()
 
             override fun onPullAddPage() = appendBlankPage()
 
             override fun onReadTap(page: Int, x: Float, y: Float) = followLinkAt(page, x, y)
+            override fun onWrongTap(page: Int, x: Float, y: Float) {
+                current?.ink?.wrongLinkAt(page, x, y)?.let { (p, yy) -> goToSpot(p, yy) }
+            }
 
-            override fun onNoteEdit(page: Int, note: Stroke) = showNoteEditor(page, note)
+            override fun onNoteEdit(page: Int, note: Stroke) {
+                textEditor.commit()
+                noteEditor.start(page, note)
+            }
 
             override fun onNoteColorPicked(color: Int) {
                 prefs.edit().putInt("noteColor", color).apply()
@@ -570,6 +586,7 @@ class ViewerActivity : AppCompatActivity() {
         inkDoc.onChanged = {
             if (current === t) {
                 updateActions()
+                docView.refreshMargin()
                 docView.invalidate()
                 pagePanel.inkChanged()
                 overview.inkChanged()
@@ -640,6 +657,7 @@ class ViewerActivity : AppCompatActivity() {
 
     /** 지금 탭의 상태에 맞춰 버튼을 켜고 끈다 (예전 invalidateOptionsMenu 자리) */
     private fun updateActions() {
+        applyActionVisibility()
         val inkDoc = ink
         undoButton.setEnabledAlpha(inkDoc?.canUndo == true)
         redoButton.setEnabledAlpha(inkDoc?.canRedo == true)
@@ -661,7 +679,9 @@ class ViewerActivity : AppCompatActivity() {
         isSelected = on
         background = if (on) GradientDrawable().apply {
             shape = GradientDrawable.OVAL
-            setColor(MaterialColors.getColor(this@setActive, com.google.android.material.R.attr.colorSecondaryContainer))
+            // 탭 줄 바탕과 확실히 구분되는 진한 파랑 바탕 + 테두리
+            setColor(getColor(R.color.active_fill))
+            setStroke((2 * resources.displayMetrics.density).toInt(), getColor(R.color.active_stroke))
         } else android.util.TypedValue().let { tv ->
             theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, tv, true)
             getDrawable(tv.resourceId)
@@ -1139,6 +1159,7 @@ class ViewerActivity : AppCompatActivity() {
     private fun showMoreMenu(anchor: View) {
         val popup = PopupMenu(this, anchor)
         popup.menuInflater.inflate(R.menu.viewer, popup.menu)
+        popup.menu.findItem(R.id.action_save_menu).isEnabled = ink != null
         popup.menu.findItem(R.id.action_insert_page).isEnabled = ink != null
         popup.menu.findItem(R.id.action_go_page).isEnabled = (current?.pdf?.pageCount ?: 0) > 1
         popup.menu.findItem(R.id.action_delete_page).isEnabled = (current?.pdf?.pageCount ?: 0) > 1
@@ -1150,7 +1171,10 @@ class ViewerActivity : AppCompatActivity() {
                 R.id.action_insert_grid -> insertBlankPage(Paper.GRID)
                 R.id.action_insert_lined -> insertBlankPage(Paper.LINED)
                 R.id.action_delete_page -> askDeletePages()
-                R.id.action_toolbar_options -> showToolVisibilityDialog()
+                R.id.action_save_now -> current?.let { if (it.ink != null) save(it, asNew = false) }
+                R.id.action_save_as -> current?.let { if (it.ink != null) save(it, asNew = true) }
+                R.id.action_save_image -> current?.let { if (it.ink != null) askExportImages(it) }
+                R.id.action_options -> showOptionsDialog(0)
                 R.id.action_finger -> {
                     docView.fingerDrawing = !docView.fingerDrawing
                     prefs.edit().putBoolean("finger", docView.fingerDrawing).apply()
@@ -1323,7 +1347,8 @@ class ViewerActivity : AppCompatActivity() {
         }
         val number = inkDoc.nextWrongNumber()
         val entry = WrongEntry(number, c.symbol, c.tags, c.title, WrongNote.today(), slot, srcList, RectF(rect))
-        val built = WrongNote.build(entry, capture, rect, d.sizes[srcPage].width)
+        val taken = srcList.filter { it.isWrongBadge() }.map { wrongBounds(it) }
+        val built = WrongNote.build(entry, capture, rect, d.sizes[srcPage].width, d.sizes[srcPage].height, taken)
         if (reuse) {
             val adds = listOfNotNull(last to built.header, last to built.body, built.badge?.let { srcPage to it })
             inkDoc.addWrongToPage(last, entry, adds)
@@ -1389,40 +1414,6 @@ class ViewerActivity : AppCompatActivity() {
             inkDoc.wrongEdited()
             done()
         }
-    }
-
-    /** 포스트잇 메모 글 고치기: 여러 줄 입력 창 */
-    private fun showNoteEditor(page: Int, note: Stroke) {
-        val n = note.note ?: return
-        textEditor.commit()
-        val d = resources.displayMetrics.density
-        val input = EditText(this).apply {
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
-            isSingleLine = false
-            minLines = 4
-            maxLines = 10
-            gravity = android.view.Gravity.TOP or android.view.Gravity.START
-            setText(n.text)
-            setSelection(text.length)
-            hint = "메모 내용"
-            setBackgroundColor(note.color or 0xFF000000.toInt())
-            setPadding((12 * d).toInt(), (10 * d).toInt(), (12 * d).toInt(), (10 * d).toInt())
-        }
-        val box = FrameLayout(this).apply {
-            setPadding((20 * d).toInt(), (8 * d).toInt(), (20 * d).toInt(), 0)
-            addView(input)
-        }
-        val dialog = MaterialAlertDialogBuilder(this)
-            .setTitle("포스트잇 메모")
-            .setView(box)
-            .setPositiveButton("확인") { _, _ -> docView.setNoteText(page, note, input.text.toString().trimEnd()) }
-            .setNegativeButton("취소", null)
-            .create()
-        dialog.setOnShowListener {
-            input.requestFocus()
-            dialog.window?.let { WindowCompat.getInsetsController(it, input).show(WindowInsetsCompat.Type.ime()) }
-        }
-        dialog.show()
     }
 
     /**
@@ -2646,7 +2637,7 @@ class ViewerActivity : AppCompatActivity() {
                 placeOverlays(side)
                 prefs.edit().putString("toolbarSide", side.name).apply()
             },
-            onTap = { showToolVisibilityDialog() },
+            onTap = { showOptionsDialog(1) },
         )
         val saved = prefs.getString("toolbarSide", null)
         dock.dock(ToolbarSide.entries.firstOrNull { it.name == saved } ?: ToolbarSide.BOTTOM)
@@ -2672,26 +2663,91 @@ class ViewerActivity : AppCompatActivity() {
         if (docView.tool in hidden) toolNames.firstOrNull { it.first !in hidden }?.let { selectTool(it.first) }
     }
 
-    private fun showToolVisibilityDialog() {
-        val hidden = hiddenTools().toMutableSet()
-        val checked = BooleanArray(toolNames.size) { toolNames[it].first !in hidden }
-        MaterialAlertDialogBuilder(this)
-            .setTitle("툴바에 보일 도구")
-            .setMultiChoiceItems(toolNames.map { it.second }.toTypedArray(), checked) { d, which, on ->
-                val t = toolNames[which].first
-                if (!on && toolNames.count { it.first !in hidden } <= 1) {
-                    // 도구가 하나도 없으면 쓸 수 없으니 마지막 하나는 남긴다
-                    (d as androidx.appcompat.app.AlertDialog).listView.setItemChecked(which, true)
-                    checked[which] = true
-                    toast("도구를 하나는 남겨 두어야 합니다.")
-                    return@setMultiChoiceItems
-                }
-                if (on) hidden.remove(t) else hidden.add(t)
-                prefs.edit().putString("hiddenTools", hidden.joinToString(",") { it.name }).apply()
-                applyToolVisibility()
-            }
-            .setPositiveButton("닫기", null)
-            .show()
+    // ================= 옵션 (⋮ ▸ 옵션, 툴바 손잡이 톡) =================
+    // 상단 툴바(탭 줄 오른쪽) 아이콘, 하단 툴바(도구) 아이콘 보이기·숨기기와 편의 옵션 켜고 끄기
+
+    /** 상단 툴바 단추: prefs에 남기는 이름, 옵션 창에 보일 이름, 단추, 아이콘 */
+    private class TopAction(val key: String, val label: String, val button: () -> View, val icon: Int)
+
+    private val topActions by lazy {
+        listOf(
+            TopAction("undo", "실행 취소", { undoButton }, R.drawable.ic_undo),
+            TopAction("redo", "다시 실행", { redoButton }, R.drawable.ic_redo),
+            TopAction("save", "저장", { saveButton }, R.drawable.ic_save),
+            TopAction("insert", "삽입", { insertButton }, R.drawable.ic_insert),
+            TopAction("twoPage", "양쪽 보기", { twoPageButton }, R.drawable.ic_two_page),
+            TopAction("pages", "페이지 관리", { pagesButton }, R.drawable.ic_page_panel),
+            TopAction("overview", "쪽 한눈에 보기", { overviewButton }, R.drawable.ic_grid_view),
+            TopAction("readMode", "읽기 모드", { readModeButton }, R.drawable.ic_write_mode),
+            TopAction("fullscreen", "전체 화면", { fullscreenButton }, R.drawable.ic_fullscreen),
+        )
+    }
+
+    private fun hiddenActions(): Set<String> =
+        prefs.getString("hiddenActions", null)?.split(',')?.filter { it.isNotEmpty() }?.toSet() ?: emptySet()
+
+    /** 숨긴 상단 단추를 감춘다. 읽기 모드 중에는 끝낼 길이 필요해서 읽기 모드 단추는 늘 보인다 */
+    private fun applyActionVisibility() {
+        val hidden = hiddenActions()
+        for (a in topActions) a.button().visibility = if (a.key in hidden && !(a.key == "readMode" && readMode)) View.GONE else View.VISIBLE
+    }
+
+    private fun showOptionsDialog(start: Int = 0) {
+        fun icon(res: Int) = { getDrawable(res)?.mutate() }
+        val top = OptionCategory(
+            "상단 툴바", "탭 줄 오른쪽의 아이콘을 표시하거나 숨깁니다. ⋮(더 보기)는 늘 보입니다.",
+            topActions.map { a ->
+                OptionItem(icon(a.icon), a.label, { a.key !in hiddenActions() }, { on ->
+                    val hidden = hiddenActions().toMutableSet()
+                    if (on) hidden.remove(a.key) else hidden.add(a.key)
+                    prefs.edit().putString("hiddenActions", hidden.joinToString(",")).apply()
+                    applyActionVisibility()
+                    true
+                })
+            },
+        )
+        val bottom = OptionCategory(
+            "하단 툴바", "펜·지우개 같은 도구 아이콘을 표시하거나 숨깁니다. 도구는 하나는 남겨 두어야 합니다.",
+            toolNames.map { (t, name) ->
+                // 보정 펜 아이콘은 직접 그리는 Drawable이라 복사할 수 없어서 새로 만든다
+                OptionItem({
+                    if (t == Tool.SHAPE) ShapePenDrawable(this).also { it.markColor = docView.penColor }
+                    else toolButtons[t]?.drawable?.constantState?.newDrawable()?.mutate()
+                }, name, { t !in hiddenTools() }, { on ->
+                    val hidden = hiddenTools().toMutableSet()
+                    if (!on && toolNames.count { it.first !in hidden } <= 1) {
+                        toast("도구를 하나는 남겨 두어야 합니다.")
+                        return@OptionItem false
+                    }
+                    if (on) hidden.remove(t) else hidden.add(t)
+                    prefs.edit().putString("hiddenTools", hidden.joinToString(",") { it.name }).apply()
+                    applyToolVisibility()
+                    true
+                })
+            },
+        )
+        val convenience = OptionCategory(
+            "편의 옵션", "필기할 때 쓰는 편의 기능을 켜고 끕니다.",
+            listOf(
+                OptionItem(icon(R.drawable.ic_scribble_erase), "긁어서 지우기", { docView.scribbleErase }, { on ->
+                    docView.scribbleErase = on
+                    prefs.edit().putBoolean("scribbleErase", on).apply()
+                    true
+                }, "펜으로 좌우나 위아래로 마구 긁으면 긁은 자리가 지워집니다."),
+                OptionItem(icon(R.drawable.ic_palm_erase), "손바닥 지우기", { docView.palmErase }, { on ->
+                    docView.palmErase = on
+                    prefs.edit().putBoolean("palmErase", on).apply()
+                    true
+                }, "손가락으로 쓰는 중 손바닥으로 문지르면 지워집니다."),
+            ),
+        )
+        OptionsDialog(this, listOf(top, bottom, convenience)) {
+            prefs.edit().remove("hiddenActions").remove("hiddenTools").putBoolean("scribbleErase", true).putBoolean("palmErase", true).apply()
+            docView.scribbleErase = true
+            docView.palmErase = true
+            applyActionVisibility()
+            applyToolVisibility()
+        }.show(start)
     }
 
     /** 세로 툴바 옆에 붙는 줄(서식·도형·옵션)을 담는 세로 스크롤 */
@@ -3236,7 +3292,9 @@ class ViewerActivity : AppCompatActivity() {
                 item(R.drawable.ic_lasso, "자유 선택", !docView.lassoRect && !docView.lassoTap),
                 item(R.drawable.ic_select_rect, "네모 선택", docView.lassoRect),
                 item(R.drawable.ic_select_tap, "대상 선택", docView.lassoTap),
-            )) { i -> setLassoMode(i) }
+                // 선택 방식이 아니라 한 번 하는 동작: 삽입 ▸ 오답 담기와 같다
+                item(R.drawable.ic_wrong_note, "오답 담기", false),
+            ), separatorBefore = setOf(3)) { i -> if (i == 3) startWrongPick() else setLassoMode(i) }
             Tool.LASER -> {
                 // 레이저가 사라지는 시간 (색·굵기는 툴바)
                 val secs = intArrayOf(1, 2, 3, 5)

@@ -11,6 +11,7 @@ import android.text.StaticLayout
 import android.text.TextPaint
 import androidx.core.graphics.ColorUtils
 import kotlin.math.max
+import kotlin.math.min
 
 /**
  * 포스트잇 메모 (삽입 ▸ 포스트잇 메모). [Stroke.note]가 있는 PEN 획으로 쪽에 넣는다.
@@ -76,7 +77,7 @@ class StickyNote(val text: String, val w: Float = DEFAULT_W, val h: Float = DEFA
         /** 쪽 (px, py) 자리에 새 메모 획 (펼친 채). 쪽 크기 [pw]×[ph] 안에 들게 */
         fun create(px: Float, py: Float, color: Int, pw: Float, ph: Float): Stroke {
             val note = StickyNote("")
-            val x = px.coerceIn(0f, max(0f, pw - note.w))
+            val x = px.coerceIn(0f, stickyMaxLeft(pw, note.w))
             val y = py.coerceIn(0f, max(0f, ph - note.h))
             return Stroke(Tool.PEN, color, 0f).apply {
                 this.note = note
@@ -94,8 +95,17 @@ class StickyNote(val text: String, val w: Float = DEFAULT_W, val h: Float = DEFA
     }
 }
 
+/**
+ * 쪽 오른쪽에 붙는 바깥 여백 너비 (pt). 필기는 할 수 없고, 오답 배지와 펼친 포스트잇이 쪽 밖으로 벗어나 놓인다.
+ * 문서에 배지나 포스트잇이 있으면 모든 쪽에 붙는다 ([DocumentView.refreshMargin])
+ */
+const val PAGE_SIDE_MARGIN = 100f
+
 /** 펼친 메모 띠의 단추 */
 enum class NoteButton { COLOR, DELETE, COLLAPSE }
+
+/** 펼친 메모의 왼쪽 위가 놓일 수 있는 가장 오른쪽 (쪽 너비 [pw]): 접힌 네모는 쪽 안에, 펼친 몸통은 바깥 여백까지 */
+fun stickyMaxLeft(pw: Float, w: Float) = max(0f, min(pw - StickyNote.ICON, pw + PAGE_SIDE_MARGIN - w))
 
 /** 접힌 메모 자리 (쪽 좌표) */
 fun Stroke.noteIconRect(out: RectF): RectF = out.apply { set(x(0), y(0), x(0) + StickyNote.ICON, y(0) + StickyNote.ICON) }
@@ -124,10 +134,10 @@ fun Stroke.noteButtonAt(x: Float, y: Float): NoteButton? {
     return NoteButton.entries.firstOrNull { noteButtonRect(it, r).contains(x, y) }
 }
 
-/** 메모를 펼칠 때: 펼친 메모가 쪽 밖으로 나가면 안으로 들인다 */
+/** 메모를 펼칠 때: 펼친 메모가 쪽(과 바깥 여백) 밖으로 나가면 안으로 들인다 */
 fun Stroke.fitNoteInPage(pw: Float, ph: Float) {
     val n = note ?: return
-    val x = x(1).coerceIn(0f, max(0f, pw - n.w))
+    val x = x(1).coerceIn(0f, stickyMaxLeft(pw, n.w))
     val y = y(1).coerceIn(0f, max(0f, ph - n.h))
     if (x != x(1) || y != y(1)) offsetPoint(1, x - x(1), y - y(1))
 }

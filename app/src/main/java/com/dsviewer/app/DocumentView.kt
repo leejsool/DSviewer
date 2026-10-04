@@ -74,6 +74,10 @@ class DocumentView @JvmOverloads constructor(
         fun onFillFailed() {}
         /** 읽기 모드에서 쪽의 (x, y)를 톡 누름 (테이프가 아닌 곳). 링크를 따라갈 때 */
         fun onReadTap(page: Int, x: Float, y: Float) {}
+        /** 필기 모드에서 손가락으로 쪽의 (x, y)를 톡 누름 (테이프가 아닌 곳). 오답 배지·'원문 보기'를 따라갈 때 */
+        fun onWrongTap(page: Int, x: Float, y: Float) {}
+        /** 화면을 새로 누르기 시작함 (손가락·펜). 문서 위에서 치던 포스트잇 글을 넣을 때 */
+        fun onTouchDown() {}
         /** 펼친 포스트잇 메모의 몸통을 누름 → 글 고치기 ([setNoteText]) */
         fun onNoteEdit(page: Int, note: Stroke) {}
         /** 포스트잇 메모 색을 고름 (다음에 넣는 메모도 이 색으로) */
@@ -243,6 +247,8 @@ class DocumentView @JvmOverloads constructor(
     private var docW = 0f
     private var docH = 0f
     private val gap = 10f
+    /** 쪽마다 오른쪽에 붙는 바깥 여백 (pt). 배지·포스트잇이 있는 문서만 [PAGE_SIDE_MARGIN] */
+    private var rightMargin = 0f
 
     // ---- 화면 변환 ----
     private var baseScale = 1f
@@ -279,6 +285,18 @@ class DocumentView @JvmOverloads constructor(
         color = 0xAA555555.toInt()
     }
     private val tmpRect = RectF()
+    private val tmpRect2 = RectF()
+    /** 쪽 오른쪽 바깥 여백의 바탕 */
+    private val marginPaint = Paint().apply { color = 0xFFF1F1F1.toInt() }
+    /** 배지와 원문을 잇는 점선 */
+    private val linkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+        color = 0xFF78909C.toInt()
+    }
+    private val linkDot = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF78909C.toInt() }
+    private val linkPath = Path()
 
     // ---- 입력 상태 ----
     private val scroller = OverScroller(context)
@@ -461,6 +479,7 @@ class DocumentView @JvmOverloads constructor(
         cancelNotePlacement()
         pullAnimator?.cancel()
         pullPx = 0f
+        rightMargin = if (inkDoc.hasMarginItems()) PAGE_SIDE_MARGIN else 0f
         layoutPages()
         zoom = 1f
         baseCache.evictAll()
@@ -492,7 +511,8 @@ class DocumentView @JvmOverloads constructor(
         val per = if (spread) 2 else 1
         val rows = (0 until n step per).map { it until min(n, it + per) }
         // 줄 너비 = 쪽 너비의 합 + 쪽 사이 여백. 문서 너비는 가장 넓은 줄에 맞춘다
-        val rowW = rows.map { r -> r.sumOf { sizes[it].width.toDouble() }.toFloat() + gap * (r.count() - 1) }
+        // 쪽마다 오른쪽에 바깥 여백(rightMargin)이 붙는다
+        val rowW = rows.map { r -> r.sumOf { (sizes[it].width + rightMargin).toDouble() }.toFloat() + gap * (r.count() - 1) }
         docW = (rowW.maxOrNull() ?: 600f) + gap * 2
         var y = gap
         for ((k, r) in rows.withIndex()) {
@@ -501,7 +521,7 @@ class DocumentView @JvmOverloads constructor(
             for (i in r) {
                 lefts[i] = x
                 tops[i] = y
-                x += sizes[i].width + gap
+                x += sizes[i].width + rightMargin + gap
                 rowH = max(rowH, sizes[i].height)
             }
             y += rowH + gap
@@ -614,8 +634,30 @@ class DocumentView @JvmOverloads constructor(
         return if (first < 0) IntRange.EMPTY else first..last
     }
 
-    /** 화면 좌표 → (페이지, 페이지 x, 페이지 y). 페이지 사이 여백은 가까운 페이지로 */
-    private fun hitPage(sx: Float, sy: Float): Triple<Int, Float, Float>? {
+    /**
+     * 배지·포스트잇이 처음 생기면 모든 쪽에 바깥 여백을 붙인다 (보던 자리는 그대로).
+     * 다 지워도 문서를 다시 열 때까지는 둔다
+     */
+    fun refreshMargin() {
+        val inkDoc = ink ?: return
+        if (rightMargin > 0f || doc == null || width == 0 || !inkDoc.hasMarginItems()) return
+        val spot = topSpot()
+        clearSelection()
+        rightMargin = PAGE_SIDE_MARGIN
+        layoutPages()
+        baseScale = width / docW
+        baseCache.evictAll()
+        details = emptyList()
+        if (spot != null) scrollToPageY(spot.first, spot.second) else clamp()
+        scheduleDetail()
+        invalidate()
+    }
+
+    /**
+     * 화면 좌표 → (페이지, 페이지 x, 페이지 y). 페이지 사이 여백은 가까운 페이지로.
+     * [wide]면 쪽 오른쪽 바깥 여백도 그 쪽으로 (배지·포스트잇을 누를 때). 아니면 필기할 수 없는 곳이라 null
+     */
+    private fun hitPage(sx: Float, sy: Float, wide: Boolean = false): Triple<Int, Float, Float>? {
         val s = scale
         val dx = (sx + offX) / s
         val dy = (sy + offY) / s
@@ -630,7 +672,7 @@ class DocumentView @JvmOverloads constructor(
                 continue
             }
             val px = dx - lefts[i]
-            val dist = if (px < 0) -px else max(0f, px - sizes[i].width)
+            val dist = if (px < 0) -px else max(0f, px - sizes[i].width - (if (wide) rightMargin else 0f))
             if (dist < bestDist) { best = i; bestDist = dist }
         }
         if (best < 0 || bestDist > gap) return null
@@ -738,6 +780,12 @@ class DocumentView @JvmOverloads constructor(
                 canvas.drawBitmap(det.bmp, null, dst, bmpPaint)
             }
             canvas.drawRect(r, borderPaint)
+            // 쪽 오른쪽 바깥 여백: 필기는 못 하고 배지·포스트잇만 놓인다
+            if (rightMargin > 0f) {
+                val mr = tmpRect2.apply { set(r.right, r.top, r.right + rightMargin * s, r.bottom) }
+                canvas.drawRect(mr, marginPaint)
+                canvas.drawLine(mr.left, mr.top, mr.left, mr.bottom, borderPaint)
+            }
 
             canvas.save()
             canvas.clipRect(r)
@@ -746,19 +794,11 @@ class DocumentView @JvmOverloads constructor(
             // 찾은 글자: 형광펜처럼 글자 아래에 비치게
             searchHits[i]?.forEach { canvas.drawRect(it, hitPaint) }
             val dragging = (moving || resizing || rotating) && selPage == i
-            // 그림을 먼저, 채우기를 그 위에, 나머지 필기는 맨 위에
-            // 포스트잇 메모는 맨 위에 (끌어 옮기는 중이면 손가락을 따라)
-            for (layer in 0..3) for (st in inkDoc.pages[i]) {
-                if (inkLayer(st) != layer || st === hiddenStroke || (dragging && st in selSet)) continue
-                if (st === noteTrack && noteDragging) {
-                    canvas.save()
-                    computeNoteDelta(st, i, noteDelta)
-                    canvas.translate(noteDelta[0], noteDelta[1])
-                    drawStroke(canvas, st)
-                    canvas.restore()
-                } else drawStroke(canvas, st)
+            // 그림을 먼저, 채우기를 그 위에, 나머지 필기는 맨 위에 (배지·포스트잇은 바깥 여백까지 그려야 해서 따로)
+            for (layer in 0..2) for (st in inkDoc.pages[i]) {
+                if (inkLayer(st) != layer || st === hiddenStroke || (dragging && st in selSet) || st.isMarginItem()) continue
+                drawStroke(canvas, st)
             }
-            paletteNote?.let { if (it.note?.collapsed == false && inkDoc.pages[i].contains(it)) drawNotePalette(canvas, it) }
             for ((p, st) in fillPending) if (p == i) drawFillDraft(canvas, st)
             pickRect?.let { if (pickPage == i) drawPickRect(canvas, it) }
             if (dragging) {
@@ -780,6 +820,14 @@ class DocumentView @JvmOverloads constructor(
                     shapePreview?.forEach { sp -> drawStroke(canvas, sp, 0.6f) }
                 } else drawStroke(canvas, it)
             }
+            canvas.restore()
+
+            // 배지(점선으로 원문과 이어서)와 포스트잇: 쪽 오른쪽 바깥 여백까지 그린다. 포스트잇은 맨 위에
+            canvas.save()
+            canvas.clipRect(r.left, r.top, r.right + rightMargin * s, r.bottom)
+            canvas.translate(r.left, r.top)
+            canvas.scale(s, s)
+            drawMarginItems(canvas, inkDoc, i, (moving || resizing || rotating) && selPage == i)
             canvas.restore()
         }
         drawAddButton(canvas)
@@ -838,7 +886,7 @@ class DocumentView @JvmOverloads constructor(
         val bottom = height - bottomInset
         if (bottom - top < 8f * density) return
         val pw = sizes[last].width * s
-        val left = docW * s / 2f - pw / 2f - offX
+        val left = docW * s / 2f - (pw + rightMargin * s) / 2f - offX
         val ready = pullPx >= pullGoal
         val k = (pullPx / pullGoal).coerceIn(0f, 1f)
         val accent = if (ready) SEL_COLOR else 0xFF888888.toInt()
@@ -998,11 +1046,29 @@ class DocumentView @JvmOverloads constructor(
     private val swatchFill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val swatchLine = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
 
-    private enum class NoteTouch { NONE, ICON, HEADER, BUTTON, BODY, SWATCH, SCROLL }
+    private enum class NoteTouch { NONE, ICON, HEADER, BUTTON, BODY, SWATCH, SCROLL, BADGE }
 
-    /** 접힌 메모를 꾹 누름: 끌어 옮기기 시작 */
+    /** 배지를 누른 쪽 좌표 (톡 눌렀을 때 오답 쪽으로 가는 데 쓴다) */
+    private var noteDownPx = 0f
+    private var noteDownPy = 0f
+
+    /**
+     * 쪽 좌표 (x, y)의 오답 배지. 손가락이거나 읽기 모드거나 바깥 여백에 있는 배지만
+     * (펜으로 쪽 안에 놓인 배지 위에 쓸 수 있게)
+     */
+    private fun badgeAt(page: Int, x: Float, y: Float, ev: MotionEvent): Stroke? {
+        val finger = ev.getToolType(0) == MotionEvent.TOOL_TYPE_FINGER
+        val slop = 4f * density / scale
+        val pw = sizes.getOrNull(page)?.width ?: return null
+        return ink?.pages?.getOrNull(page)?.lastOrNull { st ->
+            st.isWrongBadge() && wrongBounds(st).apply { inset(-slop, -slop) }.contains(x, y) &&
+                (finger || readOnly || x > pw)
+        }
+    }
+
+    /** 접힌 메모·배지를 꾹 누름: 끌어 옮기기 시작 */
     private val noteLongPress = Runnable {
-        if (noteTrack != null && noteMode == NoteTouch.ICON && !noteMoved && !readOnly) {
+        if (noteTrack != null && (noteMode == NoteTouch.ICON || noteMode == NoteTouch.BADGE) && !noteMoved && !readOnly) {
             noteDragging = true
             performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
             invalidate()
@@ -1223,18 +1289,92 @@ class DocumentView @JvmOverloads constructor(
     private fun expandedNoteAt(page: Int, x: Float, y: Float): Stroke? =
         ink?.pages?.getOrNull(page)?.lastOrNull { st -> st.note?.collapsed == false && st.noteRect(noteBox).contains(x, y) }
 
-    /** 끌어 옮기는 거리 (쪽 좌표). 메모가 쪽 밖으로 나가지 않게 */
+    /**
+     * 끌어 옮기는 거리 (쪽 좌표). 메모는 접힌 네모가 쪽 안에, 펼친 몸통은 바깥 여백까지만.
+     * 배지는 쪽과 바깥 여백 안에서
+     */
     private fun computeNoteDelta(st: Stroke, page: Int, out: FloatArray) {
-        val n = st.note ?: return
         val pw = sizes[page].width
         val ph = sizes[page].height
-        val k = if (n.collapsed) 0 else 1
-        val w = if (n.collapsed) StickyNote.ICON else n.w
-        val h = if (n.collapsed) StickyNote.ICON else n.h
-        val x = st.x(k)
-        val y = st.y(k)
-        out[0] = (noteDx / scale).coerceAtMost(pw - w - x).coerceAtLeast(min(0f, -x))
-        out[1] = (noteDy / scale).coerceAtMost(ph - h - y).coerceAtLeast(min(0f, -y))
+        val n = st.note
+        var minDx: Float
+        var maxDx: Float
+        var minDy: Float
+        var maxDy: Float
+        if (n == null) {
+            val b = wrongBounds(st)
+            minDx = -b.left
+            maxDx = pw + rightMargin - b.right
+            minDy = -b.top
+            maxDy = ph - b.bottom
+        } else {
+            // 접힌 자리(점 0)는 늘 쪽 안에, 펼친 자리(점 1)는 펼쳤을 때 몸통이 쪽 아래로 나가지 않게
+            val icon = StickyNote.ICON
+            minDx = -min(st.x(0), st.x(1))
+            minDy = -min(st.y(0), st.y(1))
+            maxDx = min(pw - icon - st.x(0), if (n.collapsed) Float.MAX_VALUE else stickyMaxLeft(pw, n.w) - st.x(1))
+            maxDy = min(ph - icon - st.y(0), if (n.collapsed) Float.MAX_VALUE else ph - n.h - st.y(1))
+        }
+        // 이미 한계를 넘어 있어도(예전 문서) 더 벗어나게만 막는다
+        maxDx = max(maxDx, 0f); minDx = min(minDx, 0f)
+        maxDy = max(maxDy, 0f); minDy = min(minDy, 0f)
+        out[0] = (noteDx / scale).coerceIn(minDx, maxDx)
+        out[1] = (noteDy / scale).coerceIn(minDy, maxDy)
+    }
+
+    /** 배지와 포스트잇 그리기 (쪽 좌표 캔버스, 바깥 여백까지). 끌어 옮기는 중이면 손가락을 따라 */
+    private fun drawMarginItems(c: Canvas, inkDoc: InkDocument, page: Int, selDragging: Boolean) {
+        val list = inkDoc.pages[page]
+        val pw = sizes[page].width
+        fun shown(st: Stroke) = st !== hiddenStroke && !(selDragging && st in selSet)
+        fun dragged(st: Stroke): Boolean {
+            val drag = st === noteTrack && noteDragging
+            if (drag) computeNoteDelta(st, page, noteDelta) else { noteDelta[0] = 0f; noteDelta[1] = 0f }
+            return drag
+        }
+        for (st in list) if (st.isWrongBadge() && shown(st)) {
+            dragged(st)
+            drawBadgeLink(c, inkDoc, st, page, pw, noteDelta[0], noteDelta[1])
+        }
+        for (st in list) if (st.isWrongBadge() && shown(st)) {
+            c.save()
+            dragged(st)
+            c.translate(noteDelta[0], noteDelta[1])
+            drawStroke(c, st)
+            c.restore()
+        }
+        for (st in list) if (st.note != null && shown(st)) {
+            c.save()
+            dragged(st)
+            c.translate(noteDelta[0], noteDelta[1])
+            drawStroke(c, st)
+            c.restore()
+        }
+        paletteNote?.let { if (it.note?.collapsed == false && list.contains(it)) drawNotePalette(c, it) }
+    }
+
+    /** 배지에서 원문 자리까지 점선: 문제 영역 오른쪽 위에서 쪽 끝까지 가로로 가다가 배지로 비스듬히 */
+    private fun drawBadgeLink(c: Canvas, inkDoc: InkDocument, badge: Stroke, page: Int, pw: Float, dx: Float, dy: Float) {
+        val n = badge.role?.substring(2)?.toIntOrNull() ?: return
+        val e = inkDoc.wrongByNumber(n) ?: return
+        val src = e.srcRect ?: return
+        if (e.srcList !== inkDoc.pages[page]) return
+        val b = wrongBounds(badge)
+        val px = density / scale  // 화면 1dp에 해당하는 쪽 좌표 길이
+        val ax = src.right
+        val ay = src.top + min(8f, src.height() / 2f)
+        val bx = b.left + dx
+        val by = b.centerY() + dy
+        linkPath.reset()
+        linkPath.moveTo(ax, ay)
+        if (bx > pw) {
+            linkPath.lineTo(pw, ay)
+            linkPath.lineTo(bx, by)
+        } else linkPath.lineTo(bx, by)
+        linkPaint.strokeWidth = 1f * px
+        linkPaint.pathEffect = DashPathEffect(floatArrayOf(2f * px, 3f * px), 0f)
+        c.drawPath(linkPath, linkPaint)
+        c.drawCircle(ax, ay, 1.8f * px, linkDot)
     }
 
     /** 색 고르기 칸 k번째 자리 (쪽 좌표): 메모 띠 바로 아래에 한 줄 */
@@ -1285,7 +1425,7 @@ class DocumentView @JvmOverloads constructor(
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 resetNoteTouch()
-                val hit = hitPage(ev.x, ev.y)
+                val hit = hitPage(ev.x, ev.y, wide = true)
                 // 색 고르기 칸이 떠 있으면 먼저 그 칸을 본다. 다른 곳을 누르면 닫는다
                 paletteNote?.let { pn ->
                     if (hit != null && ink?.pages?.getOrNull(hit.first)?.contains(pn) == true) {
@@ -1300,7 +1440,16 @@ class DocumentView @JvmOverloads constructor(
                     invalidate()
                 }
                 hit ?: return false
-                val st = noteAt(hit.first, hit.second, hit.third, 6f * density / scale) ?: return false
+                val st = noteAt(hit.first, hit.second, hit.third, 6f * density / scale) ?: run {
+                    // 오답 배지: 톡 누르면 오답 쪽으로, 꾹 누르면 끌어 옮긴다
+                    val badge = badgeAt(hit.first, hit.second, hit.third, ev) ?: return false
+                    beginNoteTouch(ev, badge, hit.first, NoteTouch.BADGE)
+                    noteDownPx = hit.second
+                    noteDownPy = hit.third
+                    if (!readOnly) postDelayed(noteLongPress, ViewConfiguration.getLongPressTimeout().toLong())
+                    invalidate()
+                    return true
+                }
                 val n = st.note!!
                 val mode = when {
                     n.collapsed -> NoteTouch.ICON
@@ -1383,6 +1532,10 @@ class DocumentView @JvmOverloads constructor(
     /** 메모를 톡 누름. 읽기 모드에서는 펼치고 접기만 */
     private fun noteTapped(st: Stroke, page: Int) {
         val inkDoc = ink ?: return
+        if (noteMode == NoteTouch.BADGE) {
+            listener?.onWrongTap(page, noteDownPx, noteDownPy)
+            return
+        }
         val n = st.note ?: return
         if (page !in sizes.indices) return
         playSoundEffect(android.view.SoundEffectConstants.CLICK)
@@ -1840,8 +1993,12 @@ class DocumentView @JvmOverloads constructor(
             }
             // 다른 도구에서는 손가락으로 테이프를 톡 누르면 보였다 가려졌다.
             // 읽기 모드에서 테이프가 아닌 곳을 누르면 (펜도) 링크를 따라간다
-            else if (!toggleTapeAt(e.x, e.y) && readOnly) {
-                hitPage(e.x, e.y)?.let { listener?.onReadTap(it.first, it.second, it.third) }
+            // 필기 모드에서는 손가락으로 누를 때만 오답 배지·'원문 보기'를 따라간다 (펜은 필기)
+            else if (!toggleTapeAt(e.x, e.y)) {
+                hitPage(e.x, e.y)?.let {
+                    if (readOnly) listener?.onReadTap(it.first, it.second, it.third)
+                    else if (e.getToolType(0) == MotionEvent.TOOL_TYPE_FINGER) listener?.onWrongTap(it.first, it.second, it.third)
+                }
             }
             return true
         }
@@ -2081,6 +2238,7 @@ class DocumentView @JvmOverloads constructor(
 
     override fun onTouchEvent(ev: MotionEvent): Boolean {
         if (doc == null) return false
+        if (ev.actionMasked == MotionEvent.ACTION_DOWN) listener?.onTouchDown()
         if (penPointerId == -1 && handleBarTouch(ev)) return true
         if (penPointerId == -1 && !fingerActive && handleAddTouch(ev)) return true
         if (penPointerId == -1 && !fingerActive && handleNoteTouch(ev)) return true

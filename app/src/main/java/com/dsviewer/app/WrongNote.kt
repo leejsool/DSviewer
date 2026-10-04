@@ -31,8 +31,8 @@ object WrongSymbol {
     const val CROSS = 7
     const val SQUARE = 8
 
-    /** 고를 수 있는 기호: 별 1~5개, 세모, 엑스, 네모 */
-    val ALL = (1..8).toList()
+    /** 담을 때 고르는 기호 칩 차례: 엑스, 세모, 네모, 그다음 별 1~5개 */
+    val ALL = listOf(CROSS, TRIANGLE, SQUARE) + (1..5)
 
     fun label(s: Int) = when (s) {
         in 1..5 -> "★".repeat(s)
@@ -151,8 +151,10 @@ object WrongNote {
     private const val MIN_BODY_W = 160f
     /** 머리줄 오른쪽 '원문 보기' 누름 칸 너비 (pt) */
     const val LINK_W = 150f
-    private const val BADGE_W = 62f
-    private const val BADGE_H = 16f
+    const val BADGE_W = 62f
+    const val BADGE_H = 16f
+    /** 배지와 쪽 오른쪽 끝 사이 (pt) */
+    private const val BADGE_GAP = 8f
     private const val HEADER_PPP = 4f
     private const val CAPTURE_PPP = 3f
     private const val CAPTURE_MAX_PX = 2400f
@@ -236,7 +238,10 @@ object WrongNote {
      * 오답 한 문제의 획들: 머리줄, 문제 그림(+ '정답 · 풀이' 구분), 원문 쪽의 배지.
      * 그림은 칸 너비에 맞춰 줄이되 늘리지는 않고, 아래에 풀이 쓸 자리가 남게 높이를 제한한다
      */
-    fun build(e: WrongEntry, capture: Bitmap, rect: RectF, srcPageW: Float): Built {
+    fun build(
+        e: WrongEntry, capture: Bitmap, rect: RectF, srcPageW: Float,
+        srcPageH: Float = Float.MAX_VALUE, taken: List<RectF> = emptyList(),
+    ): Built {
         val capW = rect.width()
         val capH = rect.height()
         val contentW = PAGE_W - 2 * MARGIN
@@ -248,9 +253,13 @@ object WrongNote {
         val top = slotTop(e.slot) + MARGIN
         val header = RectF(MARGIN, top, PAGE_W - MARGIN, top + HEADER_H)
         val body = RectF(MARGIN, header.bottom + GAP, MARGIN + max(dw, MIN_BODY_W), header.bottom + GAP + dh + LABEL_H)
+        // 배지는 쪽 오른쪽 바깥 여백에 둔다 (원문을 가리지 않게). 문제 영역 위와 같은 높이에서 시작해, 다른 배지와 겹치면 아래로 비킨다
         val badge = if (e.srcRect == null) null else {
-            val x = e.srcRect.left.coerceIn(0f, max(0f, srcPageW - BADGE_W))
-            val y = (e.srcRect.top - BADGE_H - 1f).coerceAtLeast(0f)
+            val x = srcPageW + BADGE_GAP
+            var y = e.srcRect.top.coerceAtLeast(0f)
+            val maxY = max(0f, srcPageH - BADGE_H)
+            while (y < maxY && taken.any { it.top < y + BADGE_H + 2f && it.bottom > y - 2f }) y += BADGE_H + 3f
+            y = y.coerceAtMost(maxY)
             imageStroke(badgeImage(e), RectF(x, y, x + BADGE_W, y + BADGE_H), ROLE_BADGE + e.number)
         }
         return Built(
@@ -409,6 +418,12 @@ fun InkDocument.wrongLinkAt(page: Int, x: Float, y: Float): Pair<Int, Float>? {
     }
     return null
 }
+
+/** 원문 쪽 오른쪽 바깥 여백에 붙는 '오답 #n' 배지 획인가 */
+fun Stroke.isWrongBadge() = image != null && count >= 4 && role?.startsWith(WrongNote.ROLE_BADGE) == true
+
+/** 쪽 밖 여백에 놓일 수 있는 획 (배지, 포스트잇) */
+fun Stroke.isMarginItem() = note != null || isWrongBadge()
 
 /** 네 모서리로 된 그림 획이 차지하는 네모 (쪽 좌표) */
 fun wrongBounds(st: Stroke): RectF {
