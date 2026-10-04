@@ -39,7 +39,6 @@ import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
-import kotlin.math.sqrt
 
 /**
  * PDF 페이지를 세로로 이어서 보여주고, 손가락으로 이동/확대, 펜으로 필기하는 뷰.
@@ -732,8 +731,7 @@ class DocumentView @JvmOverloads constructor(
         drawSelection(canvas)
         if (!range.isEmpty()) {
             // 앞뒤 한 페이지 미리 그리기
-            if (range.first > 0 && baseCache.get(range.first - 1) == null) requestBase(range.first - 1)
-            if (range.last < sizes.size - 1 && baseCache.get(range.last + 1) == null) requestBase(range.last + 1)
+            for (p in ViewportMath.prefetchPages(range.first, range.last, sizes.size)) if (baseCache.get(p) == null) requestBase(p)
             cancelUnneededJobs(range.first - 1, range.last + 1)
         }
         if (penPointerId != -1 && penErasing) {
@@ -994,22 +992,16 @@ class DocumentView @JvmOverloads constructor(
 
     private fun baseRenderScale(i: Int): Float {
         val sz = sizes[i]
-        val maxPixels = 8_000_000f
-        // 많이 줄여 여러 쪽이 한꺼번에 보일 때는 작게 그려 둔다 (큰 화면에서 메모리가 모자라 계속 다시 그리지 않게)
-        val k = when {
-            zoom >= 0.5f -> 1f
-            zoom >= 0.25f -> 0.5f
-            else -> 0.25f
-        }
-        return min(baseScale * k, sqrt(maxPixels / (sz.width * sz.height)))
+        return ViewportMath.baseRenderScale(zoom, baseScale, sz.width, sz.height)
     }
 
     private fun requestBase(i: Int) {
         if (baseJobs.containsKey(i)) return
         val d = doc ?: return
         val s = baseRenderScale(i)
-        val w = max(1, (sizes[i].width * s).roundToInt())
-        val h = max(1, (sizes[i].height * s).roundToInt())
+        val wh = ViewportMath.bitmapSize(sizes[i].width, sizes[i].height, s)
+        val w = wh[0]
+        val h = wh[1]
         val job = scope.launch {
             val me = currentCoroutineContext()[Job]
             try {

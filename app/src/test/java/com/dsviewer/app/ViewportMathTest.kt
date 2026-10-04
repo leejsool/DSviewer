@@ -165,4 +165,40 @@ class ViewportMathTest {
             assertEquals(listOf((vl - l) / s, (vt - t) / s, (vr - l) / s, (vb - t) / s), got!!.toList())
         }
     }
+
+    // ================= 쪽 비트맵 =================
+
+    @Test fun renderScaleShrinksWhenZoomedFarOut() {
+        assertEquals(2f, ViewportMath.baseRenderScale(1f, 2f, 595f, 842f), 1e-4f)         // 확대 1
+        assertEquals(2f, ViewportMath.baseRenderScale(0.5f, 2f, 595f, 842f), 1e-4f)        // 경계 0.5는 그대로
+        assertEquals(1f, ViewportMath.baseRenderScale(0.49f, 2f, 595f, 842f), 1e-4f)       // 절반
+        assertEquals(1f, ViewportMath.baseRenderScale(0.25f, 2f, 595f, 842f), 1e-4f)       // 경계 0.25는 절반
+        assertEquals(0.5f, ViewportMath.baseRenderScale(0.24f, 2f, 595f, 842f), 1e-4f)     // 1/4
+    }
+
+    @Test fun renderScaleKeepsTheBitmapUnderTheMemoryLimit() {
+        // 아주 큰 쪽(5000x5000pt)을 배율 3으로 그리면 9억 화소 → 한도로 줄인다
+        val s = ViewportMath.baseRenderScale(1f, 3f, 5000f, 5000f)
+        assertTrue(s < 3f)
+        assertEquals(kotlin.math.sqrt(8_000_000f / 25_000_000f), s, 1e-5f)
+        assertTrue((5000f * s) * (5000f * s) <= 8_000_001f)
+    }
+
+    @Test fun bitmapSizeRoundsHalfUpAndIsAtLeastOne() {
+        assertEquals(listOf(595, 842), ViewportMath.bitmapSize(595f, 842f, 1f).toList())
+        assertEquals(listOf(1, 3), ViewportMath.bitmapSize(1.25f, 2.5f, 1f).toList())      // 1.25→1, 2.5→3 (.5는 올림)
+        assertEquals(listOf(2, 3), ViewportMath.bitmapSize(1.5f, 2.6f, 1f).toList())
+        assertEquals(listOf(1, 1), ViewportMath.bitmapSize(0.1f, 0.2f, 1f).toList())      // 최소 1
+        assertEquals(listOf(1190, 1684), ViewportMath.bitmapSize(595f, 842f, 2f).toList())
+    }
+
+    @Test fun prefetchIsTheNeighbouringPagesInsideTheDocument() {
+        assertEquals(listOf(2, 6), ViewportMath.prefetchPages(3, 5, 10))
+        assertEquals(listOf(4), ViewportMath.prefetchPages(0, 3, 10))              // 앞쪽 끝이면 앞은 없다
+        assertEquals(listOf(6), ViewportMath.prefetchPages(7, 9, 10).filter { it == 6 })
+        assertEquals(listOf(6), ViewportMath.prefetchPages(7, 9, 10))               // 뒤쪽 끝이면 뒤는 없다
+        assertEquals(emptyList<Int>(), ViewportMath.prefetchPages(0, 9, 10))       // 전부 보임
+        assertEquals(listOf(8), ViewportMath.prefetchPages(9, 9, 10))
+        assertEquals(listOf(1), ViewportMath.prefetchPages(0, 0, 2).map { it })      // 쪽이 둘이고 첫 쪽만 보이면 뒤쪽
+    }
 }

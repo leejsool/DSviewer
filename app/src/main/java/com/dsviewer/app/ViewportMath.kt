@@ -2,6 +2,8 @@ package com.dsviewer.app
 
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 /**
  * 문서를 보는 창(스크롤·확대)의 계산: 스크롤 한계, 확대 중심 유지, 플링 범위, 쪽으로 옮길 때의 위치, 선명하게 다시 그릴 영역.
@@ -83,5 +85,35 @@ internal object ViewportMath {
         val vl = max(l, 0f); val vt = max(t, 0f); val vr = min(r, viewW); val vb = min(b, viewH)
         if (vr - vl <= 1 || vb - vt <= 1) return null
         return floatArrayOf((vl - l) / scale, (vt - t) / scale, (vr - l) / scale, (vb - t) / scale)
+    }
+
+    /** 쪽 하나를 비트맵으로 그릴 때 화소 수 한도 */
+    const val MAX_PAGE_PIXELS = 8_000_000f
+
+    /**
+     * 쪽 [pw]×[ph]를 그릴 배율. 많이 줄여 여러 쪽이 한꺼번에 보일 때([zoom] 0.5 미만)는 작게(1/2, 1/4) 그려 둔다
+     * (큰 화면에서 메모리가 모자라 계속 다시 그리지 않게). 화소 수가 [MAX_PAGE_PIXELS]를 넘지 않게도
+     */
+    fun baseRenderScale(zoom: Float, baseScale: Float, pw: Float, ph: Float): Float {
+        val k = when {
+            zoom >= 0.5f -> 1f
+            zoom >= 0.25f -> 0.5f
+            else -> 0.25f
+        }
+        return min(baseScale * k, sqrt(MAX_PAGE_PIXELS / (pw * ph)))
+    }
+
+    /** 배율 [s]로 그린 쪽 비트맵의 가로·세로 픽셀 (최소 1): [w, h] */
+    fun bitmapSize(pw: Float, ph: Float, s: Float): IntArray =
+        intArrayOf(max(1, (pw * s).roundToInt()), max(1, (ph * s).roundToInt()))
+
+    /**
+     * 미리 그려 둘 쪽: 보이는 쪽 [first]~[last] 바로 앞뒤 한 쪽씩 (문서는 [count]쪽). 이미 그렸는지는 부르는 쪽이 따진다
+     */
+    fun prefetchPages(first: Int, last: Int, count: Int): List<Int> {
+        val r = ArrayList<Int>(2)
+        if (first > 0) r.add(first - 1)
+        if (last < count - 1) r.add(last + 1)
+        return r
     }
 }
