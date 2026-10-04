@@ -2238,18 +2238,8 @@ class DocumentView @JvmOverloads constructor(
             return
         }
         if (rotating) {
-            var d = angleAt(sx, sy) - rotStart
-            while (d > 180f) d -= 360f
-            while (d <= -180f) d += 360f
             // 90° 배수(5° 안), 45° 배수(3° 안)에 딱 맞춘다
-            val r90 = (d / 90f).roundToInt() * 90f
-            val r45 = (d / 45f).roundToInt() * 45f
-            d = when {
-                abs(d - r90) <= 5f -> r90
-                abs(d - r45) <= 3f -> r45
-                else -> d
-            }
-            rotDeg = d
+            rotDeg = StrokeGeometry.snapRotation(angleAt(sx, sy) - rotStart)
             invalidate()
             return
         }
@@ -2306,17 +2296,9 @@ class DocumentView @JvmOverloads constructor(
         val py = toPageY(curPage, sy)
         if (st.tool == Tool.HIGHLIGHTER && hlStraight) {
             // 직선 형광펜: 첫 점에서 지금 점까지. 가로·세로 근처(5° 안)면 딱 맞춘다
-            var ex = px
-            var ey = py
-            val dx = ex - st.x(0)
-            val dy = ey - st.y(0)
-            if (dx != 0f || dy != 0f) {
-                val deg = Math.toDegrees(kotlin.math.atan2(abs(dy).toDouble(), abs(dx).toDouble()))
-                if (deg <= 5.0) ey = st.y(0)
-                else if (deg >= 85.0) ex = st.x(0)
-            }
+            val end = StrokeGeometry.straightHighlighterEnd(st.x(0), st.y(0), px, py)
             st.keepFirst()
-            st.add(ex, ey, st.p(0))
+            st.add(end[0], end[1], st.p(0))
             lastSx = sx
             lastSy = sy
             invalidate()
@@ -2324,12 +2306,9 @@ class DocumentView @JvmOverloads constructor(
         }
         if (st.tape?.rect == true) {
             // 네모 테이프: 첫 점과 지금 점이 마주 보는 모서리
-            val x0 = st.x(0)
-            val y0 = st.y(0)
+            val c = StrokeGeometry.rectTapeCorners(st.x(0), st.y(0), px, py)
             st.keepFirst()
-            st.add(px, y0, 1f)
-            st.add(px, py, 1f)
-            st.add(x0, py, 1f)
+            for (k in 0 until 3) st.add(c[k * 2], c[k * 2 + 1], 1f)
             lastSx = sx
             lastSy = sy
             invalidate()
