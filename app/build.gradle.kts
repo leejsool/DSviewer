@@ -54,6 +54,8 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     // PDF 주석 저장/읽기
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
+    // 필기 글자 인식 (기기 안 처리, 한국어 모델은 처음 한 번 내려받는다) → 필기 검색
+    implementation("com.google.mlkit:digital-ink-recognition:19.0.0")
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test:runner:1.6.2")

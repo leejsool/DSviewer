@@ -78,6 +78,8 @@ class ViewerActivity : AppCompatActivity() {
     private val saver: DocSaver by lazy {
         DocSaver(this, docView, textEditor, progress, { current }, { createDoc.launch(it) }, ::removeTab, ::updateTabTitle)
     }
+    /** 필기 데이터 받기를 이번에 이미 물었는지 */
+    private var handwritingAsked = false
     private val drafts by lazy { Drafts.store(this) }
     private val autoSaver: AutoSaver by lazy { AutoSaver(this, drafts) { docs } }
     /** 파일 탐색기에서 열었는지 (뒤로 가면 탭을 그대로 둔 채 탐색기로) */
@@ -292,6 +294,7 @@ class ViewerActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         docs.forEach { it.pdf?.close() }
+        if (isFinishing) MlKitInkRecognizer.release()
         openTabs = 0
         openUris = emptySet()
         if (isFinishing) CaptureService.stop(this)
@@ -453,6 +456,7 @@ class ViewerActivity : AppCompatActivity() {
         // 저장했거나 '저장 안 함'으로 닫았으니 자동 저장본은 더 필요 없다 (열다 만 복구 탭은 남겨 둔다)
         if (t.ink != null) autoSaver.discard(t)
         t.search?.cancel()
+        t.handwriting?.onProgress = null
         openTabs = docs.size
         openUris = docs.mapTo(HashSet()) { it.uri.toString() }
         updateAddButton()
@@ -573,6 +577,10 @@ class ViewerActivity : AppCompatActivity() {
             t.draftFile = null
             inkDoc.restoreDirty()
         }
+        t.handwriting = HandwritingIndex(
+            lifecycleScope, MlKitInkRecognizer, inkDoc,
+            File(HandwritingIndex.dir(this), drafts.idOf(t.uri.toString()) + ".txt"),
+        ).also { hw -> hw.onNeedsData = { askHandwritingData(hw, auto = true) } }
         inkDoc.onChanged = {
             if (current === t) {
                 updateActions()
@@ -583,6 +591,7 @@ class ViewerActivity : AppCompatActivity() {
             }
             updateTabTitle(t)
             autoSaver.onInkChanged(t)
+            t.handwriting?.inkChanged()
         }
         inkDoc.swapPages = { files, apply -> restorePageFiles(t, files as PageFiles, apply) }
         inkDoc.jumpTo = { spot -> if (current === t) (spot as Spot).let { docView.scrollToPageY(it.page, it.y) } }
@@ -711,10 +720,36 @@ class ViewerActivity : AppCompatActivity() {
             if (asPdf) savePageFile(t, pages) else saver.exportImages(t, pages)
         }
         override fun search() = currentSearch()
+        override fun downloadHandwriting() {
+            current?.handwriting?.let { askHandwritingData(it, auto = false) }
+        }
         override fun showHits(hits: Map<Int, List<RectF>>) {
             docView.searchHits = hits
         }
         override fun closed() = updateActions()
+    }
+
+    /** 필기 검색에 쓸 한국어 필기 데이터를 받을지 묻는다. [auto]면 (찾기를 열었을 때 저절로) 한 번만 */
+    private fun askHandwritingData(hw: HandwritingIndex, auto: Boolean) {
+        if (auto) {
+            if (handwritingAsked) return
+            handwritingAsked = true
+        }
+        MaterialAlertDialogBuilder(this)
+            .setTitle("필기 검색")
+            .setMessage(
+                "손으로 쓴 글을 찾으려면 한국어·영어 필기 인식 데이터(약 50MB)를 한 번 내려받아야 합니다 (Wi-Fi 권장).\n" +
+                    "받은 뒤에는 인터넷 없이 기기 안에서만 필기를 읽습니다."
+            )
+            .setPositiveButton("받기") { _, _ ->
+                toast("필기 데이터를 받는 중입니다…")
+                lifecycleScope.launch {
+                    if (hw.downloadData()) toast("받았습니다. 필기를 읽는 중입니다.")
+                    else toast("받지 못했습니다. 인터넷 연결을 확인해 주세요.")
+                }
+            }
+            .setNegativeButton("나중에", null)
+            .show()
     }
 
     /** 지금 탭의 글자 찾기. 화면용 PDF가 바뀌었으면(쪽 넣기·지우기 등) 새로 */
@@ -722,7 +757,10 @@ class ViewerActivity : AppCompatActivity() {
         val t = current ?: return null
         val f = t.renderPdf ?: return null
         t.search?.let { if (it.file == f) return it else it.cancel() }
-        return DocSearch(f, lifecycleScope).also { t.search = it }
+        return DocSearch(f, lifecycleScope).also {
+            it.handwriting = t.handwriting
+            t.search = it
+        }
     }
 
     /** 지금 탭의 PDF 링크. 화면용 PDF가 바뀌었으면(쪽 넣기·지우기 등) 새로 */

@@ -858,6 +858,7 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             val found = withContext(Dispatchers.IO) {
                 store.cleanup(System.currentTimeMillis() - DRAFT_KEEP_MS)
+                HandwritingIndex.cleanOld(HandwritingIndex.dir(this@MainActivity), System.currentTimeMillis() - DRAFT_KEEP_MS * 2)
                 store.list()
             }
             updateRecoverItem()

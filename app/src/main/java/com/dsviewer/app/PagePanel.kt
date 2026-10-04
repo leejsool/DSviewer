@@ -78,6 +78,8 @@ class PagePanel(
         fun search(): DocSearch?
         /** 문서 화면에 찾은 자리를 강조 (빈 것이면 지움) */
         fun showHits(hits: Map<Int, List<RectF>>)
+        /** 필기 검색에 쓸 한국어 필기 데이터를 받을지 묻고 받는다 */
+        fun downloadHandwriting() {}
         /** 쪽 한눈에 보기가 닫힘 */
         fun closed() {}
     }
@@ -130,6 +132,8 @@ class PagePanel(
         setTextColor(onSurfaceVariant)
         setPadding(px(14f), 0, px(10f), px(4f))
         visibility = View.GONE
+        // 필기 읽을 데이터가 없다는 안내를 누르면 받는다
+        setOnClickListener { if (search?.handwriting?.state == HandwritingIndex.State.NEEDS_DATA) host.downloadHandwriting() }
     }
     private val grid = RecyclerView(ctx).apply {
         clipToPadding = false
@@ -650,7 +654,7 @@ class PagePanel(
     }
 
     private fun detachSearch() {
-        search?.onProgress = null
+        search?.pause()
         search = null
     }
 
@@ -665,12 +669,14 @@ class PagePanel(
         hits = s?.find(query, ink) ?: emptyMap()
         host.showHits(hits)
         val count = hits.values.sumOf { it.size }
-        status.text = when {
+        val base = when {
             PdfText.normalize(query).isEmpty() -> if (s != null && !s.ready) "글자 읽는 중 ${s.indexed}/${s.pageCount}쪽" else ""
             s == null || s.failed -> "이 문서에서는 글자를 읽지 못했습니다 (넣은 글 상자만 찾음). ${hits.size}쪽에서 ${count}곳"
             !s.ready -> "${hits.size}쪽에서 ${count}곳 찾음 · 글자 읽는 중 ${s.indexed}/${s.pageCount}쪽"
             else -> "${hits.size}쪽에서 ${count}곳 찾음"
         }
+        // 필기를 읽는 중이거나 읽을 데이터가 없으면 그 안내를 덧붙인다
+        status.text = listOfNotNull(base.takeIf { it.isNotEmpty() }, s?.handwriting?.statusText()).joinToString(" · ")
         status.visibility = if (status.text.isEmpty()) View.GONE else View.VISIBLE
         refreshList()
     }

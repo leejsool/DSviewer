@@ -25,6 +25,8 @@ internal class DocTab(var uri: Uri, var canOverwrite: Boolean, var isNewNote: Bo
     val draft = DraftState()
     /** 복구하는 탭: 문서 대신 이 자동 저장본을 열고(필기가 저장 안 된 상태로), 다 열면 비운다 */
     var draftFile: File? = null
+    /** 필기를 글로 읽은 색인 (필기 검색) */
+    var handwriting: HandwritingIndex? = null
 }
 
 /** 쪽을 넣고 빼기 전·후의 PDF 파일과 그때 보던 쪽 (실행 취소하면 이 상태로 돌아간다) */

@@ -227,10 +227,17 @@ class DocSearch(val file: File, private val scope: CoroutineScope) {
         private set
     /** 쪽을 꺼낼 때마다 (메인 스레드) */
     var onProgress: (() -> Unit)? = null
+    /** 필기를 글로 읽은 색인 (탭이 쥐고 있다). 있으면 필기 속 글도 함께 찾는다 */
+    internal var handwriting: HandwritingIndex? = null
 
     val indexed get() = texts.size
 
     fun start(pages: Int) {
+        // 필기 읽기는 찾기를 열 때마다 (그 사이 필기가 바뀌었을 수 있으니) 다시 훑는다. 바뀐 쪽만 읽는다
+        handwriting?.let {
+            it.onProgress = { onProgress?.invoke() }
+            it.start()
+        }
         if (job != null) return
         pageCount = pages
         job = scope.launch {
@@ -257,6 +264,13 @@ class DocSearch(val file: File, private val scope: CoroutineScope) {
         cancelled = true
         job?.cancel()
         onProgress = null
+        handwriting?.onProgress = null
+    }
+
+    /** 찾기를 닫음: 필기 읽기는 더 하지 않는다 (글자 색인은 그대로 둔다) */
+    fun pause() {
+        onProgress = null
+        handwriting?.onProgress = null
     }
 
     /**
@@ -280,6 +294,8 @@ class DocSearch(val file: File, private val scope: CoroutineScope) {
                 hits.getOrPut(p) { ArrayList() }.add(box)
             }
         }
+        // 손글씨로 쓴 것을 읽은 글
+        handwriting?.find(query)?.forEach { (p, rects) -> hits.getOrPut(p) { ArrayList() }.addAll(rects) }
         return hits
     }
 }
