@@ -17,6 +17,33 @@ internal object TapeFit {
     /** 글자 줄을 찾는 범위: 테이프 가운데에서 위·아래로 이만큼 (pt) */
     const val FIT_RANGE = 40f
 
+    /** 이보다 어두우면(0~255) 글자 점으로 본다 */
+    const val DARK_LUMINANCE = 160
+
+    /** 글자 줄을 찾으려고 그리는 흑백 그림의 화소 수 한도 */
+    const val MAX_FIT_PIXELS = 8_000_000L
+
+    /** 네모 테이프를 남길 만큼 큰가: 짧은 쪽이 화면에서 6dp 이상 */
+    fun keepRect(w: Float, h: Float, scale: Float, density: Float): Boolean = min(w, h) * scale >= 6 * density
+
+    /** 펜 테이프(선)를 남길 만큼 긴가: 점 2개 이상이고 길이가 화면에서 8dp 이상 */
+    fun keepLine(pointCount: Int, length: Float, scale: Float, density: Float): Boolean =
+        pointCount >= 2 && length * scale >= 8 * density
+
+    /** 색 [rgb]가 글자 점인가: 밝기(0.299R+0.587G+0.114B)가 [DARK_LUMINANCE] 미만 */
+    fun isDark(r: Int, g: Int, b: Int): Boolean = (r * 299 + g * 587 + b * 114) / 1000 < DARK_LUMINANCE
+
+    /**
+     * 글자 줄을 찾을 쪽 영역: 테이프를 감싸는 상자 ([bl], [bt], [br], [bb])를 사방으로 [FIT_RANGE]만큼 넓히고 쪽 [pw]×[ph] 안으로.
+     * 돌려주는 값은 [왼쪽, 위, 오른쪽, 아래] (쪽 단위)
+     */
+    fun fitRegion(bl: Float, bt: Float, br: Float, bb: Float, pw: Float, ph: Float): FloatArray = floatArrayOf(
+        max(0f, bl - FIT_RANGE), max(0f, bt - FIT_RANGE), min(pw, br + FIT_RANGE), min(ph, bb + FIT_RANGE),
+    )
+
+    /** 흑백 그림의 크기가 쓸 만한가: 폭·높이가 0보다 크고 화소 수가 [MAX_FIT_PIXELS] 이하 */
+    fun fitBitmapOk(bw: Int, bh: Int): Boolean = bw > 0 && bh > 0 && bw.toLong() * bh <= MAX_FIT_PIXELS
+
     /**
      * 거의 곧게 그은 펜 테이프를 곧은 선 하나로 편다. 점들에 가장 잘 맞는 직선(주성분)에 첫 점과 끝 점을 내리고,
      * 가로·세로에 가까우면(5° 안) 딱 맞춘다. 많이 휘었으면 그대로 둔다

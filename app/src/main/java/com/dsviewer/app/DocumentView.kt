@@ -2101,11 +2101,9 @@ class DocumentView @JvmOverloads constructor(
     private fun finishTape(page: Int, st: Stroke): Boolean {
         if (st.tape?.rect == true) {
             if (st.count < 4) return false
-            val w = abs(st.x(2) - st.x(0))
-            val h = abs(st.y(2) - st.y(0))
-            return min(w, h) * scale >= 6 * density
+            return TapeFit.keepRect(abs(st.x(2) - st.x(0)), abs(st.y(2) - st.y(0)), scale, density)
         }
-        if (st.count < 2 || st.length() * scale < 8 * density) return false
+        if (!TapeFit.keepLine(st.count, st.length(), scale, density)) return false
         if (tapeStraight) TapeFit.straighten(st)
         if (tapeFitText) fitTapeToText(page, st)
         return true
@@ -2122,16 +2120,12 @@ class DocumentView @JvmOverloads constructor(
         val ph = sizes[page].height
         val k = base.width / pw
         // 찾는 범위: 테이프 가운데에서 위·아래로 FIT_RANGE pt
-        val range = TapeFit.FIT_RANGE
-        var l = Float.MAX_VALUE; var t = Float.MAX_VALUE; var r = -Float.MAX_VALUE; var b = -Float.MAX_VALUE
-        for (i in 0 until st.count) {
-            l = min(l, st.x(i)); r = max(r, st.x(i)); t = min(t, st.y(i)); b = max(b, st.y(i))
-        }
-        l = max(0f, l - range); t = max(0f, t - range)
-        r = min(pw, r + range); b = min(ph, b + range)
+        val sb = FillRules.strokeBounds(st)
+        val reg = TapeFit.fitRegion(sb[0], sb[1], sb[2], sb[3], pw, ph)
+        val l = reg[0]; val t = reg[1]; val r = reg[2]; val b = reg[3]
         val bw = ((r - l) * k).toInt()
         val bh = ((b - t) * k).toInt()
-        if (bw <= 0 || bh <= 0 || bw.toLong() * bh > 8_000_000L) return
+        if (!TapeFit.fitBitmapOk(bw, bh)) return
         val bmp = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888)
         val px = IntArray(bw * bh)
         try {
@@ -2153,8 +2147,7 @@ class DocumentView @JvmOverloads constructor(
             val iy = ((y - t) * k).toInt()
             if (ix !in 0 until bw || iy !in 0 until bh) return@fitToText false
             val c = px[iy * bw + ix]
-            val lum = (Color.red(c) * 299 + Color.green(c) * 587 + Color.blue(c) * 114) / 1000
-            lum < 160
+            TapeFit.isDark(Color.red(c), Color.green(c), Color.blue(c))
         }
     }
 
