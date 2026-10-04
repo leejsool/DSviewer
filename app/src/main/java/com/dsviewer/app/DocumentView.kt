@@ -404,18 +404,7 @@ class DocumentView @JvmOverloads constructor(
     /** 대상 선택: 누른 획·그림·글을 바로 고른다 (빈 곳을 끌면 네모 선택) */
     var lassoTap = false
     // ---- 레이저 (쪽 좌표. 저장하지 않고, 마지막 획을 떼고 laserFadeMs 뒤 한꺼번에 사라진다) ----
-    private val laserStrokes = ArrayList<Pair<Int, Stroke>>()
-    private var laserAlpha = 1f
-    private var laserFadeAnim: ValueAnimator? = null
-    private val laserFadeRunnable = Runnable { startLaserFade() }
-    private val laserPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeCap = Paint.Cap.ROUND
-        strokeJoin = Paint.Join.ROUND
-    }
-    private val laserPath = Path()
-    private var laserBlur: BlurMaskFilter? = null
-    private var laserBlurRadius = -1f
+    private val laser = LaserTrails(this, density, { scale }, { laserFadeMs })
 
     /** 복사해 둔 획 (복사한 영역의 왼쪽 위가 원점) */
     private var clipboard: List<Stroke> = emptyList()
@@ -497,7 +486,7 @@ class DocumentView @JvmOverloads constructor(
         }
         lastReportedPage = -1
         invalidate()
-        post { flashBar() }
+        post { scrollBar.show(1500) }
     }
 
     // ================= 레이아웃 / 변환 =================
@@ -810,9 +799,9 @@ class DocumentView @JvmOverloads constructor(
                 for (st in selection) drawStroke(canvas, st)
                 canvas.restore()
             }
-            for ((p, st) in laserStrokes) if (p == i) drawLaser(canvas, st, laserAlpha)
+            laser.drawFaded(canvas, i)
             if (curPage == i) curStroke?.let {
-                if (it.tool == Tool.LASER) drawLaser(canvas, it, 1f)
+                if (it.tool == Tool.LASER) laser.draw(canvas, it, 1f)
                 else if (it.tool == Tool.FILL) drawFillDraft(canvas, it)
                 else if (tool == Tool.SHAPE) {
                     // 보정 펜: 내 획은 흐리게, 맞춘 도형은 조금 더 진하게 미리 보기
@@ -843,7 +832,7 @@ class DocumentView @JvmOverloads constructor(
         if (penPointerId != -1 && penErasing) {
             canvas.drawCircle(lastSx, lastSy, if (palmErasing) palmRadius else eraserRadiusDp * density, cursorPaint)
         }
-        drawScrollBar(canvas)
+        scrollBar.draw(canvas)
         listener?.onViewportChanged()
         reportPage(d.pageCount)
     }
@@ -1727,74 +1716,7 @@ class DocumentView @JvmOverloads constructor(
 
     private fun drawStroke(c: Canvas, st: Stroke, alphaMul: Float = 1f) = drawInkStroke(c, strokePaint, st, alphaMul)
 
-    /**
-     * 레이저 획: 번진 빛 + 색 선 + 가운데 흰 심. 캔버스는 쪽 좌표라서
-     * 굵기(dp)를 지금 배율로 나눠 화면에서 늘 같은 굵기로 보이게 한다
-     */
-    private fun drawLaser(c: Canvas, st: Stroke, a: Float) {
-        if (st.count == 0 || a <= 0f) return
-        laserPath.reset()
-        laserPath.moveTo(st.x(0), st.y(0))
-        if (st.count == 1) laserPath.lineTo(st.x(0) + 0.01f, st.y(0))
-        else for (k in 1 until st.count) laserPath.lineTo(st.x(k), st.y(k))
-        val w = st.width * density / scale
-        val blur = w * 0.9f
-        if (blur != laserBlurRadius) {
-            laserBlur = BlurMaskFilter(blur, BlurMaskFilter.Blur.NORMAL)
-            laserBlurRadius = blur
-        }
-        laserPaint.maskFilter = laserBlur
-        laserPaint.color = st.color
-        laserPaint.alpha = (140 * a).roundToInt()
-        laserPaint.strokeWidth = w * 2.6f
-        c.drawPath(laserPath, laserPaint)
-        laserPaint.maskFilter = null
-        laserPaint.color = st.color
-        laserPaint.alpha = (255 * a).roundToInt()
-        laserPaint.strokeWidth = w
-        c.drawPath(laserPath, laserPaint)
-        laserPaint.color = Color.WHITE
-        laserPaint.alpha = (210 * a).roundToInt()
-        laserPaint.strokeWidth = w * 0.35f
-        c.drawPath(laserPath, laserPaint)
-    }
-
-    /** 레이저를 새로 긋기 시작하면 사라지던 것도 다시 또렷하게 */
-    private fun holdLaser() {
-        removeCallbacks(laserFadeRunnable)
-        laserFadeAnim?.cancel()
-        laserFadeAnim = null
-        laserAlpha = 1f
-    }
-
-    private fun startLaserFade() {
-        laserFadeAnim?.cancel()
-        laserFadeAnim = ValueAnimator.ofFloat(1f, 0f).apply {
-            duration = 400
-            addUpdateListener {
-                laserAlpha = it.animatedValue as Float
-                invalidate()
-            }
-            addListener(object : android.animation.AnimatorListenerAdapter() {
-                private var canceled = false
-                override fun onAnimationCancel(animation: android.animation.Animator) { canceled = true }
-                override fun onAnimationEnd(animation: android.animation.Animator) {
-                    if (canceled) return
-                    laserStrokes.clear()
-                    laserAlpha = 1f
-                    laserFadeAnim = null
-                    invalidate()
-                }
-            })
-            start()
-        }
-    }
-
-    fun clearLaser() {
-        holdLaser()
-        laserStrokes.clear()
-        invalidate()
-    }
+    fun clearLaser() = laser.clear()
 
     private fun reportPage(count: Int) {
         if (sizes.isEmpty()) return
@@ -2036,184 +1958,29 @@ class DocumentView @JvmOverloads constructor(
     }
 
     // ================= 빠른 스크롤 손잡이 =================
-    // 삼성 노트처럼 오른쪽 가장자리에 위아래 화살표가 그려진 손잡이.
-    // 스크롤하면 나타나고 2초 동안 움직임이 없으면 사라진다 (문서를 열 때도 잠깐 보여 준다).
-    // 손잡이를 끌면 문서 위치로 바로 이동하고, 끄는 동안 옆에 쪽 번호를 띄운다.
+    // 그리기·끌기는 FastScrollBar가 한다. 여기서는 스크롤했다는 것만 알려 준다.
 
-    private var barAlpha = 0f
-    private var barAnimator: ValueAnimator? = null
-    private var barDragging = false
-    private var barGrabOffset = 0f
-    private val handleW = 32f * density
-    private val handleH = 56f * density
-    /** 손잡이가 오가는 범위의 위아래 여백과 오른쪽 여백 */
-    private val barMargin = 10f * density
-    private val barRight = 6f * density
-    private val colorSurface = MaterialColors.getColor(context, com.google.android.material.R.attr.colorSurfaceContainerHighest, Color.WHITE)
-    private val colorOnSurface = MaterialColors.getColor(context, com.google.android.material.R.attr.colorOnSurfaceVariant, Color.DKGRAY)
-    private val colorAccent = MaterialColors.getColor(context, androidx.appcompat.R.attr.colorPrimary, 0xFF1E5AA8.toInt())
-    private val barTrackPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val handlePaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val handleEdgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeWidth = 1f * density
-    }
-    private val arrowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeWidth = 2f * density
-        strokeCap = Paint.Cap.ROUND
-        strokeJoin = Paint.Join.ROUND
-    }
-    private val arrowPath = Path()
-    private val bubblePaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val bubbleText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        textSize = 15f * density
-        color = Color.WHITE
-        typeface = android.graphics.Typeface.DEFAULT_BOLD
-    }
-    private val barRect = RectF()
-    private val hideBarRunnable = Runnable { if (!barDragging) fadeBar(0f) }
-
-    private fun barVisible() = barAlpha > 0.05f
+    private val scrollBar = FastScrollBar(this, object : FastScrollBar.Host {
+        override val contentHeight get() = contentH()
+        override val topInset get() = this@DocumentView.topInset
+        override val bottomInset get() = this@DocumentView.bottomInset
+        override var offsetY: Float
+            get() = offY
+            set(v) { offY = v }
+        override fun pageBubbleText() = if (sizes.isNotEmpty()) "${currentPage() + 1} / ${sizes.size}" else null
+        override fun stopMotion() {
+            scroller.forceFinished(true)
+            zoomAnimator?.cancel()
+        }
+        override fun clampOffset() = clamp()
+        override fun onDragEnd() = scheduleDetail()
+    })
 
     private fun noteScrolled(dy: Float) {
         if (dy == 0f) return
         listener?.onScrolled()
         clearLaser()
-        if (contentH() <= height * 1.05f) return
-        fadeBar(1f)
-        removeCallbacks(hideBarRunnable)
-        postDelayed(hideBarRunnable, 2000)
-    }
-
-    /** 문서를 열 때 손잡이가 있다는 걸 잠깐 보여 준다 */
-    private fun flashBar() {
-        if (contentH() <= height * 1.05f) return
-        fadeBar(1f)
-        removeCallbacks(hideBarRunnable)
-        postDelayed(hideBarRunnable, 1500)
-    }
-
-    private fun fadeBar(target: Float) {
-        if (barAlpha == target && barAnimator?.isRunning != true) return
-        barAnimator?.cancel()
-        barAnimator = ValueAnimator.ofFloat(barAlpha, target).apply {
-            duration = if (target > barAlpha) 150 else 400
-            addUpdateListener {
-                barAlpha = it.animatedValue as Float
-                invalidate()
-            }
-            start()
-        }
-    }
-
-    /**
-     * (손잡이가 오가는 범위의 위, 길이, 손잡이 위, 손잡이 높이). 문서가 화면보다 짧으면 null.
-     * 위·아래에 겹쳐 뜬 줄(topInset, bottomInset)에 가리지 않도록 그 사이에서만
-     */
-    private fun barGeometry(): FloatArray? {
-        val ch = contentH()
-        if (ch <= height * 1.05f) return null
-        val trackTop = barMargin + topInset
-        val trackLen = height - bottomInset - topInset - barMargin * 2
-        if (trackLen < handleH * 1.5f) return null
-        val frac = ((offY + topInset) / (ch - height)).coerceIn(0f, 1f)
-        return floatArrayOf(trackTop, trackLen, trackTop + frac * (trackLen - handleH), handleH)
-    }
-
-    private fun Paint.withAlpha(c: Int, a: Float) = apply { color = c; alpha = (Color.alpha(c) * a).roundToInt() }
-
-    private fun drawScrollBar(canvas: Canvas) {
-        if (!barVisible()) return
-        val g = barGeometry() ?: return
-        val a = barAlpha
-        val right = width - barRight
-        val left = right - handleW
-        val cx = (left + right) / 2
-        // 손잡이가 오가는 길: 가는 선
-        val tw = 1.5f * density
-        barTrackPaint.withAlpha(Color.argb(50, 0, 0, 0), a)
-        canvas.drawRoundRect(cx - tw, g[0], cx + tw, g[0] + g[1], tw, tw, barTrackPaint)
-        // 손잡이: 알약 모양, 끄는 동안은 강조색
-        barRect.set(left, g[2], right, g[2] + g[3])
-        val r = handleW / 2
-        if (barDragging) {
-            handlePaint.withAlpha(colorAccent, a)
-            canvas.drawRoundRect(barRect, r, r, handlePaint)
-        } else {
-            handlePaint.withAlpha(colorSurface, a)
-            handlePaint.setShadowLayer(4f * density, 0f, 1f * density, Color.argb((70 * a).toInt(), 0, 0, 0))
-            canvas.drawRoundRect(barRect, r, r, handlePaint)
-            handlePaint.clearShadowLayer()
-            handleEdgePaint.withAlpha(Color.argb(40, 0, 0, 0), a)
-            canvas.drawRoundRect(barRect, r, r, handleEdgePaint)
-        }
-        // 위아래 화살표
-        val cy = barRect.centerY()
-        val s = 5f * density
-        val gap = 4.5f * density
-        arrowPath.reset()
-        arrowPath.moveTo(cx - s, cy - gap); arrowPath.lineTo(cx, cy - gap - s); arrowPath.lineTo(cx + s, cy - gap)
-        arrowPath.moveTo(cx - s, cy + gap); arrowPath.lineTo(cx, cy + gap + s); arrowPath.lineTo(cx + s, cy + gap)
-        arrowPaint.withAlpha(if (barDragging) Color.WHITE else colorOnSurface, a)
-        canvas.drawPath(arrowPath, arrowPaint)
-        // 끄는 동안: 손잡이 왼쪽에 쪽 번호 말풍선
-        if (barDragging && sizes.isNotEmpty()) {
-            val text = "${currentPage() + 1} / ${sizes.size}"
-            val padH = 12f * density
-            val bw = bubbleText.measureText(text) + padH * 2
-            val bh = 34f * density
-            val bRight = left - 10f * density
-            val top = (cy - bh / 2).coerceIn(0f, max(0f, height - bh))
-            bubblePaint.withAlpha(Color.argb(225, 0x30, 0x30, 0x30), a)
-            canvas.drawRoundRect(bRight - bw, top, bRight, top + bh, bh / 2, bh / 2, bubblePaint)
-            val fm = bubbleText.fontMetrics
-            canvas.drawText(text, bRight - bw + padH, top + bh / 2 - (fm.ascent + fm.descent) / 2, bubbleText)
-        }
-    }
-
-    /** 손잡이를 잡고 끄는 입력을 처리했으면 true. 손잡이 자체만 잡는다 (가장자리 필기를 가로채지 않게) */
-    private fun handleBarTouch(ev: MotionEvent): Boolean {
-        when (ev.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                val g = barGeometry() ?: return false
-                if (!barVisible()) return false
-                val slop = 10f * density
-                val left = width - barRight - handleW
-                val onHandle = ev.x >= left - slop && ev.y >= g[2] - slop && ev.y <= g[2] + g[3] + slop
-                if (!onHandle) return false
-                barGrabOffset = ev.y - g[2]
-                barDragging = true
-                scroller.forceFinished(true)
-                zoomAnimator?.cancel()
-                removeCallbacks(hideBarRunnable)
-                fadeBar(1f)
-                invalidate()
-                return true
-            }
-            MotionEvent.ACTION_MOVE -> if (barDragging) {
-                barGeometry()?.let { moveThumbTo(ev.y, it) }
-                return true
-            }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> if (barDragging) {
-                barDragging = false
-                postDelayed(hideBarRunnable, 2000)
-                scheduleDetail()
-                invalidate()
-                return true
-            }
-        }
-        return barDragging
-    }
-
-    private fun moveThumbTo(y: Float, g: FloatArray) {
-        val ch = contentH()
-        val movable = g[1] - g[3]
-        if (movable <= 0f) return
-        val frac = ((y - barGrabOffset - g[0]) / movable).coerceIn(0f, 1f)
-        offY = frac * (ch - height) - topInset
-        clamp()
-        invalidate()
+        scrollBar.show(2000)
     }
 
     // ================= 터치 / 펜 입력 =================
@@ -2239,7 +2006,7 @@ class DocumentView @JvmOverloads constructor(
     override fun onTouchEvent(ev: MotionEvent): Boolean {
         if (doc == null) return false
         if (ev.actionMasked == MotionEvent.ACTION_DOWN) listener?.onTouchDown()
-        if (penPointerId == -1 && handleBarTouch(ev)) return true
+        if (penPointerId == -1 && scrollBar.onTouch(ev)) return true
         if (penPointerId == -1 && !fingerActive && handleAddTouch(ev)) return true
         if (penPointerId == -1 && !fingerActive && handleNoteTouch(ev)) return true
         var action = ev.actionMasked
@@ -2499,7 +2266,7 @@ class DocumentView @JvmOverloads constructor(
             curPage = hit.first
             val st = when (tool) {
                 Tool.HIGHLIGHTER -> Stroke(Tool.HIGHLIGHTER, hlColor, hlWidth)
-                Tool.LASER -> Stroke(Tool.LASER, laserColor, laserWidthDp).also { holdLaser() }
+                Tool.LASER -> Stroke(Tool.LASER, laserColor, laserWidthDp).also { laser.hold() }
                 Tool.TAPE -> Stroke(Tool.TAPE, tapeColor, if (tapeRect) 0f else tapeWidth).also {
                     it.tape = TapeStyle(tapePattern, tapeRect)
                 }
@@ -2862,9 +2629,7 @@ class DocumentView @JvmOverloads constructor(
                         finishFreeFill(curPage, st)
                     } else if (st.tool == Tool.LASER) {
                         // 레이저: 필기에 넣지 않고 잠깐 보였다가 사라진다
-                        laserStrokes.add(curPage to st)
-                        removeCallbacks(laserFadeRunnable)
-                        postDelayed(laserFadeRunnable, laserFadeMs)
+                        laser.release(curPage, st)
                     } else if (st.tool == Tool.PEN && scribbleErase && eraseScribbled(curPage, st)) {
                         // 긁어 지우기: 긁은 획은 남기지 않고 그 아래를 지웠다
                     } else {
@@ -3229,55 +2994,14 @@ class DocumentView @JvmOverloads constructor(
             return min(w, h) * scale >= 6 * density
         }
         if (st.count < 2 || st.length() * scale < 8 * density) return false
-        if (tapeStraight) straightenTape(st)
+        if (tapeStraight) TapeFit.straighten(st)
         if (tapeFitText) fitTapeToText(page, st)
         return true
     }
 
     /**
-     * 거의 곧게 그은 펜 테이프를 곧은 선 하나로 편다. 점들에 가장 잘 맞는 직선(주성분)에 첫 점과 끝 점을 내리고,
-     * 가로·세로에 가까우면(5° 안) 딱 맞춘다. 많이 휘었으면 그대로 둔다
-     */
-    private fun straightenTape(st: Stroke) {
-        val n = st.count
-        var mx = 0f; var my = 0f
-        for (i in 0 until n) { mx += st.x(i); my += st.y(i) }
-        mx /= n; my /= n
-        var sxx = 0f; var sxy = 0f; var syy = 0f
-        for (i in 0 until n) {
-            val dx = st.x(i) - mx; val dy = st.y(i) - my
-            sxx += dx * dx; sxy += dx * dy; syy += dy * dy
-        }
-        val th = 0.5 * kotlin.math.atan2(2.0 * sxy, (sxx - syy).toDouble())
-        val ux = kotlin.math.cos(th).toFloat()
-        val uy = kotlin.math.sin(th).toFloat()
-        var tMin = Float.MAX_VALUE; var tMax = -Float.MAX_VALUE; var dev = 0f
-        for (i in 0 until n) {
-            val dx = st.x(i) - mx; val dy = st.y(i) - my
-            val t = dx * ux + dy * uy
-            tMin = min(tMin, t); tMax = max(tMax, t)
-            dev = max(dev, abs(dx * uy - dy * ux))
-        }
-        val len = tMax - tMin
-        if (len <= 0f || dev > max(st.width * 0.6f, len * 0.12f)) return
-        // 그은 방향(첫 점 → 끝 점)을 지킨다
-        val forward = (st.x(n - 1) - st.x(0)) * ux + (st.y(n - 1) - st.y(0)) * uy >= 0f
-        val (ta, tb) = if (forward) tMin to tMax else tMax to tMin
-        var x0 = mx + ux * ta; var y0 = my + uy * ta
-        var x1 = mx + ux * tb; var y1 = my + uy * tb
-        val deg = Math.toDegrees(kotlin.math.atan2(abs(y1 - y0).toDouble(), abs(x1 - x0).toDouble()))
-        if (deg <= 5.0) { val y = (y0 + y1) / 2; y0 = y; y1 = y }
-        else if (deg >= 85.0) { val x = (x0 + x1) / 2; x0 = x; x1 = x }
-        val p = st.p(0)
-        st.clearPoints()
-        st.add(x0, y0, p)
-        st.add(x1, y1, p)
-    }
-
-    /**
-     * 펜 테이프를 아래 글자 줄에 맞춘다: 테이프를 따라 가며 수직 방향으로 쪽 그림(PDF + 필기)의 어두운 점을 세어,
-     * 테이프 가운데에서 가장 가까운 글자 줄의 위·아래 끝을 찾고 그 높이(+ 조금 여유)로 굵기를, 그 가운데로 자리를 옮긴다.
-     * 글자가 없으면(아래가 비었으면) 그대로 둔다
+     * 펜 테이프를 아래 글자 줄에 맞춘다. 쪽 그림(PDF + 필기)을 테이프 둘레만 흑백으로 그려 두고
+     * 어두운 점이 어디인지를 [TapeFit]에 넘긴다 (줄을 찾는 계산은 거기서). 글자가 없으면 그대로 둔다
      */
     private fun fitTapeToText(page: Int, st: Stroke) {
         val inkDoc = ink ?: return
@@ -3286,12 +3010,13 @@ class DocumentView @JvmOverloads constructor(
         val ph = sizes[page].height
         val k = base.width / pw
         // 찾는 범위: 테이프 가운데에서 위·아래로 FIT_RANGE pt
+        val range = TapeFit.FIT_RANGE
         var l = Float.MAX_VALUE; var t = Float.MAX_VALUE; var r = -Float.MAX_VALUE; var b = -Float.MAX_VALUE
         for (i in 0 until st.count) {
             l = min(l, st.x(i)); r = max(r, st.x(i)); t = min(t, st.y(i)); b = max(b, st.y(i))
         }
-        l = max(0f, l - FIT_RANGE); t = max(0f, t - FIT_RANGE)
-        r = min(pw, r + FIT_RANGE); b = min(ph, b + FIT_RANGE)
+        l = max(0f, l - range); t = max(0f, t - range)
+        r = min(pw, r + range); b = min(ph, b + range)
         val bw = ((r - l) * k).toInt()
         val bh = ((b - t) * k).toInt()
         if (bw <= 0 || bh <= 0 || bw.toLong() * bh > 8_000_000L) return
@@ -3311,94 +3036,14 @@ class DocumentView @JvmOverloads constructor(
         } finally {
             bmp.recycle()
         }
-        fun dark(x: Float, y: Float): Boolean {
+        TapeFit.fitToText(st) { x, y ->
             val ix = ((x - l) * k).toInt()
             val iy = ((y - t) * k).toInt()
-            if (ix !in 0 until bw || iy !in 0 until bh) return false
+            if (ix !in 0 until bw || iy !in 0 until bh) return@fitToText false
             val c = px[iy * bw + ix]
             val lum = (Color.red(c) * 299 + Color.green(c) * 587 + Color.blue(c) * 114) / 1000
-            return lum < 160
+            lum < 160
         }
-        // 테이프를 따라 1pt마다, 수직 방향 (-FIT_RANGE ~ +FIT_RANGE)을 0.5pt 간격으로 본다
-        val step = 0.5f
-        val m = (FIT_RANGE * 2 / step).toInt() + 1
-        val hits = IntArray(m)
-        var samples = 0
-        for (i in 1 until st.count) {
-            val dx = st.x(i) - st.x(i - 1)
-            val dy = st.y(i) - st.y(i - 1)
-            val len = hypot(dx, dy)
-            if (len < 0.01f) continue
-            val nx = -dy / len
-            val ny = dx / len
-            var d = 0f
-            while (d < len) {
-                val sx = st.x(i - 1) + dx * d / len
-                val sy = st.y(i - 1) + dy * d / len
-                for (j in 0 until m) {
-                    val off = -FIT_RANGE + j * step
-                    if (dark(sx + nx * off, sy + ny * off)) hits[j]++
-                }
-                samples++
-                d += 1f
-            }
-        }
-        if (samples == 0) return
-        val need = max(1, (samples * 0.03f).toInt())
-        val on = BooleanArray(m) { hits[it] >= need }
-        // 가운데에서 가장 가까운 글자 줄 (테이프 굵기의 절반, 적어도 6pt 안)
-        val center = m / 2
-        val reach = (max(st.width / 2, 6f) / step).toInt()
-        var start = -1
-        for (dd in 0..reach) {
-            if (center - dd >= 0 && on[center - dd]) { start = center - dd; break }
-            if (center + dd < m && on[center + dd]) { start = center + dd; break }
-        }
-        if (start < 0) return
-        var lo = start
-        var hi = start
-        // 위·아래로 넓혀 간다. 글자 안의 작은 틈(받침 사이 등)은 건너뛰고, 줄 사이 빈칸에서 멈춘다
-        fun gapLimit() = max(1.5f, (hi - lo + 1) * step * 0.25f) / step
-        repeat(2) {
-            var gap = 0
-            var j = lo - 1
-            while (j >= 0) {
-                if (on[j]) { lo = j; gap = 0 } else if (++gap > gapLimit()) break
-                j--
-            }
-            gap = 0
-            j = hi + 1
-            while (j < m) {
-                if (on[j]) { hi = j; gap = 0 } else if (++gap > gapLimit()) break
-                j++
-            }
-        }
-        // 찾는 범위 끝까지 이어지면 글자 줄이 아니라 그림·표 같은 것이므로 그대로 둔다
-        if (lo == 0 || hi == m - 1) return
-        val d0 = -FIT_RANGE + lo * step
-        val d1 = -FIT_RANGE + (hi + 1) * step
-        val h = d1 - d0
-        val pad = max(1f, h * 0.15f)
-        st.resize(h + pad * 2)
-        // 글자 줄 가운데로 옮긴다 (점마다 앞뒤 선분의 수직 방향 평균으로)
-        val shift = (d0 + d1) / 2
-        val n = st.count
-        val ox = FloatArray(n)
-        val oy = FloatArray(n)
-        for (i in 0 until n) {
-            var nx = 0f; var ny = 0f
-            for (j in intArrayOf(i - 1, i)) {
-                if (j < 0 || j + 1 >= n) continue
-                val dx = st.x(j + 1) - st.x(j)
-                val dy = st.y(j + 1) - st.y(j)
-                val len = hypot(dx, dy)
-                if (len < 0.01f) continue
-                nx += -dy / len; ny += dx / len
-            }
-            val len = hypot(nx, ny)
-            if (len > 0f) { ox[i] = nx / len * shift; oy[i] = ny / len * shift }
-        }
-        for (i in 0 until n) st.offsetPoint(i, ox[i], oy[i])
     }
 
     /** 보고 있는 쪽의 테이프 수 */
@@ -3727,10 +3372,8 @@ class DocumentView @JvmOverloads constructor(
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
         removeCallbacks(detailRunnable)
-        removeCallbacks(hideBarRunnable)
-        removeCallbacks(laserFadeRunnable)
-        laserFadeAnim?.cancel()
-        barAnimator?.cancel()
+        scrollBar.cancel()
+        laser.cancel()
         zoomAnimator?.cancel()
         scope.cancel()
     }
@@ -3761,7 +3404,6 @@ class DocumentView @JvmOverloads constructor(
         private const val FILL_MAX_PX = 4_500_000f
         private const val FILL_MAX_K = 4f
         /** 테이프를 글자 크기에 맞출 때 가운데에서 위·아래로 찾는 범위 (pt) */
-        private const val FIT_RANGE = 40f
         /** 회전 손잡이 반지름과 상자에서 떨어진 거리 */
         private const val ROT_HANDLE_DP = 14f
         private const val ROT_OFFSET_DP = 34f
