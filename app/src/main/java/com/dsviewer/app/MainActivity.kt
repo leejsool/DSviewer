@@ -1187,8 +1187,8 @@ class MainActivity : AppCompatActivity() {
             return
         }
         val uri = Uri.parse(r.docUri ?: return)
-        val base = FileUtil.baseName(r.title)
-        val ext = r.title.substring(base.length)
+        val base = FileNames.baseName(r.title)
+        val ext = FileNames.extension(r.title)
         val edit = EditText(this).apply {
             setText(base)
             selectAll()
@@ -1204,8 +1204,7 @@ class MainActivity : AppCompatActivity() {
             .setTitle("이름 바꾸기")
             .setView(box)
             .setPositiveButton("바꾸기") { _, _ ->
-                val name = edit.text.toString().trim().replace(Regex("[\\\\/:*?\"<>|]"), "_")
-                if (name.isEmpty() || name == base) return@setPositiveButton
+                val name = FileNames.renamedBase(edit.text.toString(), base) ?: return@setPositiveButton
                 lifecycleScope.launch {
                     val ok = withContext(Dispatchers.IO) { runCatching { FileOps.rename(this@MainActivity, uri, name + ext) }.isSuccess }
                     finishAction(if (ok) null else "이름을 바꾸지 못했습니다")
@@ -1388,17 +1387,12 @@ class MainActivity : AppCompatActivity() {
         private var x = 0f
         private var y = 0f
         private var scrolling = false
-        private val edge get() = 72 * resources.displayMetrics.density
+        private val edge get() = DragSelect.EDGE_DP * resources.displayMetrics.density
 
         private val scroller = object : Runnable {
             override fun run() {
                 if (!active) { scrolling = false; return }
-                val h = list.height
-                val dy = when {
-                    y < edge -> -((edge - y) / edge * 28 * resources.displayMetrics.density)
-                    y > h - edge -> (y - (h - edge)) / edge * 28 * resources.displayMetrics.density
-                    else -> 0f
-                }
+                val dy = DragSelect.autoScroll(y, list.height, edge, DragSelect.MAX_SPEED_DP * resources.displayMetrics.density)
                 if (dy == 0f) { scrolling = false; return }
                 list.scrollBy(0, dy.toInt())
                 update()
@@ -1419,10 +1413,10 @@ class MainActivity : AppCompatActivity() {
             val pos = list.getChildAdapterPosition(child)
             if (pos == RecyclerView.NO_POSITION || pos == last) return
             last = pos
-            selected.clear()
-            selected.addAll(base)
             val items = adapter.items
-            for (i in minOf(anchor, pos)..maxOf(anchor, pos)) items.getOrNull(i)?.key?.let { selected += it }
+            val now = DragSelect.select(base, anchor, pos) { items.getOrNull(it)?.key }
+            selected.clear()
+            selected.addAll(now)
             onSelectionChanged()
         }
 
@@ -1441,7 +1435,7 @@ class MainActivity : AppCompatActivity() {
                     x = e.x
                     y = e.y
                     update()
-                    if (!scrolling && (y < edge || y > list.height - edge)) {
+                    if (!scrolling && DragSelect.inEdge(y, list.height, edge)) {
                         scrolling = true
                         list.postOnAnimation(scroller)
                     }

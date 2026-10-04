@@ -70,7 +70,7 @@ object FileUtil {
 
     /** 원본을 앱 캐시로 복사 (PdfRenderer는 탐색 가능한 파일이 필요) */
     fun copyToCache(ctx: Context, uri: Uri, name: String): File {
-        val safe = name.replace(Regex("[\\\\/:*?\"<>|]"), "_").takeLast(80)
+        val safe = FileNames.safe(name).takeLast(80)
         val f = File(docsDir(ctx), "src_${System.currentTimeMillis()}_$safe")
         val input = ctx.contentResolver.openInputStream(uri) ?: error("파일을 열 수 없습니다.")
         input.use { i -> f.outputStream().use { o -> i.copyTo(o, 1 shl 16) } }
@@ -179,10 +179,7 @@ object FileUtil {
         file.inputStream().use { it.read(h) } == 3 && h[0] == 0xFF.toByte() && h[1] == 0xD8.toByte() && h[2] == 0xFF.toByte()
     }.getOrDefault(false)
 
-    fun baseName(name: String): String {
-        val dot = name.lastIndexOf('.')
-        return if (dot > 0) name.substring(0, dot) else name
-    }
+    fun baseName(name: String): String = FileNames.baseName(name)
 }
 
 /** 문서 종류 색 (탭 아이콘, 탐색기 배지) */

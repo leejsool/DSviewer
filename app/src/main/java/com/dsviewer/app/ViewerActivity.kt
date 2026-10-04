@@ -971,7 +971,7 @@ class ViewerActivity : AppCompatActivity() {
 
     /** '문서_3쪽.pdf', 여러 쪽이면 '문서_3쪽 외 2쪽.pdf' */
     private fun pageFileName(t: DocTab, list: List<Int>, ext: String): String {
-        val base = FileUtil.baseName(t.name).replace(Regex("[\\\\/:*?\"<>|]"), "_")
+        val base = FileNames.safe(FileUtil.baseName(t.name))
         val pages = if (list.size == 1) "${list[0] + 1}쪽" else "${list[0] + 1}쪽 외 ${list.size - 1}쪽"
         return "${base}_$pages.$ext"
     }

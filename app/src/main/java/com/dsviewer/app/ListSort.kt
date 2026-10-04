@@ -92,3 +92,37 @@ internal object ListSort {
         return (listWidthPx / (140 * density)).toInt().coerceAtLeast(2)
     }
 }
+
+/**
+ * 목록에서 꾹 눌러 끌어 여러 개 고를 때의 계산. 화면·Android 클래스를 모르는 순수 계산이라 JVM 단위 시험으로 확인한다.
+ */
+internal object DragSelect {
+
+    /** 목록 위·아래 가장자리 이 높이(dp) 안에 손가락이 있으면 저절로 넘어간다 */
+    const val EDGE_DP = 72f
+    /** 가장자리 맨 끝에서의 최대 스크롤 속도 (dp / 프레임) */
+    const val MAX_SPEED_DP = 28f
+
+    /**
+     * 누른 칸 [anchor]부터 지금 칸 [pos]까지(방향 무관)를 [base](누르기 전에 골라 둔 것)에 더해 고른다.
+     * [keyAt]은 칸 번호로 고르는 열쇠를 돌려준다 (고를 수 없는 칸이나 범위 밖이면 null)
+     */
+    fun select(base: Set<String>, anchor: Int, pos: Int, keyAt: (Int) -> String?): Set<String> {
+        val out = LinkedHashSet(base)
+        for (i in minOf(anchor, pos)..maxOf(anchor, pos)) keyAt(i)?.let { out.add(it) }
+        return out
+    }
+
+    /**
+     * 손가락 높이 [y]에서의 자동 스크롤 거리 (px/프레임, 위쪽이면 음수). 가장자리([edge]px) 안쪽에서만, 끝에 가까울수록 빠르게.
+     * 가운데면 0 (스크롤하지 않는다). [listHeight]는 목록 높이
+     */
+    fun autoScroll(y: Float, listHeight: Int, edge: Float, maxSpeed: Float): Float = when {
+        y < edge -> -((edge - y) / edge * maxSpeed)
+        y > listHeight - edge -> (y - (listHeight - edge)) / edge * maxSpeed
+        else -> 0f
+    }
+
+    /** 손가락이 위·아래 가장자리에 있어 자동 스크롤을 시작해야 하는가 */
+    fun inEdge(y: Float, listHeight: Int, edge: Float): Boolean = y < edge || y > listHeight - edge
+}

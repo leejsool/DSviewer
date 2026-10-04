@@ -91,7 +91,7 @@ internal class DocSaver(
     fun exportImages(t: DocTab, pages: List<Int>) {
         val d = t.pdf ?: return
         val inkDoc = t.ink ?: return
-        val base = FileUtil.baseName(t.name).replace(Regex("[\\\\/:*?\"<>|]"), "_")
+        val base = FileNames.safe(FileUtil.baseName(t.name))
         activity.lifecycleScope.launch {
             progress.visibility = View.VISIBLE
             try {

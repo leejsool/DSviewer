@@ -266,7 +266,7 @@ class FolderTree(
                     .setTitle("'${parent.name}' 안에 새 폴더")
                     .setView(box)
                     .setPositiveButton("만들기") { _, _ ->
-                        val raw = edit.text.toString().trim().replace(Regex("[\\\\/:*?\"<>|]"), "_").ifEmpty { "새 폴더" }
+                        val raw = FileNames.safe(edit.text.toString().trim()).ifEmpty { "새 폴더" }
                         val dir = File(parent.id)
                         val name = FileOps.uniqueName(raw, withExt = false) { File(dir, it).exists() }
                         if (File(dir, name).mkdirs()) done()
