@@ -6,6 +6,7 @@ import android.graphics.RectF
 import android.view.View
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.snackbar.Snackbar
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -27,6 +28,8 @@ internal class WrongController(
     private val toast: (String) -> Unit,
     /** 쪽을 넣고 빼며 필기를 함께 고친다 (뷰어의 editPages) */
     private val editPages: (DocTab, (File, File) -> Unit, (() -> Unit)?, (MutableList<MutableList<Stroke>>) -> Int) -> Unit,
+    /** 고른 오답들로 복습을 시작한다 */
+    private val startReview: (DocTab, List<WrongEntry>) -> Unit,
 ) {
     private val wrongUi by lazy { WrongUi(activity, prefs) }
 
@@ -153,7 +156,38 @@ internal class WrongController(
                 if (idx >= 0) goToSpot(idx, ((e.srcRect?.top ?: 0f) - 24f).coerceAtLeast(0f))
             },
             onEdit = { e, done -> editWrong(t, e, done) },
+            onReview = { shown -> askReview(shown) },
         )
+    }
+
+    /** 복습 범위를 고른다: 오늘 복습할 것 / 지금 목록에 보이는 것 / 전체 ([shown]이 null이면 목록 없이 시작한 것) */
+    fun askReview(shown: List<WrongEntry>? = null) {
+        val t = current() ?: return
+        val inkDoc = t.ink ?: return
+        if (t.review != null) {
+            toast("복습 중인 문서에서는 새 복습을 시작할 수 없습니다.")
+            return
+        }
+        if (t.pagesBusy) return
+        val all = inkDoc.allWrongs().map { it.second }
+        if (all.isEmpty()) {
+            toast("담은 오답이 없습니다. 삽입 ▸ 오답 담기로 먼저 담아 주세요.")
+            return
+        }
+        val today = ReviewSchedule.today()
+        val due = all.filter { it.isDue(today) }
+        val choices = ArrayList<Pair<String, List<WrongEntry>>>()
+        choices.add("오늘 복습할 것 (${due.size}개)" to due)
+        if (shown != null && shown.size != all.size && shown.size != due.size) choices.add("지금 목록에 보이는 것 (${shown.size}개)" to shown)
+        choices.add("전체 (${all.size}개)" to all)
+        MaterialAlertDialogBuilder(activity)
+            .setTitle("오답 복습")
+            .setItems(choices.map { it.first }.toTypedArray()) { _, i ->
+                val list = choices[i].second
+                if (list.isEmpty()) toast("복습할 오답이 없습니다.") else startReview(t, list)
+            }
+            .setNegativeButton("취소", null)
+            .show()
     }
 
     /** 담은 오답의 기호·해시태그·제목을 고치고 머리줄과 원문 쪽 배지를 다시 그린다 */

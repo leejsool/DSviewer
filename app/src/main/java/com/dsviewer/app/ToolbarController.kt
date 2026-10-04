@@ -239,7 +239,7 @@ internal class ToolbarController(
 
     private fun updateOverlayInsets() {
         fun barsHeight(o: ViewGroup) = (0 until o.childCount).map { o.getChildAt(it) }
-            .filter { it === shapeBar || it === optionBar || it === formatBar }
+            .filter { it === shapeBar || it === optionBar || it === formatBar || it.id == R.id.reviewBar }
             .sumOf { if (it.visibility == View.VISIBLE) it.height else 0 }.toFloat()
         docView.topInset = barsHeight(topOverlay)
         docView.bottomInset = barsHeight(bottomOverlay)

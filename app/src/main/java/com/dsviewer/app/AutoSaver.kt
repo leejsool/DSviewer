@@ -43,6 +43,7 @@ internal class AutoSaver(
 
     /** 탭의 필기가 바뀔 때마다 (저장돼서 깨끗해졌으면 자동 저장본을 지운다) */
     fun onInkChanged(t: DocTab) {
+        if (t.review != null) return  // 복습 풀이는 저장하지 않는다
         val st = t.draft
         if (t.ink?.dirty != true) {
             discard(t)

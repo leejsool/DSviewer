@@ -48,7 +48,7 @@ internal class DocSaver(
     /** 저장 ▾: 저장 / 다른 이름으로 저장 / 이미지로 저장 */
     fun showSaveMenu(anchor: View) {
         val t = current() ?: return
-        if (t.ink == null) return
+        if (t.ink == null || t.review != null) return
         val popup = PopupMenu(activity, anchor)
         popup.menu.add(0, 1, 0, "저장").setIcon(R.drawable.ic_save)
         popup.menu.add(0, 2, 1, "다른 이름으로 저장").setIcon(R.drawable.ic_save_as)
@@ -157,7 +157,7 @@ internal class DocSaver(
     }
 
     fun save(t: DocTab, asNew: Boolean) {
-        if (t.ink == null) return
+        if (t.ink == null || t.review != null) return
         if (current() === t) textEditor.commit()
         if (t.pagesBusy) {
             Toast.makeText(activity, "쪽을 바꾸는 중입니다. 잠시 뒤에 저장해 주세요.", Toast.LENGTH_SHORT).show()

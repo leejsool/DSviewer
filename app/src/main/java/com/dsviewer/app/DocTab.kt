@@ -27,6 +27,8 @@ internal class DocTab(var uri: Uri, var canOverwrite: Boolean, var isNewNote: Bo
     var draftFile: File? = null
     /** 필기를 글로 읽은 색인 (필기 검색) */
     var handwriting: HandwritingIndex? = null
+    /** 오답 복습용 탭이면 그 복습 (풀이는 저장하지 않고 자동 저장도 하지 않는다) */
+    var review: ReviewSession? = null
 }
 
 /** 쪽을 넣고 빼기 전·후의 PDF 파일과 그때 보던 쪽 (실행 취소하면 이 상태로 돌아간다) */

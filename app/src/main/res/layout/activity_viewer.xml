@@ -247,6 +247,26 @@
                     android:paddingTop="6dp"
                     android:paddingBottom="2dp" />
             </HorizontalScrollView>
+
+            <!-- 오답 복습 중에만 보이는 줄: 정답 보기 · 채점 · 끝내기 (ReviewController가 칸을 만든다) -->
+            <HorizontalScrollView
+                android:id="@+id/reviewBar"
+                android:fillViewport="true"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="?attr/colorSurfaceContainer"
+                android:scrollbars="none"
+                android:visibility="gone">
+
+                <LinearLayout
+                    android:id="@+id/reviewRow"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="10dp"
+                    android:paddingVertical="6dp" />
+            </HorizontalScrollView>
         </LinearLayout>
 
         <!-- 툴바가 위에 있을 때 도형 줄·옵션 줄은 여기로 옮겨 온다 (툴바 가까이 뜨게) -->

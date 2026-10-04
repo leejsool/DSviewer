@@ -133,7 +133,24 @@ class WrongEntry(
     val slot: Int,
     var srcList: MutableList<Stroke>?,
     val srcRect: RectF?,
-)
+    /** 복습 단계 (0 = 한 번도 복습하지 않음), 마지막·다음 복습일(1970-01-01부터 센 날수), 최근 채점 기록 ([ReviewSchedule]) */
+    var stage: Int = 0,
+    var lastDay: Long = 0L,
+    var dueDay: Long = 0L,
+    var history: String = "",
+) {
+    /** 오늘 복습할 차례인가 */
+    fun isDue(today: Long) = ReviewSchedule.isDue(stage, dueDay, today)
+
+    /** 채점 결과를 기록하고 다음 복습일을 정한다 */
+    internal fun grade(result: ReviewResult, today: Long) {
+        val n = ReviewSchedule.next(stage, today, result)
+        stage = n.stage
+        dueDay = n.dueDay
+        lastDay = today
+        history = ReviewSchedule.appendHistory(history, result)
+    }
+}
 
 /** 오답노트 목차 항목: [page]쪽 위에서 [top]pt 자리 */
 class WrongOutlineItem(val page: Int, val top: Float, val entry: WrongEntry)
@@ -163,8 +180,30 @@ object WrongNote {
     const val ROLE_HEADER = "WH"
     const val ROLE_BADGE = "WS"
 
+    /** 복습용 문서에서 문제 그림 위 여백 */
+    const val PROBLEM_TOP = MARGIN
+
+    /**
+     * [list]쪽의 [slot] 칸에 담긴 문제 그림: 그 칸 안에서 가장 위에 있는, 이름표 없는 그림 (머리줄·배지는 이름표가 있다).
+     * 문제 그림을 지웠으면 null
+     */
+    fun problemStroke(list: List<Stroke>, slot: Int): Stroke? {
+        val top = slotTop(slot)
+        val bottom = top + slotHeight(slot)
+        return list.filter { it.image != null && it.count >= 4 && it.role == null }
+            .map { it to wrongBounds(it) }
+            .filter { (_, b) -> b.top >= top - 1f && b.top < bottom }
+            .minByOrNull { it.second.top }?.first
+    }
+
+    /** 그림 획 [st]를 세로로 [dy]만큼 옮긴 새 획 (같은 그림) */
+    fun moved(st: Stroke, dy: Float): Stroke = Stroke(Tool.PEN, Color.BLACK, 0f).apply {
+        image = st.image
+        for (k in 0 until 4) add(st.x(k), st.y(k) + dy, 1f)
+    }
+
     fun slotTop(slot: Int) = if (slot == 2) PAGE_H / 2f else 0f
-    private fun slotHeight(slot: Int) = if (slot == 0) PAGE_H else PAGE_H / 2f
+    fun slotHeight(slot: Int) = if (slot == 0) PAGE_H else PAGE_H / 2f
 
     fun today(): String = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
 
@@ -180,7 +219,7 @@ object WrongNote {
         listOf(
             e.number.toString(), e.symbol.toString(), e.slot.toString(), e.date, srcPage(e).toString(), r,
             enc(e.title), e.tags.joinToString(",") { enc(it) },
-        ).joinToString("|")
+        ).plus(ReviewSchedule.encodeFields(ReviewSchedule.Fields(e.stage, e.lastDay, e.dueDay, e.history))).joinToString("|")
     }
 
     /** (항목, 원문 쪽 번호) 목록. 알아볼 수 없는 항목은 버린다 */
@@ -190,7 +229,12 @@ object WrongNote {
             if (f.size < 8) return@mapNotNull null
             val rect = f[5].split(',').mapNotNull { it.toFloatOrNull() }.takeIf { it.size == 4 }?.let { RectF(it[0], it[1], it[2], it[3]) }
             val tags = if (f[7].isEmpty()) emptyList() else f[7].split(',').map { dec(it) }
-            WrongEntry(f[0].toInt(), f[1].toInt(), tags, dec(f[6]), f[3], f[2].toInt().coerceIn(0, 2), null, rect) to f[4].toInt()
+            // 8번째 칸 뒤는 복습 기록 (옛 파일에는 없다)
+            val r = ReviewSchedule.decodeFields(f.drop(8))
+            WrongEntry(
+                f[0].toInt(), f[1].toInt(), tags, dec(f[6]), f[3], f[2].toInt().coerceIn(0, 2), null, rect,
+                r.stage, r.lastDay, r.dueDay, r.history,
+            ) to f[4].toInt()
         } catch (e: Exception) {
             null
         }

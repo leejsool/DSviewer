@@ -177,6 +177,7 @@ class ViewerActivity : AppCompatActivity() {
                 pageLabel.text = if (docView.isSpread && page + 1 < count) "${page + 1}-${page + 2} / $count" else "${page + 1} / $count"
                 pagePanel.setCurrent(page)
                 overview.setCurrent(page)
+                if (current?.review != null) review.sync()
             }
 
             override fun onSelectionChanged(rect: RectF?, count: Int) = tools.placeSelectionBar(rect, count)
@@ -318,7 +319,7 @@ class ViewerActivity : AppCompatActivity() {
     }
 
     /** [draftId]가 있으면 탐색기에서 고른 복구할 필기: 그 자동 저장본을 연다 */
-    private fun openTab(uri: Uri, writable: Boolean, newNote: Boolean, draftId: String? = null) {
+    private fun openTab(uri: Uri, writable: Boolean, newNote: Boolean, draftId: String? = null, review: ReviewSession? = null) {
         docs.firstOrNull { it.uri == uri }?.let {
             // 이미 열려 있는 문서면 그 탭으로
             docTabs.select(docs.indexOf(it), notify = true)
@@ -332,6 +333,11 @@ class ViewerActivity : AppCompatActivity() {
             return
         }
         val t = DocTab(uri, writable && !newNote, newNote)
+        if (review != null) {
+            t.review = review
+            t.name = "복습 · " + FileUtil.baseName(review.source.name)
+            t.type = DocType.PDF
+        }
         docs.add(t)
         openTabs = docs.size
         openUris = docs.mapTo(HashSet()) { it.uri.toString() }
@@ -339,6 +345,10 @@ class ViewerActivity : AppCompatActivity() {
         docTabs.addTab(t.name, R.drawable.ic_doc, TAB_ICON_GRAY, closable = true)
         updateTabTitle(t)
         docTabs.select(docs.lastIndex, notify = true)
+        if (review != null) {
+            load(t)
+            return
+        }
         val meta = drafts.meta(draftId ?: drafts.idOf(uri.toString()))
         when {
             meta == null -> load(t)
@@ -370,14 +380,20 @@ class ViewerActivity : AppCompatActivity() {
             .show()
     }
 
+    /** 오답 복습용 문서를 새 탭으로 연다 */
+    private fun openReviewTab(s: ReviewSession, file: File) {
+        openTab(Uri.fromFile(file), writable = false, newNote = false, review = s)
+    }
+
     private fun updateTabTitle(t: DocTab) {
         val i = docs.indexOf(t)
         if (i < 0) return
         // 저장하지 않은 필기가 있으면 이름 뒤에 디스켓 표시
         docTabs.setTitle(i, t.name)
-        docTabs.setUnsaved(i, t.ink?.dirty == true)
+        docTabs.setUnsaved(i, t.ink?.dirty == true && t.review == null)
         val color = if (t.type == DocType.UNKNOWN) TAB_ICON_GRAY else DocColors.of(t.type)
-        docTabs.setIcon(i, R.drawable.ic_doc, color)
+        if (t.review != null) docTabs.setIcon(i, R.drawable.ic_wrong_note, REVIEW_TAB_COLOR)
+        else docTabs.setIcon(i, R.drawable.ic_doc, color)
     }
 
     /** 이 탭의 문서를 화면에 띄운다 */
@@ -423,6 +439,11 @@ class ViewerActivity : AppCompatActivity() {
     }
 
     private fun closeTab(t: DocTab) {
+        // 오답 복습 탭은 저장할 것이 없다: 채점을 반영할지만 묻고 닫는다
+        if (t.review != null) {
+            review.askClose(t)
+            return
+        }
         // 치던 글(과 포스트잇 입력)을 먼저 쪽에 넣는다: 그래야 '저장하지 않은 필기'로 잡혀 물어본다
         if (current === t) textEditor.commit()
         if (t.ink?.dirty != true) {
@@ -443,6 +464,8 @@ class ViewerActivity : AppCompatActivity() {
     }
 
     private fun removeTab(t: DocTab) {
+        // 이 문서에서 연 복습 탭은 함께 닫는다 (채점을 반영할 곳이 없어지므로)
+        docs.filter { it.review?.source === t }.forEach { removeTab(it) }
         val index = docs.indexOf(t)
         if (index < 0) return
         val wasCurrent = current === t
@@ -455,6 +478,7 @@ class ViewerActivity : AppCompatActivity() {
         docs.removeAt(index)
         // 저장했거나 '저장 안 함'으로 닫았으니 자동 저장본은 더 필요 없다 (열다 만 복구 탭은 남겨 둔다)
         if (t.ink != null) autoSaver.discard(t)
+        t.review?.let { review.release(it) }
         t.search?.cancel()
         t.handwriting?.onProgress = null
         openTabs = docs.size
@@ -517,7 +541,7 @@ class ViewerActivity : AppCompatActivity() {
         lifecycleScope.launch {
             try {
                 val draftFile = t.draftFile
-                val name = if (draftFile != null) t.name
+                val name = if (draftFile != null || t.review != null) t.name
                 else withContext(Dispatchers.IO) { FileUtil.displayName(this@ViewerActivity, uri) }
                 t.name = name
                 updateTabTitle(t)
@@ -572,6 +596,8 @@ class ViewerActivity : AppCompatActivity() {
         val inkDoc = InkDocument(d.pageCount)
         strokes?.let { inkDoc.load(it, marks) }
         inkDoc.loadWrongs(wrongs)
+        // 복습용 문서: 쪽마다 문제 그림을 넣는다 (저장하지 않은 필기로 치지 않는다)
+        t.review?.populate(inkDoc)
         // 자동 저장본에서 열었으면 아직 저장하지 않은 필기로 (탭에 디스켓 표시, 닫을 때 저장 여부를 묻는다)
         if (t.draftFile != null) {
             t.draftFile = null
@@ -662,7 +688,7 @@ class ViewerActivity : AppCompatActivity() {
         val inkDoc = ink
         undoButton.setEnabledAlpha(inkDoc?.canUndo == true)
         redoButton.setEnabledAlpha(inkDoc?.canRedo == true)
-        saveButton.setEnabledAlpha(inkDoc != null)
+        saveButton.setEnabledAlpha(inkDoc != null && current?.review == null)
         overviewButton.setEnabledAlpha(inkDoc != null)
         overviewButton.setActive(overview.isShowing)
         insertButton.setEnabledAlpha(inkDoc != null)
@@ -672,6 +698,7 @@ class ViewerActivity : AppCompatActivity() {
         // 읽기 전용이면 책에 눈, 쓸 수 있으면 책에 펜
         readModeButton.setImageResource(if (readMode) R.drawable.ic_read_mode else R.drawable.ic_write_mode)
         readModeButton.contentDescription = if (readMode) "읽기 모드 끝내기" else "읽기 모드"
+        review.sync()
     }
 
     /** 켜진 보기 단추는 바탕에 옅은 동그라미 */
@@ -1240,6 +1267,8 @@ class ViewerActivity : AppCompatActivity() {
             .isEnabled = ink != null && !docView.readOnly
         popup.menu.add(0, 9, 1, "오답노트 목록 · 분류").setIcon(R.drawable.ic_wrong_note)
             .isEnabled = ink != null
+        popup.menu.add(0, 10, 1, "오답 복습 시작").setIcon(R.drawable.ic_wrong_note)
+            .isEnabled = ink != null && current?.review == null
         popup.menu.add(0, 5, 2, "링크").setIcon(R.drawable.ic_link)
         popup.setForceShowIcon(true)
         popup.setOnMenuItemClickListener { item ->
@@ -1256,6 +1285,7 @@ class ViewerActivity : AppCompatActivity() {
                 item.itemId == 7 -> startNotePlacement()
                 item.itemId == 8 -> wrong.startPick()
                 item.itemId == 9 -> wrong.showList()
+                item.itemId == 10 -> wrong.askReview()
                 item.itemId == 1 || item.itemId == 3 -> {
                     imageImportMode = if (item.itemId == 3) ImageImportMode.NEW_PAGE else ImageImportMode.IN_PAGE
                     pickImage.launch("image/*")
@@ -1294,8 +1324,15 @@ class ViewerActivity : AppCompatActivity() {
 
     // ================= 오답노트 =================
 
+    private val review: ReviewController by lazy {
+        ReviewController(
+            this, docView, findViewById(R.id.docFrame), findViewById(R.id.reviewBar), findViewById(R.id.reviewRow),
+            findViewById(R.id.bottomOverlay), progress, { current }, saver, ::toast, ::openReviewTab, ::removeTab,
+        )
+    }
+
     private val wrong: WrongController by lazy {
-        WrongController(this, prefs, docView, textEditor, progress, { current }, ::toast, ::editPages)
+        WrongController(this, prefs, docView, textEditor, progress, { current }, ::toast, ::editPages) { t, list -> review.start(t, list) }
     }
 
     /**
@@ -2064,6 +2101,8 @@ class ViewerActivity : AppCompatActivity() {
         /** 링크 넣기로 넣은 글의 색 (파란 밑줄) */
         private val LINK_COLOR = Color.parseColor("#1A5FD0")
         private val TAB_ICON_GRAY = Color.parseColor("#9E9E9E")
+        /** 오답 복습 탭 아이콘 색 */
+        private val REVIEW_TAB_COLOR = Color.parseColor("#E8710A")
         /** 열려 있는 탭 수 (탐색기의 '열린 문서' 버튼용) */
         var openTabs = 0
             private set

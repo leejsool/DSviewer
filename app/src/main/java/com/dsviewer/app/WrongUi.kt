@@ -203,7 +203,11 @@ class WrongUi(private val a: AppCompatActivity, private val prefs: SharedPrefere
         onGo: (page: Int, e: WrongEntry) -> Unit,
         onSource: (e: WrongEntry) -> Unit,
         onEdit: (e: WrongEntry, done: () -> Unit) -> Unit,
+        /** '복습' 단추: 지금 목록에 보이는 오답들을 넘긴다 */
+        onReview: (shown: List<WrongEntry>) -> Unit,
     ) {
+        var dueOnly = false
+        var lastShown: List<WrongEntry> = emptyList()
         var symbolFilter: Int? = null
         var tagFilter: String? = null
         var query = ""
@@ -221,7 +225,9 @@ class WrongUi(private val a: AppCompatActivity, private val prefs: SharedPrefere
         val tagScroll = HorizontalScrollView(a).apply { isHorizontalScrollBarEnabled = false }
         val countText = TextView(a).apply { textSize = 12f; setPadding(0, dp(8), 0, dp(4)) }
         val rows = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
+        val dueChip = Chip(a).apply { isCheckable = true }
         root.addView(search)
+        root.addView(dueChip)
         root.addView(symbolScroll)
         root.addView(tagScroll)
         root.addView(countText)
@@ -264,11 +270,18 @@ class WrongUi(private val a: AppCompatActivity, private val prefs: SharedPrefere
                 listOf<Pair<String, Any?>>("모든 태그" to null) + tags.map { (t, n) -> "#$t ($n)" to (t as Any?) },
                 tagFilter) { tagFilter = it as String?; render() }
 
+            val today = ReviewSchedule.today()
+            dueChip.setOnCheckedChangeListener(null)
+            dueChip.text = "오늘 복습할 것 (${all.count { it.second.isDue(today) }})"
+            dueChip.isChecked = dueOnly
+            dueChip.setOnCheckedChangeListener { _, on -> dueOnly = on; render() }
             val shown = all.filter { (_, e) ->
-                (symbolFilter == null || e.symbol == symbolFilter) &&
+                (!dueOnly || e.isDue(today)) &&
+                    (symbolFilter == null || e.symbol == symbolFilter) &&
                     (tagFilter == null || tagFilter in e.tags) &&
                     (query.isEmpty() || e.title.contains(query, true) || e.tags.any { it.contains(query.trimStart('#'), true) })
             }
+            lastShown = shown.map { it.second }
             countText.text = if (all.isEmpty()) "아직 담은 오답이 없습니다. 삽입 ▸ 오답 담기로 시작하세요." else "${shown.size}개 (전체 ${all.size}개)"
             rows.removeAllViews()
             for ((page, e) in shown) rows.addView(row(page, e, go, goSource) { onEdit(e) { render() } })
@@ -287,6 +300,7 @@ class WrongUi(private val a: AppCompatActivity, private val prefs: SharedPrefere
             .setTitle("오답노트")
             .setView(ScrollView(a).apply { addView(root) })
             .setPositiveButton("닫기", null)
+            .setNeutralButton("복습") { _, _ -> onReview(lastShown) }
             .show()
     }
 
@@ -314,7 +328,8 @@ class WrongUi(private val a: AppCompatActivity, private val prefs: SharedPrefere
             setTextColor(0xFF1565C0.toInt())
         })
         mid.addView(TextView(a).apply {
-            text = "${page + 1}쪽 · ${e.date}"
+            text = "${page + 1}쪽 · ${e.date} · " + ReviewSchedule.label(e.stage, e.dueDay, ReviewSchedule.today()) +
+                (ReviewSchedule.accuracy(e.history)?.let { " · 정답률 ${(it * 100).roundToInt()}%" } ?: "")
             textSize = 11f
             setTextColor(0xFF78909C.toInt())
         })
