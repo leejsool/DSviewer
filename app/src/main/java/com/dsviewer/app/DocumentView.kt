@@ -2441,45 +2441,33 @@ class DocumentView @JvmOverloads constructor(
             rest.forEach { pieces.add(page to it) }
             return true
         }
-        // 일반 지우개가 닿은 채우기: 이번 획에서 채우기를 지울지 정해진 뒤에 지운다
-        val fillHits = ArrayList<Stroke>()
-        var hitOther = false
-        // 가린 테이프 아래(먼저 그린 획)는 보이지 않으므로 지우지 않는다
-        var covered = false
-        for (k in list.indices.reversed()) {
-            val st = list[k]
-            if (st.isBox || st.note != null) continue  // 그림·글은 선택해서 삭제, 메모는 메모의 지우기 단추로
-            val isTape = st.tape != null
-            val isFill = st.fill != null
-            if (fillsOnly) {
-                if (!isFill) continue
-            } else if (tapesOnly) {
-                if (!isTape) continue
-            } else if (isTape && st.revealed) continue  // 보이게 한 테이프는 투명한 셈이라 지우개가 그대로 지나간다
-            if (covered) break
-            val coversHere = isTape && !st.revealed && st.tapeContains(px, py)
-            if (!tapesOnly && !fillsOnly && hlOnly && st.tool != Tool.HIGHLIGHTER) {
-                if (coversHere) covered = true
-                continue
-            }
-            if (!st.hitTest(px, py, r)) continue
-            if (isFill && !fillsOnly && eraseFills != true) {
-                // 채운 도형 안의 선을 지우다가 채우기까지 지우지 않게
-                fillHits.add(st)
-                continue
-            }
-            if (!isFill) hitOther = true
-            if (!eraseOne(k, st)) continue
-            if (coversHere) covered = true
-            removed = true
+        val filter = EraseRules.Filter(tapesOnly, fillsOnly, hlOnly)
+        // 획마다 닿았는지·가렸는지는 규칙이 필요로 할 때만 잰다 (람다)
+        val targets = list.map { st ->
+            EraseRules.Target(
+                id = st, isBox = st.isBox, isNote = st.note != null, isTape = st.tape != null, isFill = st.fill != null,
+                isHighlighter = st.tool == Tool.HIGHLIGHTER, revealed = st.revealed,
+                coversPoint = { st.tapeContains(px, py) }, hit = { st.hitTest(px, py, r) },
+            )
         }
-        if (!fillsOnly && eraseFills == null) {
-            if (hitOther) eraseFills = false else if (fillHits.isNotEmpty()) eraseFills = true
+        val result = EraseRules.apply(
+            targets, filter,
+            when (eraseFills) { null -> EraseRules.FillDecision.UNDECIDED; true -> EraseRules.FillDecision.ERASE; else -> EraseRules.FillDecision.KEEP },
+            object : EraseRules.Eraser {
+                // 앞서 자른 획이 번호를 밀 수 있어 (채우기는 나중에 지우므로) 지금 위치를 다시 찾는다
+                override fun erase(id: Any): Boolean {
+                    val st = id as Stroke
+                    val k = list.indexOf(st)
+                    return k >= 0 && eraseOne(k, st)
+                }
+            },
+        )
+        eraseFills = when (result.decision) {
+            EraseRules.FillDecision.UNDECIDED -> null
+            EraseRules.FillDecision.ERASE -> true
+            EraseRules.FillDecision.KEEP -> false
         }
-        if (eraseFills == true) for (st in fillHits) {
-            val k = list.indexOf(st)
-            if (k >= 0 && eraseOne(k, st)) removed = true
-        }
+        if (result.removed) removed = true
         if (removed) invalidate()
     }
 
