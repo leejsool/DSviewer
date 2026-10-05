@@ -907,6 +907,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun showRecoverDialog(found: List<DraftMeta>) {
         if (found.isEmpty()) return
+        // 여기서 한 번 물었으니, 나중에 그 문서를 열 때 뷰어가 또 묻지 않는다
+        Drafts.asked.addAll(found.map { it.id })
         val items = found.map {
             val name = if (Locks.isLocked(this, it.uri)) "잠긴 문서" else it.name
             "$name\n${DateFormat.format("M월 d일 a h:mm", Date(it.time))}까지 쓴 필기"

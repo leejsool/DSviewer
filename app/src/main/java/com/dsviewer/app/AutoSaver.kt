@@ -181,4 +181,7 @@ internal class AutoSaver(
 /** 자동 저장본 보관소 (앱 전용 저장소 안 drafts 폴더) */
 internal object Drafts {
     fun store(ctx: Context) = DraftStore(java.io.File(ctx.filesDir, "drafts"))
+
+    /** 이번 실행에서 복구할지 이미 물어본 자동 저장본 ([DraftMeta.id]). 같은 것을 두 번 묻지 않으려고 */
+    val asked: MutableSet<String> = java.util.Collections.synchronizedSet(HashSet())
 }

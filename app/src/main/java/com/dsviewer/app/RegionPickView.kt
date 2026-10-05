@@ -34,7 +34,8 @@ class RegionPickView(ctx: Context, private val bmp: Bitmap) : View(ctx) {
     }
     private val handlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
     private val slop = 28f * d
-    private val minSize = 40f * d
+    /** 이보다 작게 끌다 만 것은 실수로 치고, 이보다 작게 줄일 수는 없다 (작은 글자 하나도 고를 수 있게 작게) */
+    private val minSize = 12f * d
 
     private var mode = NONE
     private var ax = 0f
@@ -103,6 +104,8 @@ class RegionPickView(ctx: Context, private val bmp: Bitmap) : View(ctx) {
                 parent?.requestDisallowInterceptTouchEvent(true)
                 mode = NONE
                 if (has) {
+                    // 작은 네모에서는 손잡이 잡는 범위도 줄인다 (안 그러면 둘레가 다 잡혀 새로 고를 수 없다)
+                    val slop = min(slop, max(10f * d, min(sel.width(), sel.height()) * 0.5f))
                     el = abs(x - sel.left) < slop && y > sel.top - slop && y < sel.bottom + slop
                     er = abs(x - sel.right) < slop && y > sel.top - slop && y < sel.bottom + slop
                     et = abs(y - sel.top) < slop && x > sel.left - slop && x < sel.right + slop

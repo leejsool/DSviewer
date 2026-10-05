@@ -458,6 +458,8 @@ class ViewerActivity : AppCompatActivity() {
         when {
             meta == null -> load(t)
             draftId != null -> { useDraft(t, meta); load(t) }
+            // 앱을 켤 때 '저장하지 않은 필기' 창에서 이미 물었으면 또 묻지 않고 그 필기를 되살린다 (저장 전이라 언제든 버릴 수 있다)
+            meta.id in Drafts.asked -> { useDraft(t, meta); load(t) }
             else -> askRecover(t, meta)
         }
     }
@@ -475,6 +477,7 @@ class ViewerActivity : AppCompatActivity() {
 
     /** 이 문서의 저장하지 않은 필기가 자동 저장돼 있으면 복구할지 묻는다 */
     private fun askRecover(t: DocTab, meta: DraftMeta) {
+        Drafts.asked.add(meta.id)
         val whenText = android.text.format.DateFormat.format("M월 d일 a h:mm", meta.time)
         MaterialAlertDialogBuilder(this)
             .setTitle("저장하지 않은 필기가 있습니다")
@@ -1840,6 +1843,12 @@ class ViewerActivity : AppCompatActivity() {
             addView(picker, android.widget.FrameLayout.LayoutParams(-1, -1).apply { topMargin = dp(40); bottomMargin = dp(64) })
             addView(hint, android.widget.FrameLayout.LayoutParams(-1, -2, android.view.Gravity.TOP))
             addView(bar, android.widget.FrameLayout.LayoutParams(-1, -2, android.view.Gravity.BOTTOM))
+        }
+        // 전체 화면 창이라 아래 내비게이션 줄·작업 표시줄 밑으로 단추가 깔린다: 시스템 줄만큼 안쪽으로
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
+            val b = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            v.setPadding(b.left, b.top, b.right, b.bottom)
+            insets
         }
         picker.onSelectionChanged = { ok.isEnabled = it }
         fun finish(file: File?) {
