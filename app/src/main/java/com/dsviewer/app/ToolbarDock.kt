@@ -12,6 +12,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
+import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -27,6 +28,16 @@ enum class ToolbarSide {
 
     /** 왼쪽·오른쪽이면 툴바를 세로로 세운다 */
     val vertical get() = this == LEFT || this == RIGHT
+}
+
+/** 옵션 ▸ 툴바 아이콘 크기: 소 · 중(기본) · 대 (prefs에는 번호로 남긴다) */
+object IconSize {
+    val LABELS = listOf("소", "중", "대")
+    val HINTS = listOf("아이콘을 작게 해서 한 줄에 더 많이 보입니다.", "기본 크기입니다.", "아이콘을 크게 해서 누르기 쉽습니다.")
+    const val DEFAULT = 1
+    private val SCALES = floatArrayOf(0.8f, 1f, 1.3f)
+
+    fun scale(index: Int) = SCALES[index.coerceIn(0, SCALES.size - 1)]
 }
 
 /**
@@ -55,8 +66,11 @@ class ToolbarDock(
     private val density = root.resources.displayMetrics.density
     private fun dp(v: Float) = (v * density).roundToInt()
 
+    /** 아이콘 크기 배율 ([IconSize]) */
+    private var iconScale = 1f
+
     /** 툴바 두께 (가로일 때 높이, 세로일 때 너비) */
-    private val thickness = dp(56f)
+    private val thickness get() = dp(56f * iconScale)
 
     private val scrollV = ScrollView(root.context).apply {
         isVerticalScrollBarEnabled = false
@@ -68,9 +82,28 @@ class ToolbarDock(
         handle.setOnTouchListener { _, ev -> onHandleTouch(ev) }
     }
 
+    /** 도구 아이콘 크기를 [scale]배로 (툴바 두께도 함께). 정사각형이라 가로·세로 툴바에 같다 */
+    fun setIconScale(scale: Float) {
+        iconScale = scale
+        for (i in 0 until content.childCount) {
+            val b = content.getChildAt(i) as? ImageButton ?: continue
+            val lp = b.layoutParams
+            lp.width = dp(44f * scale)
+            lp.height = dp(44f * scale)
+            b.layoutParams = lp
+            b.scaleType = ImageView.ScaleType.FIT_CENTER
+            val pad = dp(10f * scale)
+            b.setPadding(pad, pad, pad, pad)
+        }
+        if (docked) dock(side)
+    }
+
+    private var docked = false
+
     /** [s] 자리에 툴바를 붙인다 */
     fun dock(s: ToolbarSide) {
         side = s
+        docked = true
         val v = s.vertical
         (toolbar.parent as? ViewGroup)?.removeView(toolbar)
         toolbar.orientation = if (v) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL

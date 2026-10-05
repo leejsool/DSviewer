@@ -160,8 +160,21 @@ internal class ToolbarController(
             },
             onTap = { showOptions(1) },
         )
+        dock.setIconScale(toolIconScale())
         val saved = prefs.getString("toolbarSide", null)
         dock.dock(ToolbarSide.entries.firstOrNull { it.name == saved } ?: ToolbarSide.BOTTOM)
+    }
+
+    // ================= 툴바 아이콘 크기 =================
+
+    fun toolIconScale() = IconSize.scale(prefs.getInt("toolIconSize", IconSize.DEFAULT))
+
+    /** 옵션에서 하단(도구) 툴바 아이콘 크기를 바꿨을 때. 열려 있던 줄·창은 자리가 달라지므로 닫는다 */
+    fun applyToolIconSize() {
+        hideOptionBar()
+        closeFlyout()
+        dock.setIconScale(toolIconScale())
+        findViewById<View>(R.id.toolbar).post { updateOverlayInsets() }
     }
 
     // ================= 툴바에 보일 도구 =================

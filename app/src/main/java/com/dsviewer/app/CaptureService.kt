@@ -291,6 +291,7 @@ class CaptureService : Service() {
         busy = true
         val bars = barInsets()
         val (sw, sh) = screenSize()
+        val other = otherPane(sw, sh)
         // 단추가 찍히지 않게 숨기고, 숨긴 화면이 전송될 때까지 잠깐 기다린다
         box.visibility = View.INVISIBLE
         bg.postDelayed({
@@ -301,10 +302,17 @@ class CaptureService : Service() {
                     // 받은 그림 크기가 화면과 다르면(돌리는 중 등) 비율대로 맞춘다
                     val kx = bmp.width.toFloat() / sw
                     val ky = bmp.height.toFloat() / sh
-                    val l = (bars.left * kx).roundToInt()
-                    val t = (bars.top * ky).roundToInt()
-                    val r = bmp.width - (bars.right * kx).roundToInt()
-                    val b = bmp.height - (bars.bottom * ky).roundToInt()
+                    var l = (bars.left * kx).roundToInt()
+                    var t = (bars.top * ky).roundToInt()
+                    var r = bmp.width - (bars.right * kx).roundToInt()
+                    var b = bmp.height - (bars.bottom * ky).roundToInt()
+                    // 분할 화면이면 뷰어 칸은 빼고 다른 앱 칸만
+                    if (other != null) {
+                        l = maxOf(l, (other.left * kx).roundToInt())
+                        t = maxOf(t, (other.top * ky).roundToInt())
+                        r = minOf(r, (other.right * kx).roundToInt())
+                        b = minOf(b, (other.bottom * ky).roundToInt())
+                    }
                     val crop = if (r - l > 16 && b - t > 16 && (l > 0 || t > 0 || r < bmp.width || b < bmp.height))
                         Bitmap.createBitmap(bmp, l, t, r - l, b - t) else bmp
                     val f = FileUtil.tempFile(this, "capture", "png")
@@ -320,6 +328,24 @@ class CaptureService : Service() {
                 finishCapture(file.getOrNull(), cancelled = file.isFailure, region = region)
             }
         }, 350)
+    }
+
+    /**
+     * 뷰어가 분할 화면의 한 칸이면 그 반대쪽(찍을 다른 앱 칸)의 자리, 아니면 null.
+     * 두 칸 사이 구분선(약 8dp)은 뺀다
+     */
+    private fun otherPane(sw: Int, sh: Int): Rect? {
+        val v = viewerBounds?.invoke() ?: return null
+        val gap = (8 * resources.displayMetrics.density).roundToInt()
+        val fullW = v.width() >= sw * 0.9f
+        val fullH = v.height() >= sh * 0.9f
+        return when {
+            fullH && !fullW ->
+                if (v.left <= sw - v.right) Rect(v.right + gap, 0, sw, sh) else Rect(0, 0, v.left - gap, sh)
+            fullW && !fullH ->
+                if (v.top <= sh - v.bottom) Rect(0, v.bottom + gap, sw, sh) else Rect(0, 0, sw, v.top - gap)
+            else -> null
+        }
     }
 
     /** RGBA 버퍼 → 비트맵 (줄 끝 여백을 떼어 낸다) */
@@ -382,6 +408,9 @@ class CaptureService : Service() {
         private const val ACTION_CANCEL = "com.dsviewer.app.CAPTURE_CANCEL"
         private const val EXTRA_CODE = "code"
         private const val EXTRA_DATA = "data"
+
+        /** 뷰어가 분할 화면의 한 칸일 때 그 칸의 자리를 알려 주는 함수 (뷰어가 시작할 때 넣고, 사라지면 비운다) */
+        @Volatile var viewerBounds: (() -> Rect?)? = null
 
         /** 서비스가 떠 있는 동안 true (뷰어에서 두 번 시작하지 않게) */
         @Volatile var running = false

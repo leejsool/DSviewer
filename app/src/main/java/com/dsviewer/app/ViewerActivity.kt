@@ -137,8 +137,25 @@ class ViewerActivity : AppCompatActivity() {
         val data = r.data
         if (r.resultCode != RESULT_OK || data == null) { captureTab = null; return@registerForActivityResult }
         CaptureService.start(this, r.resultCode, data)
-        // 뷰어를 뒤로 보내 바로 전에 쓰던 앱이 보이게 한다
-        moveTaskToBack(true)
+        leaveForCapture()
+    }
+
+    /**
+     * 뷰어를 뒤로 보내 바로 전에 쓰던 앱이 보이게 한다.
+     * 분할 화면이면 그대로 둔다: 뒤로 보내면 분할이 풀려 다른 앱이 전체 화면이 되므로,
+     * 분할 그대로 다른 칸의 화면만 찍는다 ([CaptureService.viewerBounds]).
+     */
+    private fun leaveForCapture() {
+        if (!isInMultiWindowMode) moveTaskToBack(true)
+    }
+
+    /** 분할 화면일 때 뷰어 창이 차지한 자리 (화면 좌표). 분할이 아니면 null */
+    private fun viewerWindowBounds(): android.graphics.Rect? {
+        if (!isInMultiWindowMode) return null
+        val v = window.decorView
+        val loc = IntArray(2)
+        v.getLocationOnScreen(loc)
+        return android.graphics.Rect(loc[0], loc[1], loc[0] + v.width, loc[1] + v.height)
     }
 
     private val backCallback = object : OnBackPressedCallback(true) {
@@ -371,6 +388,7 @@ class ViewerActivity : AppCompatActivity() {
         if (isFinishing) MlKitInkRecognizer.release()
         openTabs = 0
         openUris = emptySet()
+        CaptureService.viewerBounds = null
         if (isFinishing) CaptureService.stop(this)
     }
 
@@ -808,6 +826,7 @@ class ViewerActivity : AppCompatActivity() {
     /** 지금 탭의 상태에 맞춰 버튼을 켜고 끈다 (예전 invalidateOptionsMenu 자리) */
     private fun updateActions() {
         applyActionVisibility()
+        applyTopIconSize()
         val inkDoc = ink
         undoButton.setEnabledAlpha(inkDoc?.canUndo == true)
         redoButton.setEnabledAlpha(inkDoc?.canRedo == true)
@@ -1753,6 +1772,7 @@ class ViewerActivity : AppCompatActivity() {
         val d = t.pdf ?: return
         if (t.pagesBusy) return
         captureTab = t
+        CaptureService.viewerBounds = ::viewerWindowBounds
         captureIndex = docView.currentPage().coerceIn(0, d.pageCount - 1) + 1
         if (android.provider.Settings.canDrawOverlays(this)) { requestProjection(); return }
         MaterialAlertDialogBuilder(this)
@@ -1769,7 +1789,7 @@ class ViewerActivity : AppCompatActivity() {
     }
 
     private fun requestProjection() {
-        if (CaptureService.running) { moveTaskToBack(true); return }
+        if (CaptureService.running) { leaveForCapture(); return }
         val mpm = getSystemService(android.media.projection.MediaProjectionManager::class.java)
         // 안드로이드 14부터는 '앱 하나만'도 고를 수 있는데, 앱을 오가며 찍어야 하므로 화면 전체로 받는다
         val consent = if (android.os.Build.VERSION.SDK_INT >= 34)
@@ -2394,6 +2414,34 @@ class ViewerActivity : AppCompatActivity() {
         for (a in topActions) a.button().visibility = if (a.key in hidden && !(a.key == "readMode" && readMode)) View.GONE else View.VISIBLE
     }
 
+    /** 상단 툴바 아이콘 크기 ([IconSize]): 단추 크기·안쪽 여백·탭 줄 높이를 배율에 맞춘다 */
+    private fun applyTopIconSize() {
+        val s = IconSize.scale(prefs.getInt("topIconSize", IconSize.DEFAULT))
+        val d = resources.displayMetrics.density
+        fun px(v: Float) = Math.round(v * d)
+        val buttons = topActions.map { it.button() } + findViewById<View>(R.id.actionMore)
+        for (b in buttons) {
+            val lp = b.layoutParams
+            lp.width = px(30f * s)
+            lp.height = px(38f * s)
+            b.layoutParams = lp
+            b.setPadding(px(5f * s), px(9f * s), px(5f * s), px(9f * s))
+        }
+        findViewById<View>(R.id.tabRow).let { row ->
+            row.layoutParams = row.layoutParams.also { it.height = px(maxOf(44f, 38f * s + 6f)) }
+        }
+    }
+
+    /** 툴바 아이콘 크기를 소·중·대로 고르는 항목. [key]에 번호를 남기고 [apply]로 바로 적용한다 */
+    private fun iconSizeChoice(key: String, apply: () -> Unit) = OptionChoice(
+        "아이콘 크기", IconSize.LABELS, IconSize.HINTS,
+        { prefs.getInt(key, IconSize.DEFAULT) },
+        { i ->
+            prefs.edit().putInt(key, i).apply()
+            apply()
+        },
+    )
+
     private fun showOptionsDialog(start: Int = 0) {
         fun icon(res: Int) = { getDrawable(res)?.mutate() }
         val top = OptionCategory(
@@ -2407,6 +2455,7 @@ class ViewerActivity : AppCompatActivity() {
                     true
                 })
             },
+            listOf(iconSizeChoice("topIconSize", ::applyTopIconSize)),
         )
         val bottom = OptionCategory(
             "하단 툴바", "펜·지우개 같은 도구 아이콘을 표시하거나 숨깁니다. 도구는 하나는 남겨 두어야 합니다.",
@@ -2427,6 +2476,7 @@ class ViewerActivity : AppCompatActivity() {
                     true
                 })
             },
+            listOf(iconSizeChoice("toolIconSize", tools::applyToolIconSize)),
         )
         val convenience = OptionCategory(
             "편의 옵션", "필기할 때 쓰는 편의 기능을 켜고 끕니다.",
@@ -2482,7 +2532,7 @@ class ViewerActivity : AppCompatActivity() {
             ),
         )
         OptionsDialog(this, listOf(top, bottom, convenience)) {
-            prefs.edit().remove("hiddenActions").remove("hiddenTools").putBoolean("scribbleErase", true).putBoolean("palmErase", true).apply()
+            prefs.edit().remove("hiddenActions").remove("hiddenTools").remove("topIconSize").remove("toolIconSize").putBoolean("scribbleErase", true).putBoolean("palmErase", true).apply()
             docView.scribbleErase = true
             docView.palmErase = true
             for (p in panes) {
@@ -2495,6 +2545,8 @@ class ViewerActivity : AppCompatActivity() {
             for (p in panes) p.view.textMark = TextMark.NONE
             applyActionVisibility()
             tools.applyToolVisibility()
+            applyTopIconSize()
+            tools.applyToolIconSize()
         }.show(start)
     }
 
