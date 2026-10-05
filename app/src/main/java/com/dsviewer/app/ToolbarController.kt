@@ -199,7 +199,7 @@ internal class ToolbarController(
 
 
     /** 세로 툴바 옆에 붙는 줄(서식·도형·옵션)을 담는 세로 스크롤 */
-    private fun sideScroll() = android.widget.ScrollView(activity).apply {
+    private fun sideScroll() = EdgeArrowVerticalScrollView(activity).apply {
         setBackgroundColor(MaterialColors.getColor(shapeBar, com.google.android.material.R.attr.colorSurfaceContainer))
         isVerticalScrollBarEnabled = false
         // 칸이 적으면 세로 줄 가운데에

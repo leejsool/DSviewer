@@ -26,7 +26,7 @@
             android:paddingTop="6dp"
             android:paddingEnd="4dp" />
 
-        <HorizontalScrollView
+        <com.dsviewer.app.EdgeArrowScrollView
             android:id="@+id/actionScroll"
             android:layout_width="wrap_content"
             android:layout_height="match_parent"
@@ -127,7 +127,7 @@
             android:src="@drawable/ic_more"
             android:tooltipText="더 보기" />
         </LinearLayout>
-        </HorizontalScrollView>
+        </com.dsviewer.app.EdgeArrowScrollView>
     </com.dsviewer.app.TabActionRow>
 
     <!-- 문서 화면 줄. 툴바를 왼쪽·오른쪽에 붙이면 이 줄의 앞·뒤에 들어온다
@@ -242,7 +242,7 @@
 
             <!-- 보정 펜을 고르면 나오는 도형 줄 (칸은 ViewerActivity.buildShapeBar에서 만든다).
                  툴바가 왼쪽·오른쪽이면 shapeRow를 코드에서 만든 세로 줄로 옮긴다 (ViewerActivity.placeOverlays) -->
-            <HorizontalScrollView
+            <com.dsviewer.app.EdgeArrowScrollView
                 android:id="@+id/shapeBar"
                 android:fillViewport="true"
                 android:layout_width="match_parent"
@@ -260,11 +260,11 @@
                     android:paddingHorizontal="8dp"
                     android:paddingTop="6dp"
                     android:paddingBottom="2dp" />
-            </HorizontalScrollView>
+            </com.dsviewer.app.EdgeArrowScrollView>
 
             <!-- 글 상자를 치는 동안 뜨는 서식 줄 (ViewerActivity.setupFormatBar).
                  툴바가 왼쪽·오른쪽이면 formatRow를 코드에서 만든 세로 줄로 옮긴다 (ViewerActivity.placeOverlays) -->
-            <HorizontalScrollView
+            <com.dsviewer.app.EdgeArrowScrollView
                 android:id="@+id/formatBar"
                 android:fillViewport="true"
                 android:layout_width="match_parent"
@@ -281,11 +281,11 @@
                     android:orientation="horizontal"
                     android:paddingHorizontal="8dp"
                     android:paddingVertical="4dp" />
-            </HorizontalScrollView>
+            </com.dsviewer.app.EdgeArrowScrollView>
 
             <!-- 지우개·테이프 도구를 누르면 올라오는 옵션 줄. 하나 고르면 사라진다 (ViewerActivity.showOptionBar).
                  툴바가 왼쪽·오른쪽이면 toolOptions를 코드에서 만든 세로 줄로 옮긴다 -->
-            <HorizontalScrollView
+            <com.dsviewer.app.EdgeArrowScrollView
                 android:id="@+id/toolOptionBar"
                 android:fillViewport="true"
                 android:layout_width="match_parent"
@@ -303,10 +303,10 @@
                     android:paddingHorizontal="8dp"
                     android:paddingTop="6dp"
                     android:paddingBottom="2dp" />
-            </HorizontalScrollView>
+            </com.dsviewer.app.EdgeArrowScrollView>
 
             <!-- 오답 복습 중에만 보이는 줄: 정답 보기 · 채점 · 끝내기 (ReviewController가 칸을 만든다) -->
-            <HorizontalScrollView
+            <com.dsviewer.app.EdgeArrowScrollView
                 android:id="@+id/reviewBar"
                 android:fillViewport="true"
                 android:layout_width="match_parent"
@@ -323,7 +323,7 @@
                     android:orientation="horizontal"
                     android:paddingHorizontal="10dp"
                     android:paddingVertical="6dp" />
-            </HorizontalScrollView>
+            </com.dsviewer.app.EdgeArrowScrollView>
         </LinearLayout>
 
         <!-- 툴바가 위에 있을 때 도형 줄·옵션 줄은 여기로 옮겨 온다 (툴바 가까이 뜨게) -->
@@ -470,7 +470,7 @@
             android:src="@drawable/ic_drag_handle"
             android:tooltipText="누르면 보일 도구 고르기, 끌면 툴바 옮기기" />
 
-    <HorizontalScrollView
+    <com.dsviewer.app.EdgeArrowScrollView
         android:id="@+id/toolScrollH"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
@@ -623,6 +623,6 @@
                 android:gravity="center_vertical"
                 android:orientation="horizontal" />
         </LinearLayout>
-    </HorizontalScrollView>
+    </com.dsviewer.app.EdgeArrowScrollView>
     </LinearLayout>
 </LinearLayout>

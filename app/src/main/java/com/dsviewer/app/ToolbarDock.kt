@@ -72,7 +72,7 @@ class ToolbarDock(
     /** 툴바 두께 (가로일 때 높이, 세로일 때 너비) */
     private val thickness get() = dp(56f * iconScale)
 
-    private val scrollV = ScrollView(root.context).apply {
+    private val scrollV = EdgeArrowVerticalScrollView(root.context).apply {
         isVerticalScrollBarEnabled = false
         isFillViewport = true
         overScrollMode = scrollH.overScrollMode
