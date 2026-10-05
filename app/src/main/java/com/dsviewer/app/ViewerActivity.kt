@@ -400,7 +400,7 @@ class ViewerActivity : AppCompatActivity() {
             // 이미 열려 있는 문서면 그 탭으로 (분할 보기용으로 골랐다면 둘째 칸에)
             if (pendingSplit) {
                 pendingSplit = false
-                if (it !== current) beginSplit(it)
+                beginSplit(it)
             }
             docTabs.select(docs.indexOf(it), notify = true)
             if (startReview && it.ink != null) docView.post { wrong.reviewDue() }
@@ -559,15 +559,16 @@ class ViewerActivity : AppCompatActivity() {
         val index = docs.indexOf(t)
         if (index < 0) return
         val wasCurrent = current === t
-        val pane = paneOf(t)
+        val shownPanes = panesOf(t)
+        val pane = shownPanes.firstOrNull { it === focused } ?: shownPanes.firstOrNull()
         if (wasCurrent) {
             overview.hide()
             current = null
             pagePanel.clear()
         }
-        if (pane != null) {
-            pane.view.clearDocument()
-            pane.tab = null
+        for (p in shownPanes) {
+            p.view.clearDocument()
+            p.tab = null
         }
         docs.removeAt(index)
         // 저장했거나 '저장 안 함'으로 닫았으니 자동 저장본은 더 필요 없다 (열다 만 복구 탭은 남겨 둔다)
@@ -587,7 +588,11 @@ class ViewerActivity : AppCompatActivity() {
             return
         }
         // 떠 있던 칸은 옆 탭으로 채우고(보고 있던 칸이면 그 탭을 고른다), 채울 탭이 없으면 분할 보기를 끝낸다. 뒤에 있던 탭을 닫았으면 그대로
-        if (pane != null) {
+        if (pane != null && shownPanes.size > 1) {
+            // 같은 문서를 두 칸에 띄웠던 탭이면 칸을 하나로 합치고 옆 탭으로 채운다
+            if (split) endSplit(keep = panes[0])
+            docs.getOrNull(index.coerceAtMost(docs.lastIndex))?.let { docTabs.select(docs.indexOf(it), notify = true) }
+        } else if (pane != null) {
             val hidden = docs.filter { d -> paneOf(d) == null }
             val next = hidden.firstOrNull { docs.indexOf(it) >= index } ?: hidden.lastOrNull()
             when {
@@ -714,9 +719,11 @@ class ViewerActivity : AppCompatActivity() {
             File(HandwritingIndex.dir(this), drafts.idOf(t.uri.toString()) + ".txt"),
         ).also { hw -> hw.onNeedsData = { askHandwritingData(hw, auto = true) } }
         inkDoc.onChanged = {
-            paneOf(t)?.view?.let {
-                it.refreshMargin()
-                it.invalidate()
+            for (p in panesOf(t)) {
+                p.view.refreshMargin()
+                // 같은 문서를 띄운 다른 칸이 잡고 있던 선택은 이 변경으로 낡았을 수 있어 거둔다
+                if (p !== focused) p.view.clearSelection()
+                p.view.invalidate()
             }
             if (current === t) {
                 updateActions()
@@ -732,7 +739,7 @@ class ViewerActivity : AppCompatActivity() {
         t.pdf = d
         t.ink = inkDoc
         updateTabTitle(t)  // 복구한 필기면 디스켓 표시
-        paneOf(t)?.view?.setDocument(d, inkDoc)
+        for (p in panesOf(t)) p.view.setDocument(d, inkDoc, sharedState(p, t))
         if (current === t) {
             syncPagePanel()
             progress.visibility = View.GONE
@@ -2091,14 +2098,17 @@ class ViewerActivity : AppCompatActivity() {
                 val after = PageFiles(newSrc, newRender, 0)
                 inkDoc.changePages(before, after) { pages -> after.page = applyInk(pages) }
                 val target = after.page
-                val v = paneOf(t)?.view
-                if (v != null) {
-                    v.setDocument(nd, inkDoc, v.viewState())
+                val shown = panesOf(t)
+                if (shown.isNotEmpty()) {
+                    for (p in shown) {
+                        val v = p.view
+                        v.setDocument(nd, inkDoc, v.viewState())
+                        v.post { v.scrollToPage(target) }
+                    }
                     if (current === t) {
                         pagePanel.setDocument(nd, inkDoc)
                         overview.setDocument(nd, inkDoc)
                     }
-                    v.post { v.scrollToPage(target) }
                 } else t.viewState = null
                 old?.close()
                 updateTabTitle(t)
@@ -2133,14 +2143,17 @@ class ViewerActivity : AppCompatActivity() {
                 t.pdf = nd
                 t.sourcePdf = f.source
                 t.renderPdf = f.render
-                val v = paneOf(t)?.view
-                if (v != null) {
-                    v.setDocument(nd, inkDoc, v.viewState())
+                val shown = panesOf(t)
+                if (shown.isNotEmpty()) {
+                    for (p in shown) {
+                        val v = p.view
+                        v.setDocument(nd, inkDoc, v.viewState())
+                        v.post { v.scrollToPage(f.page.coerceIn(0, nd.pageCount - 1)) }
+                    }
                     if (current === t) {
                         pagePanel.setDocument(nd, inkDoc)
                         overview.setDocument(nd, inkDoc)
                     }
-                    v.post { v.scrollToPage(f.page.coerceIn(0, nd.pageCount - 1)) }
                 } else t.viewState = null
                 old?.close()
                 updateTabTitle(t)
@@ -2170,16 +2183,30 @@ class ViewerActivity : AppCompatActivity() {
         }
     }
 
-    /** 지금 [t]를 보여 주는 칸 (없으면 null) */
-    private fun paneOf(t: DocTab) = panes.firstOrNull { it.shown && it.tab === t }
+    /** 지금 [t]를 보여 주는 칸들 (같은 문서를 두 칸에 띄웠으면 둘, 없으면 빈 목록) */
+    private fun panesOf(t: DocTab) = panes.filter { it.shown && it.tab === t }
+
+    /** 지금 [t]를 보여 주는 칸 하나 (두 칸이면 고른 칸, 없으면 null) */
+    private fun paneOf(t: DocTab): ViewerPane? {
+        val l = panesOf(t)
+        return l.firstOrNull { it === focused } ?: l.firstOrNull()
+    }
+
+    /**
+     * [pane]에 [t]를 처음 띄울 때의 스크롤·확대. 같은 문서를 이미 띄운 다른 칸이 있으면 그 칸이 보던 자리에서 시작하고,
+     * 아니면 탭이 기억해 둔 자리
+     */
+    private fun sharedState(pane: ViewerPane, t: DocTab): DocumentView.ViewState? =
+        panes.firstOrNull { it !== pane && it.shown && it.tab === t }?.view?.viewState() ?: t.viewState
 
     /** [t]를 [pane]에 띄운다 (아직 다 안 열렸으면 빈 화면). 고른 칸이나 탭 줄·쪽 관리 창은 건드리지 않는다 */
     private fun showIn(pane: ViewerPane, t: DocTab) {
         pane.view.searchHits = emptyMap()
+        val state = sharedState(pane, t)
         pane.tab = t
         val d = t.pdf
         val inkDoc = t.ink
-        if (d != null && inkDoc != null) pane.view.setDocument(d, inkDoc, t.viewState)
+        if (d != null && inkDoc != null) pane.view.setDocument(d, inkDoc, state)
         else pane.view.clearDocument()
     }
 
@@ -2228,16 +2255,17 @@ class ViewerActivity : AppCompatActivity() {
         }
         val t = current ?: return
         val others = docs.filter { it !== t }
-        if (others.isEmpty()) {
-            askSplitDocument()
-            return
-        }
-        // 이미 열려 있는 다른 문서들 중에서, 아니면 새로 열 문서
+        // 지금 문서를 그대로 한 번 더(같은 필기를 두 군데에서 보고 쓴다), 이미 열려 있는 다른 문서, 새로 열 문서
         val popup = PopupMenu(this, splitButton)
-        others.forEachIndexed { i, d -> popup.menu.add(0, i, i, d.name) }
-        if (docs.size < MAX_TABS) popup.menu.add(0, others.size, others.size, "다른 문서 열기…")
+        if (t.pdf != null && t.ink != null) popup.menu.add(0, SPLIT_SAME, 0, "지금 문서를 둘로 나눠 보기")
+        others.forEachIndexed { i, d -> popup.menu.add(0, i, i + 1, d.name) }
+        if (docs.size < MAX_TABS) popup.menu.add(0, SPLIT_OTHER, others.size + 1, "다른 문서 열기…")
         popup.setOnMenuItemClickListener { item ->
-            others.getOrNull(item.itemId)?.let { beginSplit(it) } ?: askSplitDocument()
+            when (item.itemId) {
+                SPLIT_SAME -> beginSplit(t)
+                SPLIT_OTHER -> askSplitDocument()
+                else -> others.getOrNull(item.itemId)?.let { beginSplit(it) }
+            }
             true
         }
         popup.show()
@@ -2282,7 +2310,7 @@ class ViewerActivity : AppCompatActivity() {
         if (focused !== keep) keep.view.copyToolsFrom(focused.view)
         drop.view.clearSelection()
         drop.view.clearLaser()
-        drop.tab?.viewState = drop.view.viewState()
+        if (drop.tab !== keep.tab) drop.tab?.viewState = drop.view.viewState()
         drop.view.clearDocument()
         drop.tab = null
         split = false
@@ -2503,6 +2531,9 @@ class ViewerActivity : AppCompatActivity() {
         /** true면 찍은 화면에서 네모로 부분을 골라 그 부분만 넣는다 */
         const val EXTRA_CAPTURE_REGION = "captureRegion"
         private const val MAX_TABS = 6
+        /** 분할 보기 단추 메뉴: 지금 문서를 그대로 / 다른 문서 열기 (그 밖의 번호는 열려 있는 다른 문서의 순서) */
+        private const val SPLIT_SAME = 1000
+        private const val SPLIT_OTHER = 1001
         /** 넣는 그림의 긴 변 최대 픽셀 */
         private const val MAX_IMAGE_PX = 2048
         /** 링크 넣기로 넣은 글의 색 (파란 밑줄) */
