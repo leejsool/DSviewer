@@ -763,6 +763,7 @@ class ViewerActivity : AppCompatActivity() {
         splitButton.setOnClickListener { onSplitClicked() }
         twoPageButton = findViewById(R.id.actionTwoPage)
         for (p in panes) p.view.twoPage = prefs.getBoolean("twoPage", false)
+        for (p in panes) p.view.horizontal = prefs.getBoolean("horizontalFlow", false)
         twoPageButton.setOnClickListener {
             val on = !docView.twoPage
             prefs.edit().putBoolean("twoPage", on).apply()
@@ -2409,6 +2410,16 @@ class ViewerActivity : AppCompatActivity() {
             ),
             listOf(
                 OptionChoice(
+                    "페이지 넘김 방향",
+                    listOf("세로 스크롤", "가로 넘김"),
+                    listOf(
+                        "쪽을 위아래로 이어 붙여 손가락으로 쓸어 내려 봅니다.",
+                        "한 쪽(양쪽 보기면 두 쪽)이 화면에 꼭 맞게 보이고, 옆으로 쓸면 한 쪽씩 넘어갑니다. 확대하면 쪽 안을 자유롭게 움직입니다.",
+                    ),
+                    { if (docView.horizontal) 1 else 0 },
+                    { i -> setHorizontalFlow(i == 1) },
+                ),
+                OptionChoice(
                     "펜 옆 버튼을 누른 채 쓸 때",
                     PenInputRules.ButtonAction.entries.map { it.label },
                     PenInputRules.ButtonAction.entries.map { it.hint },
@@ -2430,11 +2441,25 @@ class ViewerActivity : AppCompatActivity() {
                 p.view.penTilt = true
             }
             prefs.edit().remove("penButton").remove("penTilt").remove("textMarkup").remove("textMark").apply()
+            setHorizontalFlow(false)
             tools.onTextMarkupChanged()
             for (p in panes) p.view.textMark = TextMark.NONE
             applyActionVisibility()
             tools.applyToolVisibility()
         }.show(start)
+    }
+
+    /**
+     * 옵션 ▸ 페이지 넘김 방향: 세로 스크롤(기본) ↔ 가로 넘김. 보던 쪽은 그대로 두고 쪽 배치만 바꾼다.
+     * 다른 탭에 적어 둔 스크롤 위치는 방향이 달라 뜻이 없어지므로 버린다 (그 탭은 첫 쪽부터 열린다)
+     */
+    private fun setHorizontalFlow(on: Boolean) {
+        prefs.edit().putBoolean("horizontalFlow", on).apply()
+        if (docView.horizontal == on) return
+        textEditor.commit()
+        for (t in docs) if (t !== current) t.viewState = null
+        for (p in panes) p.view.horizontal = on
+        updateActions()
     }
 
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()

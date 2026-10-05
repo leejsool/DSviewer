@@ -1,5 +1,7 @@
 package com.dsviewer.app
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Bitmap
@@ -201,6 +203,16 @@ class DocumentView @JvmOverloads constructor(
             field = v
             relayout()
         }
+    /**
+     * 가로 넘김: 쪽을 왼쪽에서 오른쪽으로 한 줄에 늘어놓고, 한 쪽(양쪽 보기면 두 쪽)이 화면에 꼭 맞게 보인다.
+     * 옆으로 쓸면 한 쪽씩 넘어가고, 확대하면 쪽 안을 자유롭게 움직인다. 끄면 세로로 이어 스크롤한다 (기본)
+     */
+    var horizontal = false
+        set(v) {
+            if (field == v) return
+            field = v
+            relayout()
+        }
     /** 지금 두 쪽씩 놓여 있는지 */
     private val spread get() = pageLayout.spread
     /** 글자 찾기 결과: 쪽마다 강조할 상자 (쪽 좌표) */
@@ -385,7 +397,8 @@ class DocumentView @JvmOverloads constructor(
 
     // ---- 마지막 쪽 아래 '빈 쪽 추가' (끌어 올리기·단추): 그리기·터치는 AddPageFooter가 한다 ----
     private val addFooter: AddPageFooter = AddPageFooter(this, object : AddPageFooter.Host {
-        override val readOnly get() = this@DocumentView.readOnly
+        // 마지막 쪽 아래로 끌어 올리는 동작은 세로 스크롤에서만 (가로 넘김에서는 쪽 관리·삽입 메뉴로)
+        override val readOnly get() = this@DocumentView.readOnly || horizontal
         override val scale get() = this@DocumentView.scale
         override val offsetX get() = offX
         override val offsetY get() = offY
@@ -467,7 +480,7 @@ class DocumentView @JvmOverloads constructor(
         penColor = o.penColor; penWidth = o.penWidth; penStyle = o.penStyle; penSmoothing = o.penSmoothing
         hlColor = o.hlColor; hlWidth = o.hlWidth; hlStraight = o.hlStraight; textMark = o.textMark
         eraserRadiusDp = o.eraserRadiusDp; eraserMode = o.eraserMode; eraseHlOnly = o.eraseHlOnly
-        scribbleErase = o.scribbleErase; palmErase = o.palmErase; fingerDrawing = o.fingerDrawing
+        scribbleErase = o.scribbleErase; palmErase = o.palmErase; fingerDrawing = o.fingerDrawing; horizontal = o.horizontal
         laserColor = o.laserColor; laserWidthDp = o.laserWidthDp; laserFadeMs = o.laserFadeMs
         shapeKind = o.shapeKind; shapeGuide = o.shapeGuide; shapeDashed = o.shapeDashed
         tapeColor = o.tapeColor; tapeWidth = o.tapeWidth; tapePattern = o.tapePattern; tapeRect = o.tapeRect
@@ -544,13 +557,13 @@ class DocumentView @JvmOverloads constructor(
         baseCache.evictAll()
         details = emptyList()
         if (width > 0) {
-            baseScale = width / docW
+            baseScale = fitScale()
             offY = 0f
             if (state != null) {
                 zoom = state.zoom.coerceIn(MIN_ZOOM, MAX_ZOOM)
                 offX = state.offX
                 offY = state.offY
-            }
+            } else if (pageLayout.horizontal) offX = pageLayout.offsetForUnit(0, scale, width.toFloat())
             clamp()
             scheduleDetail()
         }
@@ -565,16 +578,19 @@ class DocumentView @JvmOverloads constructor(
     private fun layoutPages() {
         pageLayout.layout(
             FloatArray(sizes.size) { sizes[it].width }, FloatArray(sizes.size) { sizes[it].height },
-            rightMargin, twoPage, width, height,
+            rightMargin, twoPage, width, height, horizontal,
         )
     }
+
+    /** 쪽 배치에 맞는 기본 배율 (확대 1배): 세로 스크롤은 문서 너비, 가로 넘김은 한 칸이 통째로 보이게 */
+    private fun fitScale() = pageLayout.fitScale(width, height)
 
     /** 쪽 배치를 다시 하고, 보던 쪽이 화면 위에 오도록 */
     private fun relayout() {
         if (doc == null || width == 0) return
         val page = currentPage()
         layoutPages()
-        baseScale = width / docW
+        baseScale = fitScale()
         zoom = 1f
         baseCache.evictAll()
         details = emptyList()
@@ -589,6 +605,15 @@ class DocumentView @JvmOverloads constructor(
         // 양쪽 보기에서 화면이 가로↔세로로 바뀌면 쪽 배치를 새로
         if (twoPage && sizes.size > 1 && (w > h) != spread) {
             relayout()
+            return
+        }
+        if (pageLayout.horizontal) {
+            // 가로 넘김은 쪽 맞춤 배율이 너비·높이에 다 달려 있어 너비가 바뀔 때(회전·분할 보기)만 다시 맞춘다.
+            // 높이만 바뀌면(툴바·읽기 모드·화면 키보드) 쪽 크기는 그대로 두어 화면이 출렁이지 않게
+            if (oldw != w) relayout() else {
+                clamp()
+                invalidate()
+            }
             return
         }
         // 화면 가운데에 있던 문서 위치를 유지. 높이만 바뀌면(화면 키보드) 위쪽을 그대로 둔다
@@ -646,7 +671,8 @@ class DocumentView @JvmOverloads constructor(
 
     private fun clamp() {
         offX = ViewportMath.clampX(offX, docW * scale, width.toFloat())
-        offY = ViewportMath.clampY(offY, contentH(), height.toFloat(), topInset)
+        offY = if (pageLayout.horizontal) ViewportMath.clampYFlip(offY, contentH(), height.toFloat(), topInset)
+        else ViewportMath.clampY(offY, contentH(), height.toFloat(), topInset)
     }
 
     private fun pageRect(i: Int, out: RectF): RectF {
@@ -659,7 +685,7 @@ class DocumentView @JvmOverloads constructor(
     }
 
     private fun visibleRange(): IntRange =
-        if (sizes.isEmpty()) IntRange.EMPTY else pageLayout.visibleRange(offY, scale, height.toFloat())
+        if (sizes.isEmpty()) IntRange.EMPTY else pageLayout.visibleRange(offY, scale, height.toFloat(), offX, width.toFloat())
 
     /**
      * 배지·포스트잇이 처음 생기면 모든 쪽에 바깥 여백을 붙인다 (보던 자리는 그대로).
@@ -672,7 +698,7 @@ class DocumentView @JvmOverloads constructor(
         clearSelection()
         rightMargin = PAGE_SIDE_MARGIN
         layoutPages()
-        baseScale = width / docW
+        baseScale = fitScale()
         baseCache.evictAll()
         details = emptyList()
         if (spot != null) scrollToPageY(spot.first, spot.second) else clamp()
@@ -688,7 +714,8 @@ class DocumentView @JvmOverloads constructor(
         if (sizes.isEmpty()) null else pageLayout.hitPage(offX, offY, scale, sx, sy, wide)
 
     /** 화면 가운데 줄의 첫 쪽 (문서가 없으면 -1) */
-    private fun rowFirstPage(): Int = if (sizes.isEmpty()) -1 else pageLayout.rowFirstPage(offY, scale, height.toFloat())
+    private fun rowFirstPage(): Int =
+        if (sizes.isEmpty()) -1 else pageLayout.rowFirstPage(offY, scale, height.toFloat(), offX, width.toFloat())
 
     /** 화면 가운데에 걸친 쪽 (문서가 없으면 -1). 양쪽 보기면 그 줄에서 화면 가운데에 걸친 쪽 */
     fun currentPage(): Int =
@@ -703,13 +730,15 @@ class DocumentView @JvmOverloads constructor(
         scroller.forceFinished(true)
         zoomAnimator?.cancel()
         offY = ViewportMath.offsetForPageTop(tops[page], gap, scale, topInset)
+        if (pageLayout.horizontal) offX = pageLayout.offsetForUnit(pageLayout.unitOf(page), scale, width.toFloat())
         clamp()
         scheduleDetail()
         invalidate()
     }
 
     /** 화면 맨 위에 걸친 (쪽, 그 쪽 안 높이). 링크로 옮기기 전 자리를 기억해 둘 때 ([scrollToPageY]로 돌아온다) */
-    fun topSpot(): Pair<Int, Float>? = if (sizes.isEmpty()) null else pageLayout.topSpot(offY, topInset, scale)
+    fun topSpot(): Pair<Int, Float>? =
+        if (sizes.isEmpty()) null else pageLayout.topSpot(offY, topInset, scale, offX, width.toFloat())
 
     /** 쪽 좌표 (x, y)에 있는 링크 단 글의 주소 (맨 위 것) */
     fun inkLinkAt(page: Int, x: Float, y: Float): String? = boxAt(page, x, y, textOnly = true)?.link
@@ -720,6 +749,7 @@ class DocumentView @JvmOverloads constructor(
         scroller.forceFinished(true)
         zoomAnimator?.cancel()
         offY = ViewportMath.offsetForPageY(tops[page], y, sizes[page].height, gap, scale, topInset)
+        if (pageLayout.horizontal) offX = pageLayout.offsetForUnit(pageLayout.unitOf(page), scale, width.toFloat())
         clamp()
         scheduleDetail()
         invalidate()
@@ -1246,6 +1276,7 @@ class DocumentView @JvmOverloads constructor(
         override fun onScroll(e1: MotionEvent?, e2: MotionEvent, distanceX: Float, distanceY: Float): Boolean {
             if (scaling) return true
             val before = offY
+            val beforeX = offX
             var dy = distanceY
             // 끌어 올려 둔 새 쪽 자리가 있으면 내릴 때 그것부터 접는다
             dy = addFooter.foldBack(dy)
@@ -1255,13 +1286,18 @@ class DocumentView @JvmOverloads constructor(
             clamp()
             // 마지막 쪽 끝에서 더 올리면 (뻑뻑하게) 새 쪽 자리를 끌어낸다
             if (dy > 0f && want > offY + 0.5f) addFooter.stretchPull(want, offY)
-            noteScrolled(offY - before)
+            noteScrolled(abs(offY - before) + abs(offX - beforeX))
             invalidate()
             return true
         }
 
         override fun onFling(e1: MotionEvent?, e2: MotionEvent, velocityX: Float, velocityY: Float): Boolean {
             if (scaling) return false
+            // 가로 넘김(확대 안 한 상태)에서는 굴러가지 않고 한 쪽 넘어간다
+            if (snapsToPage()) {
+                flipTo(PageLayout.flipTarget(nearestUnit(), nearestUnitCenter(), viewCenterDoc(), velocityX, pageLayout.unitCount))
+                return true
+            }
             val b = ViewportMath.flingBounds(offX, offY, docW * scale, contentH(), width.toFloat(), height.toFloat(), topInset)
             scroller.fling(offX.toInt(), offY.toInt(), -velocityX.toInt(), -velocityY.toInt(), b[0], b[1], b[2], b[3])
             postInvalidateOnAnimation()
@@ -1294,6 +1330,30 @@ class DocumentView @JvmOverloads constructor(
         }
     })
 
+    // ---- 가로 넘김: 쪽 맞추기 ----
+
+    /** 가로 넘김이고 확대하지 않은 상태라 손을 떼면 한 쪽(칸)에 맞춰 멈추는지 */
+    private fun snapsToPage() = pageLayout.horizontal && doc != null && width > 0 && zoom <= SNAP_ZOOM
+
+    private fun nearestUnit() = pageLayout.nearestUnit(offX, scale, width.toFloat())
+    private fun nearestUnitCenter() = pageLayout.unitCenter(nearestUnit())
+    private fun viewCenterDoc() = (offX + width / 2f) / scale
+
+    /** 칸 [unit]이 화면 가운데에 오도록 부드럽게 옮긴다 */
+    private fun flipTo(unit: Int) {
+        if (unit !in 0 until pageLayout.unitCount) return
+        scroller.forceFinished(true)
+        val target = pageLayout.offsetForUnit(unit, scale, width.toFloat())
+        val dx = ViewportMath.clampX(target, docW * scale, width.toFloat()) - offX
+        scroller.startScroll(offX.toInt(), offY.toInt(), dx.roundToInt(), 0, FLIP_MS)
+        postInvalidateOnAnimation()
+    }
+
+    /** 느리게 끌다 뗐을 때: 가장 가까운 칸으로 */
+    private fun snapToNearest() {
+        if (snapsToPage() && scroller.isFinished && zoomAnimator?.isRunning != true) flipTo(nearestUnit())
+    }
+
     private fun animateZoom(target: Float, fx: Float, fy: Float) {
         zoomAnimator?.cancel()
         val docX = ViewportMath.docAt(offX, fx, scale)
@@ -1308,6 +1368,12 @@ class DocumentView @JvmOverloads constructor(
                 clamp()
                 invalidate()
             }
+            // 확대를 풀고 가로 넘김 모습으로 돌아왔으면 한 쪽에 맞춘다
+            addListener(object : AnimatorListenerAdapter() {
+                private var cancelled = false
+                override fun onAnimationCancel(a: Animator) { cancelled = true }
+                override fun onAnimationEnd(a: Animator) { if (!cancelled && target <= SNAP_ZOOM) post { snapToNearest() } }
+            })
             start()
         }
         scheduleDetail()
@@ -1316,10 +1382,11 @@ class DocumentView @JvmOverloads constructor(
     override fun computeScroll() {
         if (scroller.computeScrollOffset()) {
             val before = offY
+            val beforeX = offX
             offX = scroller.currX.toFloat()
             offY = scroller.currY.toFloat()
             clamp()
-            noteScrolled(offY - before)
+            noteScrolled(abs(offY - before) + abs(offX - beforeX))
             postInvalidateOnAnimation()
             scheduleDetail()
         }
@@ -1547,6 +1614,7 @@ class DocumentView @JvmOverloads constructor(
         if (!fingerActive) {
             penIsFinger = false
             addFooter.release(add = action == MotionEvent.ACTION_UP)
+            snapToNearest()
             scheduleDetail()
         }
         return true
@@ -2562,6 +2630,10 @@ class DocumentView @JvmOverloads constructor(
         private const val TAG = "DocumentView"
         private const val MIN_ZOOM = 0.1f
         private const val MAX_ZOOM = 6f
+        /** 가로 넘김에서 이 배율 이하(확대 안 한 상태)면 손을 뗄 때 한 쪽에 맞춘다 */
+        private const val SNAP_ZOOM = 1.05f
+        /** 가로 넘김의 쪽 맞추기 애니메이션 시간 (ms) */
+        private const val FLIP_MS = 260
         private const val SEL_COLOR = 0xFF1E6FD9.toInt()
         /** 크기 조절 손잡이 반지름(그리기)과 누르는 범위 */
         private const val HANDLE_DP = 7f

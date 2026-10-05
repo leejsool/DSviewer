@@ -28,6 +28,18 @@ internal object ViewportMath {
     fun clampY(off: Float, contentH: Float, viewH: Float, topInset: Float): Float =
         if (contentH <= viewH) -(viewH - contentH) / 2f - topInset else off.coerceIn(-topInset, contentH - viewH - topInset)
 
+    /**
+     * 가로 넘김의 세로 스크롤 위치. 쪽이 화면보다 짧을 때, 남는 자리가 작으면(화면 높이의 [FLIP_TOP_SLACK] 이하, 높이에 맞춘 쪽)
+     * 위에 붙여 둔다 — 가운데로 맞추면 툴바가 나타나고 사라질 때마다 쪽이 위아래로 밀린다.
+     * 남는 자리가 크면(가로로 넓은 쪽을 너비에 맞춘 경우) 가운데
+     */
+    fun clampYFlip(off: Float, contentH: Float, viewH: Float, topInset: Float): Float =
+        if (contentH <= viewH && viewH - contentH <= viewH * FLIP_TOP_SLACK) -topInset
+        else clampY(off, contentH, viewH, topInset)
+
+    /** [clampYFlip]에서 위에 붙여 두는 남는 자리의 한도 (화면 높이에 대한 비율) */
+    const val FLIP_TOP_SLACK = 0.12f
+
     /** 확대하는 동안 손가락 가운데(초점)에 있는 문서 점이 그대로 있도록 새 스크롤 위치: ([lastFocus] + [off]) / [oldScale] 이 [newScale]에서 [focus]에 오게 */
     fun zoomOffset(off: Float, lastFocus: Float, focus: Float, oldScale: Float, newScale: Float): Float =
         (lastFocus + off) / oldScale * newScale - focus
