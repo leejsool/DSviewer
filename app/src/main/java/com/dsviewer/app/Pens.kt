@@ -37,12 +37,14 @@ enum class PenStyle(val code: Char, val label: String, val reach: Float) {
      */
     fun factor(p: Float): Float {
         val q = p.coerceIn(0f, 1f)
+        // 1을 넘는 값은 연필·붓펜을 눕혀 쥐었을 때 더 넓어지는 만큼 ([PenTilt]). 옛 필기는 1 이하라 그대로
+        val extra = p.coerceIn(1f, 2f) - 1f
         return when (this) {
             FELT -> Stroke.quantize(q)
             BALL -> 0.8f + 0.3f * q
             FOUNTAIN -> 0.3f + 1.0f * q
-            BRUSH -> 0.08f + 1.8f * q
-            PENCIL -> 0.65f + 0.5f * q
+            BRUSH -> 0.08f + 1.8f * q + PenTilt.BRUSH_EXTRA_SLOPE * extra
+            PENCIL -> 0.65f + 0.5f * q + PenTilt.PENCIL_EXTRA_SLOPE * extra
             CALLIGRAPHY -> 0.55f + 0.6f * q
         }
     }
@@ -115,13 +117,15 @@ class PenInput {
     private var speed = 0f
     /** 지금까지 넣은 획 길이 (쪽 좌표) */
     private var dist = 0f
+    /** 펜 기울기 (라디안, 부드럽게). 연필·붓펜이 눕혀 쥔 만큼 넓어진다 */
+    private var tilt = 0f
 
     /** 이번에 넣을 점 */
     var x = 0f; private set
     var y = 0f; private set
     var p = 0f; private set
 
-    fun begin(style: PenStyle, width: Float, smoothing: Int, px: Float, py: Float, pr: Float, t: Long) {
+    fun begin(style: PenStyle, width: Float, smoothing: Int, px: Float, py: Float, pr: Float, t: Long, tiltRad: Float = 0f) {
         this.style = style
         this.width = width
         follow = PenSmoothing.follow(smoothing)
@@ -131,6 +135,7 @@ class PenInput {
         peak = pr
         speed = 0f
         dist = 0f
+        tilt = tiltRad
         x = px; y = py
         p = shape(pr)
     }
@@ -139,7 +144,10 @@ class PenInput {
      * 새로 받은 점. [dpPerPt]는 쪽 1pt가 화면에서 몇 dp인지 (속도를 확대와 상관없이 재려고),
      * [minDist]보다 가까우면 넣지 않는다 (false)
      */
-    fun move(px: Float, py: Float, pr: Float, t: Long, dpPerPt: Float, minDist: Float, lastX: Float, lastY: Float): Boolean {
+    fun move(
+        px: Float, py: Float, pr: Float, t: Long, dpPerPt: Float, minDist: Float, lastX: Float, lastY: Float,
+        tiltRad: Float = 0f,
+    ): Boolean {
         val dt = (t - lastT).coerceAtLeast(1L)
         val v = hypot(px - rx, py - ry) * dpPerPt / dt
         speed = speed * 0.75f + min(v, 4f) * 0.25f
@@ -150,6 +158,7 @@ class PenInput {
         val d = hypot(sx - lastX, sy - lastY)
         if (d < minDist) return false
         pressure = pressure * 0.5f + pr * 0.5f
+        tilt = tilt * 0.6f + tiltRad * 0.4f
         dist += d
         x = sx; y = sy
         p = shape(pressure)
@@ -161,7 +170,8 @@ class PenInput {
         val fast = ((speed - 0.15f) / 1.2f).coerceIn(0f, 1f)
         return when (style) {
             PenStyle.FOUNTAIN -> pr * (1f - 0.35f * fast) * taper(dist, width * 1.2f, 0.55f)
-            PenStyle.BRUSH -> pr.pow(1.2f) * (1f - 0.5f * fast) * taper(dist, width * 2.5f, 0.2f)
+            PenStyle.BRUSH -> PenTilt.brush(pr.pow(1.2f) * (1f - 0.5f * fast) * taper(dist, width * 2.5f, 0.2f), PenTilt.shade(tilt))
+            PenStyle.PENCIL -> PenTilt.pencil(pr, PenTilt.shade(tilt))
             else -> pr
         }
     }
@@ -177,12 +187,13 @@ class PenInput {
      * 뗄 때: 손떨림 보정으로 뒤처진 끝을 뗀 자리까지 잇고, 만년필·붓펜은 끝을 가늘게 한다
      * (빨리 떼며 그을수록 더 가늘게)
      */
-    fun finish(st: Stroke) {
+    fun finish(st: Stroke, bridge: Boolean = true) {
         if (st.count == 0) return
         val lx = st.x(st.count - 1)
         val ly = st.y(st.count - 1)
         val gap = hypot(rx - lx, ry - ly)
-        if (follow < 1f && gap > 0.05f) {
+        // 자를 따라 그은 획은 곧게 둔다: 뗀 자리(자 밖일 수 있음)까지 잇지 않는다
+        if (bridge && follow < 1f && gap > 0.05f) {
             val n = 4
             val lp = st.p(st.count - 1)
             for (k in 1..n) st.add(lx + (rx - lx) * k / n, ly + (ry - ly) * k / n, lp)

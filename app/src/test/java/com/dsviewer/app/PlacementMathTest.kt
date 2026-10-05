@@ -154,4 +154,45 @@ class PlacementMathTest {
             assertEquals(ref[0], got[0], 0f); assertEquals(ref[1], got[1], 0f)
         }
     }
+
+    // ================= 큰 그림 붙이기 (영역 스크린샷) =================
+
+    @Test fun smallImageIsPastedAtItsOwnSize() {
+        assertEquals(1f, PlacementMath.pasteFit(200f, 100f, 600f, 800f), 0f)
+    }
+
+    @Test fun wideImageShrinksToNinetyPercentOfPageWidth() {
+        // 쪽 600 → 540. 1080 너비 그림은 절반
+        assertEquals(0.5f, PlacementMath.pasteFit(1080f, 200f, 600f, 800f), 1e-6f)
+    }
+
+    @Test fun tallImageShrinksToNinetyPercentOfPageHeight() {
+        // 쪽 높이 800 → 720. 1440 높이 그림은 절반
+        assertEquals(0.5f, PlacementMath.pasteFit(100f, 1440f, 600f, 800f), 1e-6f)
+    }
+
+    @Test fun theTighterSideDecides() {
+        val k = PlacementMath.pasteFit(1080f, 1440f * 4, 600f, 800f)
+        assertEquals(720f / (1440f * 4), k, 1e-6f)
+    }
+
+    @Test fun imageExactlyAtTheLimitIsNotShrunk() {
+        assertEquals(1f, PlacementMath.pasteFit(540f, 720f, 600f, 800f), 0f)
+    }
+
+    @Test fun emptyImageDoesNotDivideByZero() {
+        assertEquals(1f, PlacementMath.pasteFit(0f, 0f, 600f, 800f), 0f)
+    }
+
+    @Test fun shrunkImageAlwaysFitsThePage() {
+        val rnd = Random(11)
+        repeat(5_000) {
+            val w = 1f + rnd.nextFloat() * 3000; val h = 1f + rnd.nextFloat() * 3000
+            val pw = 100f + rnd.nextFloat() * 900; val ph = 100f + rnd.nextFloat() * 1200
+            val k = PlacementMath.pasteFit(w, h, pw, ph)
+            assertTrue(k in 0f..1f)
+            assertTrue(w * k <= pw * PlacementMath.FIT_FRACTION + 1e-2f)
+            assertTrue(h * k <= ph * PlacementMath.FIT_FRACTION + 1e-2f)
+        }
+    }
 }

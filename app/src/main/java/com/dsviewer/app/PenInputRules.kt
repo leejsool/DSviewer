@@ -35,6 +35,30 @@ internal object PenInputRules {
     fun isEraserInput(samsungButton: Boolean, isEraserTool: Boolean, buttonState: Int, buttonMask: Int): Boolean =
         samsungButton || isEraserTool || (buttonState and buttonMask != 0)
 
+    /** 펜 옆 버튼을 누른 채 쓸 때 하는 일 (옵션에서 고른다). 지우개는 지금까지의 동작 */
+    enum class ButtonAction(val label: String, val hint: String) {
+        ERASER("지우개", "버튼을 누른 채 문지르면 지워집니다."),
+        LASSO("올가미 선택", "버튼을 누른 채 끌면 선택합니다. 선택을 마치고 다른 곳을 쓰면 원래 도구로 돌아옵니다."),
+        LASER("레이저", "버튼을 누른 채 끌면 레이저 포인터로 보입니다. 떼면 원래 도구로 돌아옵니다."),
+        SWAP("직전 도구로 전환", "버튼을 누른 채 톡 치면 직전에 쓰던 도구와 번갈아 바뀝니다.");
+
+        companion object {
+            fun named(n: String?) = entries.firstOrNull { it.name == n } ?: ERASER
+        }
+    }
+
+    /** 옆 버튼을 누른 채인가: 삼성 S펜 버튼 코드, 또는 [buttonState]에 [buttonMask] 중 하나가 있음 (지우개 쪽 끝은 따로 본다) */
+    fun buttonDown(samsungButton: Boolean, buttonState: Int, buttonMask: Int): Boolean =
+        samsungButton || (buttonState and buttonMask != 0)
+
+    /** 이번 획을 지우개로 다루게 하는 펜 입력인가: 지우개 쪽 끝, 또는 버튼을 누른 채이고 버튼 동작이 지우개일 때 */
+    fun eraserInput(eraserTip: Boolean, button: Boolean, action: ButtonAction): Boolean =
+        eraserTip || (button && action == ButtonAction.ERASER)
+
+    /** 버튼을 누른 채 톡 쳤는가: 전환 동작 중이고 끝까지 갔고 많이 움직이지 않았고 [tapMs] 안에 뗐을 때 */
+    fun isSwapTap(swapping: Boolean, commit: Boolean, tapCandidate: Boolean, elapsedMs: Long, tapMs: Long): Boolean =
+        swapping && commit && tapCandidate && elapsedMs in 0 until tapMs
+
     /**
      * 펜 입력을 새로 시작할 수 있는 때인가: 읽기 모드가 아니고, 이미 쓰는 중이 아니고, 첫 손가락·펜이 닿거나 다음 손가락이 닿을 때
      */

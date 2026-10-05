@@ -370,6 +370,24 @@
                     app:iconTint="@null" />
 
                 <com.google.android.material.button.MaterialButton
+                    android:id="@+id/selectionFlipH"
+                    style="?attr/materialButtonTonalStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="4dp"
+                    android:text="좌우"
+                    app:icon="@drawable/ic_flip_h" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/selectionFlipV"
+                    style="?attr/materialButtonTonalStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="4dp"
+                    android:text="상하"
+                    app:icon="@drawable/ic_flip_v" />
+
+                <com.google.android.material.button.MaterialButton
                     android:id="@+id/selectionCopy"
                     style="?attr/materialButtonTonalStyle"
                     android:layout_width="wrap_content"
@@ -548,6 +566,16 @@
                 android:background="@drawable/bg_tool"
                 android:contentDescription="레이저 포인터"
                 android:src="@drawable/ic_laser" />
+
+            <!-- 자: 도구가 아니라 켜고 끄는 겹침 (펜·형광펜으로 가장자리를 따라 긋는다). 눌러서 직선자·눈금자·각도기를 고른다 -->
+            <ImageButton
+                android:id="@+id/toolRuler"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:layout_marginStart="2dp"
+                android:background="@drawable/bg_tool"
+                android:contentDescription="자"
+                android:src="@drawable/ic_ruler" />
 
             <View
                 android:layout_width="1dp"

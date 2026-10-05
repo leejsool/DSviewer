@@ -61,6 +61,10 @@ class DocumentView @JvmOverloads constructor(
         fun onShapeFailed(kind: ShapeKind) {}
         /** 펜(또는 손가락 필기)이 문서에 닿음 */
         fun onPenDown() {}
+        /** 자를 켜거나 껐다 (툴바의 자 단추 표시를 맞춘다) */
+        fun onRulerChanged() {}
+        /** 펜 버튼 동작으로 도구를 바꿔야 함 (툴바 표시도 따라가도록 뷰어가 처리) */
+        fun onPenButtonTool(tool: Tool) {}
         /** 글 도구로 쪽의 (x, y)를 톡 누름. 이미 있는 글 위면 [existing]이 그 글 */
         fun onTextTap(page: Int, x: Float, y: Float, existing: Stroke?) {}
         /** 화면을 다시 그림 (스크롤·확대가 바뀌었을 수 있다. 문서 위에 띄운 글 상자를 따라 옮길 때) */
@@ -85,6 +89,8 @@ class DocumentView @JvmOverloads constructor(
         fun onNotePlacementEnded() {}
         /** 오답으로 담을 영역을 골랐다 (쪽 번호, 그 쪽 좌표의 영역). 고른 영역 표시는 [clearWrongRect]로 지운다 */
         fun onWrongPicked(page: Int, rect: RectF) {}
+        /** 영역 스크린샷으로 찍을 영역을 골랐다 (쪽 번호, 그 쪽 좌표의 영역) */
+        fun onShotPicked(page: Int, rect: RectF) {}
         /** 오답 영역 고르기가 끝남 (골랐거나 취소). 안내를 닫을 때 */
         fun onWrongPickEnded() {}
     }
@@ -94,9 +100,29 @@ class DocumentView @JvmOverloads constructor(
     // ---- 도구 설정 ----
     var tool = Tool.PEN
         set(v) {
+            if (field != v && !quietTool) previousTool = field
             field = v
-            if (v != Tool.LASSO) clearSelection()
+            if (v != Tool.LASSO) {
+                buttonLassoReturn = null
+                clearSelection()
+            }
         }
+    /** 직전에 쓰던 도구 (펜 버튼 '직전 도구로 전환'에서 번갈아 쓴다) */
+    private var previousTool = Tool.PEN
+    /** 도구를 잠깐 바꿨다 돌아올 때는 직전 도구로 치지 않는다 */
+    private var quietTool = false
+    /** 펜을 눕혀 쥔 만큼 연필·붓펜이 넓게 칠해지게 한다 (옵션) */
+    var penTilt = true
+    /** 지금 들어온 점의 펜 기울기 (라디안) */
+    private var curTilt = 0f
+    /** 펜 버튼 동작: 버튼을 누른 채 쓸 때 (지우개·올가미 선택·레이저·직전 도구 전환) */
+    internal var penButtonAction = PenInputRules.ButtonAction.ERASER
+    /** 펜 버튼으로 올가미를 켰다면 선택을 마친 뒤 돌아갈 도구 */
+    private var buttonLassoReturn: Tool? = null
+    /** 펜 버튼으로 이번 획만 바꾼 도구 (획이 끝나면 되돌린다) */
+    private var buttonTempTool: Tool? = null
+    /** 지금 펜 버튼을 누른 채 톡 치는지 보는 중 (끌면 아무것도 안 한다) */
+    private var penSwapping = false
     var penColor = Color.BLACK
     var penWidth = 1.0f
     /** 펜 종류 (사인펜·볼펜·만년필·붓펜·연필·캘리그래피) */
@@ -135,6 +161,7 @@ class DocumentView @JvmOverloads constructor(
                 cancelNotePlacement()
                 cancelWrongPick()
                 clearWrongRect()
+                ruler.hide()
             }
             // 마지막 쪽 아래 '빈 쪽 추가' 단추는 읽기 모드에서 숨긴다 (그만큼 스크롤 길이가 바뀐다)
             if (doc != null) {
@@ -412,6 +439,8 @@ class DocumentView @JvmOverloads constructor(
         fillColor = o.fillColor; fillPattern = o.fillPattern; fillMode = o.fillMode; fillSmoothing = o.fillSmoothing
         fillPolygon = o.fillPolygon; fillErasing = o.fillErasing; fillEraseMode = o.fillEraseMode
         lassoRect = o.lassoRect; lassoTap = o.lassoTap
+        penButtonAction = o.penButtonAction
+        penTilt = o.penTilt
         noteColor = o.noteColor
         clipboard = o.clipboard
         clipSize.set(o.clipSize)
@@ -444,6 +473,7 @@ class DocumentView @JvmOverloads constructor(
     fun clearDocument() {
         clearSelection()
         clearLaser()
+        ruler.hide()
         cancelRendering()
         doc = null
         ink = null
@@ -465,6 +495,7 @@ class DocumentView @JvmOverloads constructor(
     fun setDocument(d: PdfDoc, inkDoc: InkDocument, state: ViewState? = null) {
         clearSelection()
         clearLaser()
+        ruler.hide()
         cancelRendering()
         doc = d
         ink = inkDoc
@@ -738,6 +769,9 @@ class DocumentView @JvmOverloads constructor(
                     shapePreview?.forEach { sp -> drawStroke(canvas, sp, 0.6f) }
                 } else drawStroke(canvas, it)
             }
+            // 자는 붙여넣은 그림·필기보다 늘 맨 위에 (그은 선은 자 가장자리 바로 바깥에 놓여 자에 가려지지 않는다)
+            ruler.draw(canvas, i)
+            ruler.drawOverlay(canvas, i)
             canvas.restore()
 
             // 배지(점선으로 원문과 이어서)와 포스트잇: 쪽 오른쪽 바깥 여백까지 그린다. 포스트잇은 맨 위에
@@ -807,6 +841,28 @@ class DocumentView @JvmOverloads constructor(
     private fun handleNoteTouch(ev: MotionEvent): Boolean =
         if (wrongPicking) picker.onTouch(ev) else notes.onTouch(ev)
 
+    // ================= 자 · 눈금자 · 각도기 =================
+    // 그리기·손가락으로 옮기기·가장자리 붙이기는 RulerController가 한다. 여기서는 쪽 배치를 읽게 해 주고 펜 입력에 이어 준다.
+
+    internal val ruler: RulerController = RulerController(this, object : RulerController.Host {
+        override val scale get() = this@DocumentView.scale
+        override val pageCount get() = sizes.size
+        override fun pageWidth(page: Int) = sizes[page].width
+        override fun pageHeight(page: Int) = sizes[page].height
+        override fun currentPage() = this@DocumentView.currentPage()
+        override fun centerOrigin(page: Int, w: Float, h: Float) = PlacementMath.pasteOrigin(
+            offX, offY, width.toFloat(), height.toFloat(), scale,
+            lefts[page], tops[page], sizes[page].width, sizes[page].height, w, h,
+        )
+        override fun pageX(page: Int, sx: Float) = toPageX(page, sx)
+        override fun pageY(page: Int, sy: Float) = toPageY(page, sy)
+        override fun stopFling() = scroller.forceFinished(true)
+        override fun onRulerChanged() { listener?.onRulerChanged() }
+    })
+
+    /** 지금 긋는 획이 자 가장자리를 따라가는 중이면 그 붙임 */
+    private var rulerSnap: RulerController.Snap? = null
+
     // ================= 오답 영역 고르기 =================
     // 네모를 끌어 고르는 일은 WrongPicker가 한다. 여기서는 시작할 때 다른 입력 모드를 정리해 준다.
 
@@ -833,17 +889,23 @@ class DocumentView @JvmOverloads constructor(
             gestureDetector.onTouchEvent(ev)
         }
         override fun onPickEnded() { listener?.onWrongPickEnded() }
-        override fun onPicked(page: Int, rect: RectF) { listener?.onWrongPicked(page, rect) }
+        override fun onPicked(page: Int, rect: RectF) {
+            if (pickForShot) listener?.onShotPicked(page, rect) else listener?.onWrongPicked(page, rect)
+        }
     })
+
+    /** 지금 고르는 네모가 오답이 아니라 영역 스크린샷용인가 */
+    private var pickForShot = false
 
     /** 오답 영역을 고르는 중 */
     val wrongPicking get() = picker.picking
 
-    /** 오답 영역 고르기를 시작한다 (끝나면 [Listener.onWrongPickEnded]) */
-    fun startWrongPick(): Boolean {
+    /** 오답 영역 고르기를 시작한다 (끝나면 [Listener.onWrongPickEnded]). [forShot]이면 고른 영역은 영역 스크린샷으로 간다 */
+    fun startWrongPick(forShot: Boolean = false): Boolean {
         if (ink == null || readOnly) return false
         clearSelection()
         notes.reset()
+        pickForShot = forShot
         picker.start()
         return true
     }
@@ -1255,10 +1317,47 @@ class DocumentView @JvmOverloads constructor(
         return t == MotionEvent.TOOL_TYPE_STYLUS || t == MotionEvent.TOOL_TYPE_ERASER
     }
 
-    private fun isEraserInput(ev: MotionEvent, idx: Int, samsungButton: Boolean): Boolean {
-        if (PenInputRules.isEraserInput(samsungButton, ev.getToolType(idx) == MotionEvent.TOOL_TYPE_ERASER, 0, 0)) return true
-        val mask = MotionEvent.BUTTON_STYLUS_PRIMARY or MotionEvent.BUTTON_STYLUS_SECONDARY or MotionEvent.BUTTON_SECONDARY
-        return PenInputRules.isEraserInput(false, false, ev.buttonState, mask)
+    /** 도구를 바꾼다: 뷰어가 있으면 툴바 표시까지 따라가게 맡기고, 없으면 그냥 바꾼다 */
+    private fun switchToolFromPen(t: Tool) {
+        val l = listener
+        if (l != null) l.onPenButtonTool(t) else tool = t
+    }
+
+    /**
+     * 펜 입력이 새로 닿을 때 옆 버튼 동작을 정한다 ([button]은 버튼을 누른 채인가, ([sx], [sy])는 닿은 화면 자리).
+     * 올가미로 바꿨다면 선택을 마친 뒤, 선택 밖을 버튼 없이 쓰는 순간 원래 도구로 돌아온다
+     */
+    private fun applyPenButton(button: Boolean, sx: Float, sy: Float) {
+        penSwapping = false
+        if (button) {
+            when (penButtonAction) {
+                PenInputRules.ButtonAction.LASSO -> if (tool != Tool.LASSO) {
+                    val back = tool
+                    switchToolFromPen(Tool.LASSO)
+                    buttonLassoReturn = back
+                }
+                PenInputRules.ButtonAction.LASER -> if (tool != Tool.LASER) {
+                    buttonTempTool = tool
+                    quietTool = true
+                    tool = Tool.LASER
+                    quietTool = false
+                }
+                PenInputRules.ButtonAction.SWAP -> penSwapping = true
+                PenInputRules.ButtonAction.ERASER -> {}
+            }
+        } else {
+            val back = buttonLassoReturn
+            if (back != null && !onSelection(sx, sy)) {
+                buttonLassoReturn = null
+                switchToolFromPen(back)
+            }
+        }
+    }
+
+    /** 펜 기울기 (라디안, 0이 수직). 손가락이거나 기울기를 안 쓰거나 모르는 펜이면 0 */
+    private fun tilt(ev: MotionEvent, idx: Int, hist: Int = -1): Float {
+        if (!penTilt || !isStylus(ev, idx)) return 0f
+        return if (hist >= 0) ev.getHistoricalAxisValue(MotionEvent.AXIS_TILT, idx, hist) else ev.getAxisValue(MotionEvent.AXIS_TILT, idx)
     }
 
     private fun pressure(ev: MotionEvent, idx: Int, hist: Int = -1): Float {
@@ -1273,6 +1372,8 @@ class DocumentView @JvmOverloads constructor(
         if (penPointerId == -1 && scrollBar.onTouch(ev)) return true
         if (penPointerId == -1 && !fingerActive && addFooter.onTouch(ev)) return true
         if (penPointerId == -1 && !fingerActive && handleNoteTouch(ev)) return true
+        // 자: 손가락으로 자의 몸통을 잡고 옮기고 돌린다 (펜이 닿으면 놓아 주어 한 손으로 자를 잡고 다른 손으로 긋는다)
+        if (!readOnly && ruler.onFingerTouch(ev, penPointerId != -1)) return true
         // 구형 삼성 S펜: 버튼을 누른 채 그리면 별도 액션 코드(211~213)로 들어온다
         val translated = PenInputRules.translate(ev.actionMasked)
         val action = translated.action
@@ -1292,8 +1393,14 @@ class DocumentView @JvmOverloads constructor(
                 fingersBlocked = stylus
                 penPointerId = ev.getPointerId(idx)
                 penIsFinger = fingerPen
-                penErasing = PenInputRules.penErasing(tool, tapeErasing, fillErasing, stylus, isEraserInput(ev, idx, samsungButton))
+                val tip = ev.getToolType(idx) == MotionEvent.TOOL_TYPE_ERASER
+                val button = stylus && !tip && PenInputRules.buttonDown(samsungButton, ev.buttonState, STYLUS_BUTTON_MASK)
+                applyPenButton(button, ev.getX(idx), ev.getY(idx))
+                penErasing = PenInputRules.penErasing(
+                    tool, tapeErasing, fillErasing, stylus, PenInputRules.eraserInput(tip, button, penButtonAction),
+                )
                 penMaxMajor = if (fingerPen) ev.getTouchMajor(idx) else 0f
+                curTilt = tilt(ev, idx)
                 startPen(ev.getX(idx), ev.getY(idx), pressure(ev, idx), ev.eventTime)
                 if (palmReady() && anyPalm(ev)) switchToPalm(ev)
                 return true
@@ -1341,8 +1448,10 @@ class DocumentView @JvmOverloads constructor(
                     val idx = ev.findPointerIndex(penPointerId)
                     if (idx >= 0) {
                         for (h in 0 until ev.historySize) {
+                            curTilt = tilt(ev, idx, h)
                             movePen(ev.getHistoricalX(idx, h), ev.getHistoricalY(idx, h), pressure(ev, idx, h), ev.getHistoricalEventTime(h))
                         }
+                        curTilt = tilt(ev, idx)
                         movePen(ev.getX(idx), ev.getY(idx), pressure(ev, idx), ev.eventTime)
                     }
                 }
@@ -1352,7 +1461,10 @@ class DocumentView @JvmOverloads constructor(
                 MotionEvent.ACTION_UP -> {
                     // 뗀 자리까지 획에 넣는다 (보정 펜에서 끝점이 잘리지 않게)
                     val idx = ev.findPointerIndex(penPointerId)
-                    if (idx >= 0) movePen(ev.getX(idx), ev.getY(idx), pressure(ev, idx), ev.eventTime)
+                    if (idx >= 0) {
+                        curTilt = tilt(ev, idx)
+                        movePen(ev.getX(idx), ev.getY(idx), pressure(ev, idx), ev.eventTime)
+                    }
                     endPen(commit = true)
                     fingersBlocked = false
                 }
@@ -1492,6 +1604,8 @@ class DocumentView @JvmOverloads constructor(
         tapDownSx = sx
         tapDownSy = sy
         eraseFills = null
+        // 펜 버튼을 누른 채 톡 쳐서 도구를 바꾸는 중: 끌어도 아무것도 그리지 않는다
+        if (penSwapping) return
         if (tool == Tool.LASSO && !penErasing) {
             startLasso(sx, sy)
             return
@@ -1527,13 +1641,22 @@ class DocumentView @JvmOverloads constructor(
                 else -> Stroke(Tool.PEN, penColor, penWidth)
             }
             lastPressure = p
+            // 자 가장자리에서 시작한 펜·형광펜 획은 가장자리를 따라 곧게 (각도기 둘레는 둥글게)
+            val snap = if ((tool == Tool.PEN || tool == Tool.HIGHLIGHTER) && ruler.active) {
+                // 선이 자에 가려지지 않게 가장자리에서 펜 굵기의 반 + 가장자리 선의 반만큼 바깥에 긋는다
+                val halfPen = (if (tool == Tool.HIGHLIGHTER) hlWidth else penWidth * penStyle.reach) / 2f
+                ruler.beginSnap(hit.first, hit.second, hit.third, SNAP_DP * density / scale, halfPen + 0.7f * density / scale)
+            } else null
+            rulerSnap = snap
+            val hx = snap?.startX ?: hit.second
+            val hy = snap?.startY ?: hit.third
             if (tool == Tool.PEN) {
-                penInput.begin(penStyle, penWidth, penSmoothing, hit.second, hit.third, p, t)
+                penInput.begin(penStyle, penWidth, penSmoothing, hx, hy, p, t, curTilt)
                 st.add(penInput.x, penInput.y, penInput.p)
             } else if (tool == Tool.FILL) {
                 penInput.begin(PenStyle.FELT, 1f, fillSmoothing, hit.second, hit.third, p, t)
                 st.add(penInput.x, penInput.y, 0f)
-            } else st.add(hit.second, hit.third, p)
+            } else st.add(hx, hy, p)
             curStroke = st
         }
         invalidate()
@@ -1607,6 +1730,21 @@ class DocumentView @JvmOverloads constructor(
         val st = curStroke ?: return
         val px = toPageX(curPage, sx)
         val py = toPageY(curPage, sy)
+        val snap = rulerSnap
+        if (snap != null) {
+            // 자를 따라 긋기: 시작점에서 지금 점까지 곧은 선(각도기 둘레는 둥근 호)으로 다시 만든다
+            lastPressure = lastPressure * 0.5f + p * 0.5f
+            val pts = snap.points(px, py)
+            st.keepFirst()
+            // 만년필·붓펜이 아니면 굵기가 한결같게 (처음 닿을 때의 약한 필압이 남지 않게)
+            if (st.pen != PenStyle.FOUNTAIN && st.pen != PenStyle.BRUSH) st.setPressure(0, lastPressure)
+            for (k in 1 until pts.size / 2) st.add(pts[k * 2], pts[k * 2 + 1], lastPressure)
+            snap.updateReadout(px, py)
+            lastSx = sx
+            lastSy = sy
+            invalidate()
+            return
+        }
         if (st.tool == Tool.HIGHLIGHTER && hlStraight) {
             // 직선 형광펜: 첫 점에서 지금 점까지. 가로·세로 근처(5° 안)면 딱 맞춘다
             val end = StrokeGeometry.straightHighlighterEnd(st.x(0), st.y(0), px, py)
@@ -1631,7 +1769,7 @@ class DocumentView @JvmOverloads constructor(
         val minDist = 0.8f / scale
         if (tool == Tool.PEN && st.tool == Tool.PEN) {
             // 펜: 손떨림 보정·펜 종류에 맞춰 다듬은 점
-            if (!penInput.move(px, py, p, t, scale / density, minDist, st.x(last), st.y(last))) return
+            if (!penInput.move(px, py, p, t, scale / density, minDist, st.x(last), st.y(last), curTilt)) return
             st.add(penInput.x, penInput.y, penInput.p)
             lastSx = sx
             lastSy = sy
@@ -1753,6 +1891,12 @@ class DocumentView @JvmOverloads constructor(
 
     private fun endPen(commit: Boolean) {
         val inkDoc = ink
+        if (penSwapping) {
+            penSwapping = false
+            if (PenInputRules.isSwapTap(true, commit, tapCandidate, System.currentTimeMillis() - tapDownTime, TAP_MS)) {
+                switchToolFromPen(previousTool)
+            }
+        }
         // 아직 맞추는 중인 미리 보기는 버린다
         shapeGen++
         shapePending = false
@@ -1832,7 +1976,7 @@ class DocumentView @JvmOverloads constructor(
                     } else if (st.tool == Tool.PEN && scribbleErase && eraseScribbled(curPage, st)) {
                         // 긁어 지우기: 긁은 획은 남기지 않고 그 아래를 지웠다
                     } else {
-                        if (st.tool == Tool.PEN) penInput.finish(st)
+                        if (st.tool == Tool.PEN) penInput.finish(st, bridge = rulerSnap == null)
                         inkDoc.add(curPage, st)
                     }
                 }
@@ -1852,6 +1996,15 @@ class DocumentView @JvmOverloads constructor(
         penErasing = false
         palmErasing = false
         tapCandidate = false
+        rulerSnap = null
+        ruler.clearReadout()
+        // 펜 버튼으로 이번 획만 바꾼 도구(레이저)를 되돌린다
+        buttonTempTool?.let {
+            buttonTempTool = null
+            quietTool = true
+            tool = it
+            quietTool = false
+        }
         invalidate()
     }
 
@@ -2291,6 +2444,20 @@ class DocumentView @JvmOverloads constructor(
         invalidate()
     }
 
+    /**
+     * 선택한 것을 선택 영역의 가운데 선을 축으로 좌우([horizontal]) 또는 상하로 뒤집는다 (실행 취소 가능).
+     * 글·그림은 자리만 뒤집고 글자·그림 자체는 뒤집히지 않는다 ([Stroke.mirror])
+     */
+    fun flipSelection(horizontal: Boolean) {
+        val inkDoc = ink ?: return
+        if (selection.isEmpty() || selBounds.isEmpty) return
+        val strokes = selection.toList()
+        val extent = if (horizontal) selBounds.left + selBounds.right else selBounds.top + selBounds.bottom
+        inkDoc.edit(strokes) { strokes.forEach { it.mirror(horizontal, extent) } }
+        select(selPage, strokes)
+        invalidate()
+    }
+
     /** 선택한 획을 복사해 둔다 */
     fun copySelection() {
         if (selection.isEmpty()) return
@@ -2299,16 +2466,32 @@ class DocumentView @JvmOverloads constructor(
         clipSize.set(0f, 0f, b.width(), b.height())
     }
 
+    /** 영역 스크린샷 [img]를 복사해 둔다 ([widthPt]×[heightPt]는 찍은 영역의 쪽 크기). 붙여넣기로 어느 문서에든 넣는다 */
+    fun copyImage(img: InkImage, widthPt: Float, heightPt: Float) {
+        val st = Stroke(Tool.PEN, Color.BLACK, 0f).apply {
+            image = img
+            add(0f, 0f, 1f)
+            add(widthPt, 0f, 1f)
+            add(widthPt, heightPt, 1f)
+            add(0f, heightPt, 1f)
+        }
+        clipboard = listOf(st)
+        clipSize.set(0f, 0f, widthPt, heightPt)
+    }
+
     /** 복사해 둔 획을 지금 보이는 페이지 가운데에 붙이고 선택한다 (실행 취소 가능) */
     fun pasteClipboard() {
         val inkDoc = ink ?: return
         if (clipboard.isEmpty() || sizes.isEmpty()) return
         val page = currentPage()
+        // 그림 하나(영역 스크린샷 등)가 쪽보다 크면 쪽에 들어오게 줄여 붙인다
+        val fit = if (clipboard.size == 1 && clipboard[0].image != null)
+            PlacementMath.pasteFit(clipSize.width(), clipSize.height(), sizes[page].width, sizes[page].height) else 1f
         val at = PlacementMath.pasteOrigin(
             offX, offY, width.toFloat(), height.toFloat(), scale,
-            lefts[page], tops[page], sizes[page].width, sizes[page].height, clipSize.width(), clipSize.height(),
+            lefts[page], tops[page], sizes[page].width, sizes[page].height, clipSize.width() * fit, clipSize.height() * fit,
         )
-        val copies = clipboard.map { it.copy().apply { role = null; translate(at[0], at[1]) } }
+        val copies = clipboard.map { it.copy().apply { role = null; if (fit < 1f) scale(fit, 0f, 0f); translate(at[0], at[1]) } }
         clearSelection()
         inkDoc.addAll(page, copies)
         select(page, copies)
@@ -2336,6 +2519,11 @@ class DocumentView @JvmOverloads constructor(
         private const val TAP_SELECT_DP = 12f
         /** 글 도구: 이보다 많이 움직이면 톡 누르기가 아니다 (dp) */
         private const val TAP_SLOP_DP = 12f
+        /** 펜이 자 가장자리에서 이만큼(dp) 안에서 시작하면 가장자리에 붙는다 */
+        private const val SNAP_DP = 16f
+        /** 펜 옆 버튼으로 보는 버튼 상태 비트 (S펜 버튼 · 보조 버튼) */
+        private const val STYLUS_BUTTON_MASK =
+            MotionEvent.BUTTON_STYLUS_PRIMARY or MotionEvent.BUTTON_STYLUS_SECONDARY or MotionEvent.BUTTON_SECONDARY
         /** 테이프를 톡 누른 것으로 보는 시간 (ms) */
         private const val TAP_MS = 500L
         /** 긁어서 지우기: 긁은 선이 아래 필기를 적어도 이만큼 가로질러야 지운다 */

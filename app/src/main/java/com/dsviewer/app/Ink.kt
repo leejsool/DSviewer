@@ -273,7 +273,25 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
     val outlined get() = tool == Tool.PEN && pen != PenStyle.FELT && !dashed && image == null && text == null
 
     /** 선이 가운데에서 가장 멀리 닿는 거리 (가장 굵은 곳의 절반) */
-    val halfWidth get() = width * (if (tool == Tool.PEN && !dashed) pen.reach else 1f) / 2f
+    val halfWidth get() = width * reachFactor() / 2f
+
+    private var reachVersion = -1
+    private var reachCached = 1f
+
+    /**
+     * 가장 굵은 곳의 굵기 배율. 연필·붓펜은 눕혀 쥐고 쓴 획이 평소보다 넓을 수 있어 점마다 본다 (획이 바뀔 때만 다시 센다)
+     */
+    private fun reachFactor(): Float {
+        if (tool != Tool.PEN || dashed) return 1f
+        if (pen != PenStyle.PENCIL && pen != PenStyle.BRUSH) return pen.reach
+        if (reachVersion != version) {
+            var m = 0f
+            for (i in 0 until count) m = maxOf(m, data[i * 3 + 2])
+            reachCached = maxOf(pen.reach, pen.factor(m))
+            reachVersion = version
+        }
+        return reachCached
+    }
 
     private var cachedPaths: List<Pair<Float, Path>>? = null
     private var cachedVersion = -1

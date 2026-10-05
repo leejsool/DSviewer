@@ -33,6 +33,17 @@ internal object PlacementMath {
     }
 
     /**
+     * 그림 하나([clipW]×[clipH])를 쪽([pageW]×[pageH])에 붙일 때 곱할 배율: 쪽 안에 [FIT_FRACTION]까지만 차지하게 줄이고, 작으면 그대로(1)
+     */
+    fun pasteFit(clipW: Float, clipH: Float, pageW: Float, pageH: Float): Float {
+        if (clipW <= 0f || clipH <= 0f) return 1f
+        return minOf(1f, pageW * FIT_FRACTION / clipW, pageH * FIT_FRACTION / clipH)
+    }
+
+    /** 큰 그림을 쪽에 붙일 때 쪽 가로·세로의 이 비율 안에 들어오게 줄인다 (손잡이·선택 막대 자리가 남도록) */
+    const val FIT_FRACTION = 0.9f
+
+    /**
      * 복사해 둔 획 묶음(크기 [clipW]×[clipH])을 붙일 자리: 보이는 화면 가운데에 놓되 쪽 밖으로 나가지 않게 한다.
      * 돌려주는 값은 쪽 좌표의 왼쪽 위 [x, y].
      * 화면 가운데는 (스크롤 [offX], [offY], 화면 [viewW]×[viewH], 배율 [scale])에서 문서 좌표로 구하고 쪽 위치 ([pageLeft], [pageTop])를 빼 쪽 좌표로 바꾼다

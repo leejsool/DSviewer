@@ -37,6 +37,8 @@ internal class ToolbarController(
     private val ink: () -> InkDocument?,
     /** 오답 ▸ 오답 담기 */
     private val startWrongPick: () -> Unit,
+    /** 올가미 ▸ 영역 스크린샷 */
+    private val startShot: () -> Unit,
     /** 옵션 창 (⋮ ▸ 옵션, 툴바 손잡이 톡) */
     private val showOptions: (start: Int) -> Unit,
 
@@ -88,6 +90,8 @@ internal class ToolbarController(
 
     fun setupSelectionTools() {
         findViewById<View>(R.id.selectionDelete).setOnClickListener { docView.deleteSelection() }
+        findViewById<View>(R.id.selectionFlipH).setOnClickListener { docView.flipSelection(horizontal = true) }
+        findViewById<View>(R.id.selectionFlipV).setOnClickListener { docView.flipSelection(horizontal = false) }
         findViewById<View>(R.id.selectionCopy).setOnClickListener {
             docView.copySelection()
             pasteButton.visibility = View.VISIBLE
@@ -298,6 +302,12 @@ internal class ToolbarController(
         docView.eraseHlOnly = prefs.getBoolean("eraseHlOnly", false)
         docView.scribbleErase = prefs.getBoolean("scribbleErase", true)
         docView.palmErase = prefs.getBoolean("palmErase", true)
+        val buttonAction = PenInputRules.ButtonAction.named(prefs.getString("penButton", null))
+        val tilt = prefs.getBoolean("penTilt", true)
+        for (v in allViews()) {
+            v.penButtonAction = buttonAction
+            v.penTilt = tilt
+        }
         docView.noteColor = prefs.getInt("noteColor", StickyNote.COLORS[0])
     }
 
@@ -500,6 +510,56 @@ internal class ToolbarController(
         button.setImageResource(if (docView.hlStraight) R.drawable.ic_highlighter_ruler else R.drawable.ic_highlighter)
         button.contentDescription = if (docView.hlStraight) "직선 형광펜" else "형광펜"
         updateToolMarks()
+    }
+
+    // ================= 자 =================
+
+    private lateinit var rulerButton: ImageButton
+
+    private fun rulerIcon(m: RulerController.Mode) = when (m) {
+        RulerController.Mode.MEASURE -> R.drawable.ic_ruler
+        RulerController.Mode.PROTRACTOR -> R.drawable.ic_protractor
+    }
+
+    /** 자 단추: 켜져 있으면 눌린 모양으로, 아이콘은 지금 모양 (꺼져 있으면 마지막으로 쓴 모양) */
+    fun updateRulerButton() {
+        if (!::rulerButton.isInitialized) return
+        val ruler = docView.ruler
+        val m = RulerController.Mode.named(prefs.getString("rulerMode", null))
+        val shown = if (ruler.active) ruler.mode else m
+        rulerButton.setImageResource(rulerIcon(shown))
+        rulerButton.isSelected = ruler.active
+        rulerButton.contentDescription = if (ruler.active) shown.label else "자"
+    }
+
+    fun setupRuler() {
+        rulerButton = findViewById(R.id.toolRuler)
+        rulerButton.setOnClickListener {
+            // 열려 있을 때 누르면 닫는다 (펼침 창 공통 규칙)
+            if (!flyoutJustClosed(rulerButton)) showRulerFlyout(rulerButton)
+        }
+        updateRulerButton()
+    }
+
+    private fun showRulerFlyout(anchor: View) {
+        fun item(res: Int, label: String, on: Boolean) = Triple(getDrawable(res)!!, label, on)
+        val ruler = docView.ruler
+        val modes = RulerController.Mode.entries
+        val items = modes.map { m -> item(rulerIcon(m), m.label, ruler.active && ruler.mode == m) } +
+            if (ruler.active) listOf(item(R.drawable.ic_close, "자 끄기", false)) else emptyList()
+        showFlyout(anchor, items, separatorBefore = setOf(modes.size)) { i ->
+            if (i < modes.size) {
+                prefs.edit().putString("rulerMode", modes[i].name).apply()
+                docView.ruler.show(modes[i])
+                toast(
+                    when (modes[i]) {
+                        RulerController.Mode.MEASURE -> "눈금자입니다. 한 손가락으로 옮기고 두 손가락으로 돌리거나 키웁니다. 가장자리를 따라 그으면 곧은 선과 길이가 나옵니다."
+                        RulerController.Mode.PROTRACTOR -> "각도기입니다. 두 손가락으로 돌리고 키웁니다. 가운데 고리에서 펜을 대고 끌면 정수 도 선이 그어지고, 밑변·둥근 가장자리를 따라서도 그을 수 있습니다."
+                    }
+                )
+            } else docView.ruler.hide()
+            updateRulerButton()
+        }
     }
 
     /** 선택 방식: 0 자유 선택, 1 네모 선택, 2 대상 선택 */
@@ -754,9 +814,16 @@ internal class ToolbarController(
                 item(R.drawable.ic_lasso, "자유 선택", !docView.lassoRect && !docView.lassoTap),
                 item(R.drawable.ic_select_rect, "네모 선택", docView.lassoRect),
                 item(R.drawable.ic_select_tap, "대상 선택", docView.lassoTap),
-                // 선택 방식이 아니라 한 번 하는 동작: 오답 ▸ 오답 담기와 같다
+                // 선택 방식이 아니라 한 번 하는 동작: 영역 스크린샷, 그리고 오답 ▸ 오답 담기와 같은 것
+                item(R.drawable.ic_screenshot, "영역 스크린샷", false),
                 item(R.drawable.ic_wrong_note, "오답 담기", false),
-            ), separatorBefore = setOf(3)) { i -> if (i == 3) startWrongPick() else setLassoMode(i) }
+            ), separatorBefore = setOf(3)) { i ->
+                when (i) {
+                    3 -> startShot()
+                    4 -> startWrongPick()
+                    else -> setLassoMode(i)
+                }
+            }
             Tool.LASER -> {
                 // 레이저가 사라지는 시간 (색·굵기는 툴바)
                 val secs = intArrayOf(1, 2, 3, 5)
@@ -1131,6 +1198,7 @@ internal class ToolbarController(
         }
         selectTool(Tool.PEN)
         applyToolVisibility()
+        setupRuler()
     }
 
     fun selectTool(t: Tool) {

@@ -25,8 +25,17 @@ class OptionItem(
     val hint: String? = null,
 )
 
-/** 옵션 창 왼쪽 목록의 한 범주와 그 안의 줄들 */
-class OptionCategory(val title: String, val desc: String, val items: List<OptionItem>)
+/** 여럿 중 하나를 고르는 항목 (라디오): [labels]마다 설명 [hints], 지금 고른 번호 [get], 고르면 [set] */
+class OptionChoice(
+    val title: String,
+    val labels: List<String>,
+    val hints: List<String>,
+    val get: () -> Int,
+    val set: (Int) -> Unit,
+)
+
+/** 옵션 창 왼쪽 목록의 한 범주와 그 안의 줄들 ([choices]는 켜고 끄는 줄들 아래에 이어진다) */
+class OptionCategory(val title: String, val desc: String, val items: List<OptionItem>, val choices: List<OptionChoice> = emptyList())
 
 /**
  * ⋮ ▸ 옵션: 한컴오피스 '사용자 설정'처럼 왼쪽에 범주(상단 툴바 · 하단 툴바 · 편의 옵션), 오른쪽에 그 범주의 항목을
@@ -100,6 +109,46 @@ class OptionsDialog(
             setPadding(dp(12), dp(4), dp(8), dp(10))
         })
         for (item in c.items) rightCol.addView(itemRow(item))
+        for (choice in c.choices) rightCol.addView(choiceBlock(choice))
+    }
+
+    private fun choiceBlock(c: OptionChoice): View {
+        val box = LinearLayout(a).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(14), dp(8), dp(6))
+        }
+        box.addView(TextView(a).apply {
+            text = c.title
+            textSize = 15f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurface))
+        })
+        val group = android.widget.RadioGroup(a).apply { orientation = LinearLayout.VERTICAL }
+        val hintColor = MaterialColors.getColor(a.window.decorView, com.google.android.material.R.attr.colorOnSurfaceVariant)
+        c.labels.forEachIndexed { i, label ->
+            val row = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
+            row.addView(android.widget.RadioButton(a).apply {
+                text = label
+                textSize = 15f
+                id = View.generateViewId()
+                isChecked = i == c.get()
+                setOnClickListener {
+                    if (c.get() != i) {
+                        c.set(i)
+                        rebuild()
+                    }
+                }
+            })
+            row.addView(TextView(a).apply {
+                text = c.hints.getOrNull(i).orEmpty()
+                textSize = 12f
+                setTextColor(hintColor)
+                setPadding(dp(40), 0, dp(8), dp(6))
+            })
+            group.addView(row)
+        }
+        box.addView(group)
+        return box
     }
 
     private fun categoryRow(title: String, on: Boolean, click: () -> Unit) = TextView(a).apply {

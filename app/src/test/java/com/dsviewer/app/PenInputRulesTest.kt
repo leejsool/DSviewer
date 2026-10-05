@@ -126,4 +126,47 @@ class PenInputRulesTest {
         assertEquals(1f, PenInputRules.pressure(true, 1.7f), 0f)
         assertEquals(0f, PenInputRules.pressure(true, -0.2f), 0f)
     }
+
+    // ================= 펜 옆 버튼 동작 =================
+
+    private val primary = 0x20   // BUTTON_STYLUS_PRIMARY
+    private val secondary = 0x40 // BUTTON_STYLUS_SECONDARY
+    private val mask = primary or secondary
+
+    @Test fun buttonIsDownForSamsungCodeOrStylusButtonBits() {
+        assertTrue(PenInputRules.buttonDown(true, 0, mask))
+        assertTrue(PenInputRules.buttonDown(false, primary, mask))
+        assertTrue(PenInputRules.buttonDown(false, secondary or 0x1, mask))
+        assertFalse(PenInputRules.buttonDown(false, 0, mask))
+        // 마스크 밖의 비트(주 버튼 1)만 있으면 누른 것이 아니다
+        assertFalse(PenInputRules.buttonDown(false, 0x1, mask))
+    }
+
+    @Test fun eraserTipAlwaysErasesWhateverTheButtonActionIs() {
+        for (a in PenInputRules.ButtonAction.entries) assertTrue(PenInputRules.eraserInput(true, false, a))
+    }
+
+    @Test fun buttonErasesOnlyWhenTheActionIsEraser() {
+        for (a in PenInputRules.ButtonAction.entries) {
+            assertEquals("버튼 + $a", a == PenInputRules.ButtonAction.ERASER, PenInputRules.eraserInput(false, true, a))
+            assertFalse("버튼 없음 + $a", PenInputRules.eraserInput(false, false, a))
+        }
+    }
+
+    @Test fun swapNeedsAShortStillRelease() {
+        assertTrue(PenInputRules.isSwapTap(true, true, true, 200, 500))
+        assertFalse("끌었다", PenInputRules.isSwapTap(true, true, false, 200, 500))
+        assertFalse("오래 눌렀다", PenInputRules.isSwapTap(true, true, true, 500, 500))
+        assertFalse("취소됐다", PenInputRules.isSwapTap(true, false, true, 200, 500))
+        assertFalse("전환 동작이 아니다", PenInputRules.isSwapTap(false, true, true, 200, 500))
+        assertFalse("시계가 거꾸로 갔다", PenInputRules.isSwapTap(true, true, true, -5, 500))
+    }
+
+    @Test fun buttonActionNamesRoundTripAndFallBackToEraser() {
+        for (a in PenInputRules.ButtonAction.entries) assertEquals(a, PenInputRules.ButtonAction.named(a.name))
+        assertEquals(PenInputRules.ButtonAction.ERASER, PenInputRules.ButtonAction.named(null))
+        assertEquals(PenInputRules.ButtonAction.ERASER, PenInputRules.ButtonAction.named("없는 값"))
+        // 옵션 창의 번호가 곧 enum 순서이므로 지우개(옛 동작)가 맨 앞이어야 한다
+        assertEquals(PenInputRules.ButtonAction.ERASER, PenInputRules.ButtonAction.entries[0])
+    }
 }

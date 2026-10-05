@@ -181,7 +181,7 @@ class ViewerActivity : AppCompatActivity() {
         pageLabel = findViewById(R.id.pageLabel)
         // 쪽 번호를 누르면 쪽 이동
         pageLabel.setOnClickListener { showGoToPage() }
-        tools = ToolbarController(this, { docView }, textEditor, prefs, { current?.ink }, { wrong.startPick() }, ::showOptionsDialog)
+        tools = ToolbarController(this, { docView }, textEditor, prefs, { current?.ink }, { shot.onPickEnded(); wrong.startPick() }, { wrong.onPickEnded(); shot.startPick() }, ::showOptionsDialog)
         tools.setupSelectionTools()
         tools.setupEraserTools()
         tools.setupToolbarDock()
@@ -263,7 +263,16 @@ class ViewerActivity : AppCompatActivity() {
 
             override fun onWrongPicked(page: Int, rect: RectF) = wrong.capture(page, rect)
 
-            override fun onWrongPickEnded() = wrong.onPickEnded()
+            override fun onPenButtonTool(tool: Tool) = tools.selectTool(tool)
+
+            override fun onRulerChanged() = tools.updateRulerButton()
+
+            override fun onShotPicked(page: Int, rect: RectF) = shot.capture(page, rect)
+
+            override fun onWrongPickEnded() {
+                wrong.onPickEnded()
+                shot.onPickEnded()
+            }
 
             override fun onFillFailed() {
                 Toast.makeText(
@@ -1425,6 +1434,11 @@ class ViewerActivity : AppCompatActivity() {
         )
     }
 
+    private val shot: ShotController by lazy {
+        // 복사해 두면 '붙여넣기' 단추가 보이게 올가미 도구로 (툴바를 다시 짠다)
+        ShotController(this, { docView }, textEditor, progress, { current }, ::toast) { tools.selectTool(Tool.LASSO) }
+    }
+
     private val wrong: WrongController by lazy {
         WrongController(this, prefs, { docView }, textEditor, progress, { current }, ::toast, ::editPages, { t, list -> review.start(t, list) }, { t, list -> review.exportSheet(t, list) })
     }
@@ -2116,6 +2130,7 @@ class ViewerActivity : AppCompatActivity() {
         overview.hide()
         focused = p
         p.view.copyToolsFrom(old.view)
+        tools.updateRulerButton()
         textEditor.rebind(p.host, p.view)
         noteEditor.rebind(p.host, p.view)
         current = p.tab
@@ -2319,12 +2334,35 @@ class ViewerActivity : AppCompatActivity() {
                     prefs.edit().putBoolean("palmErase", on).apply()
                     true
                 }, "손가락으로 쓰는 중 손바닥으로 문지르면 지워집니다."),
+                OptionItem(icon(R.drawable.ic_pen_pencil_body), "펜 기울기 반영", { docView.penTilt }, { on ->
+                    for (p in panes) p.view.penTilt = on
+                    prefs.edit().putBoolean("penTilt", on).apply()
+                    true
+                }, "연필과 붓펜을 눕혀 쥐면 그만큼 넓게 칠해집니다. (기울기를 알려 주는 펜에서만)"),
+            ),
+            listOf(
+                OptionChoice(
+                    "펜 옆 버튼을 누른 채 쓸 때",
+                    PenInputRules.ButtonAction.entries.map { it.label },
+                    PenInputRules.ButtonAction.entries.map { it.hint },
+                    { docView.penButtonAction.ordinal },
+                    { i ->
+                        val action = PenInputRules.ButtonAction.entries[i]
+                        for (p in panes) p.view.penButtonAction = action
+                        prefs.edit().putString("penButton", action.name).apply()
+                    },
+                ),
             ),
         )
         OptionsDialog(this, listOf(top, bottom, convenience)) {
             prefs.edit().remove("hiddenActions").remove("hiddenTools").putBoolean("scribbleErase", true).putBoolean("palmErase", true).apply()
             docView.scribbleErase = true
             docView.palmErase = true
+            for (p in panes) {
+                p.view.penButtonAction = PenInputRules.ButtonAction.ERASER
+                p.view.penTilt = true
+            }
+            prefs.edit().remove("penButton").remove("penTilt").apply()
             applyActionVisibility()
             tools.applyToolVisibility()
         }.show(start)
