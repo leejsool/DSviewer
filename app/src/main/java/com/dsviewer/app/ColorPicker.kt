@@ -61,7 +61,8 @@ internal fun placeNear(
     val screenW = activity.window.decorView.width.takeIf { it > 0 } ?: activity.resources.displayMetrics.widthPixels
     val screenH = activity.window.decorView.height.takeIf { it > 0 } ?: activity.resources.displayMetrics.heightPixels
     val loc = IntArray(2)
-    anchor.getLocationOnScreen(loc)
+    // 팝업 좌표(showAtLocation)는 창 기준이다: 분할 화면에서 화면 기준 좌표를 쓰면 창 위치만큼 어긋난다
+    anchor.getLocationInWindow(loc)
     // 옆에 뜰 때는 버튼 옆 남은 폭 안에 들어가게
     val room = when (side) {
         ToolbarSide.LEFT -> screenW - (loc[0] + anchor.width) - 2 * margin

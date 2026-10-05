@@ -311,7 +311,8 @@ internal fun showPopupBeside(window: android.view.Window, side: ToolbarSide, pop
     val w = box.measuredWidth
     val h = box.measuredHeight
     val loc = IntArray(2)
-    anchor.getLocationOnScreen(loc)
+    // 팝업 좌표(showAtLocation)는 창 기준이다: 분할 화면에서 화면 기준 좌표를 쓰면 창 위치만큼 어긋난다
+    anchor.getLocationInWindow(loc)
     val gap = (6 * d).toInt()
     val screenW = window.decorView.width
     val screenH = window.decorView.height

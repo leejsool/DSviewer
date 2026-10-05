@@ -21,7 +21,7 @@ enum class ShapeKind(val label: String) {
     ARROW_PIGTAIL("돼지꼬리 화살표"),
     /** 두 점을 잇는 원호, 가운데를 비워 길이를 쓴다 */
     LENGTH_MARK("길이 표시"),
-    LINE("직선"),
+    LINE("일차"),
     QUADRATIC("이차"),
     CUBIC("삼차"),
     QUARTIC("사차"),
