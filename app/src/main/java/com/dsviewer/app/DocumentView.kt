@@ -670,10 +670,15 @@ class DocumentView @JvmOverloads constructor(
     private fun contentH() = ViewportMath.contentHeight(docH, scale, addFooter.footerPx, bottomInset, topInset)
 
     private fun clamp() {
-        offX = ViewportMath.clampX(offX, docW * scale, width.toFloat())
-        offY = if (pageLayout.horizontal) ViewportMath.clampYFlip(offY, contentH(), height.toFloat(), topInset)
-        else ViewportMath.clampY(offY, contentH(), height.toFloat(), topInset)
+        offX = clampedX(offX)
+        offY = clampedY(offY)
     }
+
+    private fun clampedX(x: Float) = ViewportMath.clampX(x, docW * scale, width.toFloat())
+
+    private fun clampedY(y: Float) =
+        if (pageLayout.horizontal) ViewportMath.clampYFlip(y, contentH(), height.toFloat(), topInset)
+        else ViewportMath.clampY(y, contentH(), height.toFloat(), topInset)
 
     private fun pageRect(i: Int, out: RectF): RectF {
         val s = scale
@@ -1346,6 +1351,53 @@ class DocumentView @JvmOverloads constructor(
         val target = pageLayout.offsetForUnit(unit, scale, width.toFloat())
         val dx = ViewportMath.clampX(target, docW * scale, width.toFloat()) - offX
         scroller.startScroll(offX.toInt(), offY.toInt(), dx.roundToInt(), 0, FLIP_MS)
+        postInvalidateOnAnimation()
+    }
+
+    // ---- 키보드·페달로 쪽 넘기기 ----
+
+    /** 마지막으로 [pageStep]이 시작한 움직임의 도착 자리와 목표 (움직이는 동안 또 누르면 거기서부터 센다) */
+    private var stepFinalX = Int.MIN_VALUE
+    private var stepFinalY = Int.MIN_VALUE
+    private var stepTarget = -1
+
+    /**
+     * 키보드·블루투스 페달로 한 쪽 넘긴다 ([dir] +1 다음, -1 이전). 가로 넘김은 한 칸씩, 세로 스크롤은 쪽(양쪽 보기면 한 줄)의 위쪽 끝으로.
+     * 움직이는 도중에 다시 누르면 그 목표에서 한 쪽 더 간다 (페달을 연달아 밟을 때). 더 갈 곳이 없으면 false
+     */
+    fun pageStep(dir: Int): Boolean {
+        if (doc == null || sizes.isEmpty() || width == 0 || dir == 0) return false
+        zoomAnimator?.cancel()
+        val moving = !scroller.isFinished && scroller.finalX == stepFinalX && scroller.finalY == stepFinalY
+        if (pageLayout.horizontal) {
+            val k = (if (moving) stepTarget else nearestUnit()) + dir
+            if (k !in 0 until pageLayout.unitCount) return false
+            if (zoom > SNAP_ZOOM) {
+                // 확대해 둔 채면 확대를 풀고 그 칸의 첫 쪽으로 곧바로
+                scroller.forceFinished(true)
+                zoom = 1f
+                scrollToPage((0 until sizes.size).first { pageLayout.unitOf(it) == k })
+                return true
+            }
+            stepTarget = k
+            startStep(pageLayout.offsetForUnit(k, scale, width.toFloat()), offY)
+        } else {
+            val per = if (spread) 2 else 1
+            val p = (if (moving) stepTarget else rowFirstPage()) + dir * per
+            if (p !in sizes.indices) return false
+            stepTarget = p
+            startStep(offX, ViewportMath.offsetForPageTop(tops[p], gap, scale, topInset))
+        }
+        return true
+    }
+
+    private fun startStep(x: Float, y: Float) {
+        scroller.forceFinished(true)
+        val dx = clampedX(x) - offX
+        val dy = clampedY(y) - offY
+        scroller.startScroll(offX.toInt(), offY.toInt(), dx.roundToInt(), dy.roundToInt(), FLIP_MS)
+        stepFinalX = scroller.finalX
+        stepFinalY = scroller.finalY
         postInvalidateOnAnimation()
     }
 

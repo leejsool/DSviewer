@@ -298,6 +298,23 @@ class ViewerActivity : AppCompatActivity() {
             }
     }
 
+    /**
+     * 키보드·블루투스 페이지 터너 페달의 키(←/→ · PageUp/PageDown · Space …)로 쪽 넘기기.
+     * 글을 치는 중(입력 칸에 초점)이거나 쪽 목록·한눈에 보기가 떠 있으면 건드리지 않는다. 대화상자가 떠 있으면 이 함수에 오지 않는다
+     */
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (prefs.getBoolean("pageKeys", true) && handlePageKey(event)) return true
+        return super.dispatchKeyEvent(event)
+    }
+
+    private fun handlePageKey(e: KeyEvent): Boolean {
+        val dir = PageKeys.direction(e.keyCode, e.isShiftPressed, e.isCtrlPressed || e.isAltPressed || e.isMetaPressed) ?: return false
+        if (currentFocus is android.widget.EditText || overview.isShowing || pagePanel.isShowing) return false
+        // 누르고 있어 되풀이되는 키는 한 번만 (페달을 꾹 밟아도 한 쪽)
+        if (e.action == KeyEvent.ACTION_DOWN && e.repeatCount == 0) docView.pageStep(dir)
+        return true
+    }
+
     override fun onResume() {
         super.onResume()
         // 둘째 칸에 띄울 문서를 고르러 갔다가 아무것도 안 고르고 돌아왔으면 분할 보기 준비를 거둔다
@@ -2401,6 +2418,10 @@ class ViewerActivity : AppCompatActivity() {
                     prefs.edit().putBoolean("penTilt", on).apply()
                     true
                 }, "연필과 붓펜을 눕혀 쥐면 그만큼 넓게 칠해집니다. (기울기를 알려 주는 펜에서만)"),
+                OptionItem(icon(R.drawable.ic_page_panel), "키보드·페달로 쪽 넘기기", { prefs.getBoolean("pageKeys", true) }, { on ->
+                    prefs.edit().putBoolean("pageKeys", on).apply()
+                    true
+                }, "블루투스 키보드나 페이지 터너 페달의 ←/→, PageUp/PageDown, Space 키로 다음·이전 쪽으로 넘깁니다. (Shift+Space는 이전 쪽, 글을 치는 중에는 쓰지 않습니다)"),
                 OptionItem(icon(R.drawable.ic_text_underline), "글자 기반 주석", { tools.textMarkupOn() }, { on ->
                     prefs.edit().putBoolean("textMarkup", on).apply()
                     tools.onTextMarkupChanged()
@@ -2440,7 +2461,7 @@ class ViewerActivity : AppCompatActivity() {
                 p.view.penButtonAction = PenInputRules.ButtonAction.ERASER
                 p.view.penTilt = true
             }
-            prefs.edit().remove("penButton").remove("penTilt").remove("textMarkup").remove("textMark").apply()
+            prefs.edit().remove("penButton").remove("penTilt").remove("textMarkup").remove("textMark").remove("pageKeys").apply()
             setHorizontalFlow(false)
             tools.onTextMarkupChanged()
             for (p in panes) p.view.textMark = TextMark.NONE
