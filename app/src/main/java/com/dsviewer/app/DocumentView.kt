@@ -180,6 +180,18 @@ class DocumentView @JvmOverloads constructor(
             }
         }
     /**
+     * 필기 숨기기 (읽기 모드에서만 뜻이 있다): 원래 문서만 보인다. 필기·그림·글 상자·포스트잇·오답 배지·테이프가 다 가려지고,
+     * 그 위의 터치도 문서로 넘어간다. 파일에는 아무 영향이 없다. 쓰기 모드에서는 안 보이는 채로 쓰는 일이 없게 늘 보인다
+     */
+    var inkHidden = false
+        set(v) {
+            if (field == v) return
+            field = v
+            invalidate()
+        }
+    private val hideInk get() = inkHidden && readOnly
+
+    /**
      * 양쪽 보기: 화면이 가로로 길면 쪽을 두 개씩 나란히 (1·2쪽, 3·4쪽 …).
      * 세로 화면에서는 켜 두어도 한 쪽씩
      */
@@ -584,8 +596,12 @@ class DocumentView @JvmOverloads constructor(
         baseScale = w / docW
         if (oldw != w) offY = if (oldw > 0) ViewportMath.offsetForCenter(anchorY, scale, h.toFloat()) else 0f
         clamp()
-        baseCache.evictAll()
-        details = emptyList()
+        // 너비가 같으면 배율도 같아 그려 둔 쪽 그림이 그대로 맞다. 높이만 바뀌는 때(툴바·읽기 모드·화면 키보드)에 비우면
+        // 쪽이 한 순간 하얗게 비었다가 다시 그려져 화면이 깜빡인다
+        if (oldw != w) {
+            baseCache.evictAll()
+            details = emptyList()
+        }
         invalidate()
     }
 
@@ -768,14 +784,14 @@ class DocumentView @JvmOverloads constructor(
             searchHits[i]?.forEach { canvas.drawRect(it, hitPaint) }
             val dragging = (moving || resizing || rotating) && selPage == i
             // 그림을 먼저, 채우기를 그 위에, 나머지 필기는 맨 위에 (배지·포스트잇은 바깥 여백까지 그려야 해서 따로)
-            for (layer in 0..2) for (st in inkDoc.pages[i]) {
+            if (!hideInk) for (layer in 0..2) for (st in inkDoc.pages[i]) {
                 if (inkLayer(st) != layer || st === hiddenStroke || (dragging && st in selSet) || st.isMarginItem()) continue
                 drawStroke(canvas, st)
             }
             fillCtl.drawPending(canvas, i)
             textMarks.draw(canvas, i)
             picker.draw(canvas, i)
-            if (dragging) {
+            if (dragging && !hideInk) {
                 // 옮기거나 크기를 바꾸는 중인 획은 손을 뗄 때까지 그림만 바꿔 그린다
                 canvas.save()
                 canvas.translate(moveDx, moveDy)
@@ -804,7 +820,7 @@ class DocumentView @JvmOverloads constructor(
             canvas.clipRect(r.left, r.top, r.right + rightMargin * s, r.bottom)
             canvas.translate(r.left, r.top)
             canvas.scale(s, s)
-            notes.drawMarginItems(canvas, inkDoc, i, (moving || resizing || rotating) && selPage == i)
+            if (!hideInk) notes.drawMarginItems(canvas, inkDoc, i, (moving || resizing || rotating) && selPage == i)
             canvas.restore()
         }
         addFooter.drawButton(canvas)
@@ -864,7 +880,7 @@ class DocumentView @JvmOverloads constructor(
 
     /** 메모를 누른 동작 (손가락·펜 모두). 오답 영역을 고르는 중이면 그 입력으로. 메모가 아닌 곳에서 시작했으면 false */
     private fun handleNoteTouch(ev: MotionEvent): Boolean =
-        if (wrongPicking) picker.onTouch(ev) else notes.onTouch(ev)
+        if (hideInk) false else if (wrongPicking) picker.onTouch(ev) else notes.onTouch(ev)
 
     // ================= 자 · 눈금자 · 각도기 =================
     // 그리기·손가락으로 옮기기·가장자리 붙이기는 RulerController가 한다. 여기서는 쪽 배치를 읽게 해 주고 펜 입력에 이어 준다.
@@ -2274,6 +2290,7 @@ class DocumentView @JvmOverloads constructor(
 
     /** 화면 좌표의 테이프를 보이게 하거나 다시 가린다 (실행 취소 기록에 남기지 않음). 테이프가 없으면 false */
     private fun toggleTapeAt(sx: Float, sy: Float): Boolean {
+        if (hideInk) return false
         val hit = hitPage(sx, sy) ?: return false
         val st = tapeAt(hit.first, hit.second, hit.third) ?: return false
         st.revealed = !st.revealed

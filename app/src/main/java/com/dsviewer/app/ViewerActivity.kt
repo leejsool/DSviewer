@@ -77,8 +77,9 @@ class ViewerActivity : AppCompatActivity() {
     private lateinit var readModeButton: ImageButton
     private lateinit var fullscreenButton: ImageButton
     private lateinit var exitFullscreenButton: View
-    /** 읽기 모드: 툴바를 숨기고 펜으로도 넘겨 보기만 한다 */
-    private var readMode = false
+    /** 쓰기 / 읽기(툴바를 숨기고 펜으로도 넘겨 보기만 한다) / 읽기+필기 숨김 */
+    private var viewMode = ViewMode.WRITE
+    private val readMode get() = viewMode.readOnly
     /** 전체 화면: 탭 줄·상태 표시줄·페이지 관리 창을 숨기고 툴바만 남긴다 */
     private var fullscreen = false
 
@@ -198,6 +199,7 @@ class ViewerActivity : AppCompatActivity() {
         setupTabs()
         setupActions()
         onBackPressedDispatcher.addCallback(this, backCallback)
+        timer.restore()
 
         if (!handleIntent(intent)) {
             Toast.makeText(this, "열 파일이 없습니다.", Toast.LENGTH_SHORT).show()
@@ -300,12 +302,14 @@ class ViewerActivity : AppCompatActivity() {
         super.onResume()
         // 둘째 칸에 띄울 문서를 고르러 갔다가 아무것도 안 고르고 돌아왔으면 분할 보기 준비를 거둔다
         pendingSplit = false
+        timer.onResume()
     }
 
     override fun onPause() {
         super.onPause()
         // 다른 앱으로 가거나 화면이 꺼지면 치던 글을 쪽에 넣어 둔다
         textEditor.commit()
+        timer.onPause()
     }
 
     override fun onStop() {
@@ -768,7 +772,7 @@ class ViewerActivity : AppCompatActivity() {
             if (on && docView.width <= docView.height) toast("가로 화면에서 두 쪽씩 나란히 보입니다.")
         }
         readModeButton = findViewById(R.id.actionReadMode)
-        readModeButton.setOnClickListener { setReadMode(!readMode) }
+        readModeButton.setOnClickListener { setViewMode(viewMode.next) }
         fullscreenButton = findViewById(R.id.actionFullscreen)
         fullscreenButton.setOnClickListener { setFullscreen(true) }
         exitFullscreenButton = findViewById(R.id.exitFullscreen)
@@ -791,9 +795,21 @@ class ViewerActivity : AppCompatActivity() {
         twoPageButton.setActive(docView.twoPage)
         splitButton.setActive(split)
         readModeButton.setActive(readMode)
-        // 읽기 전용이면 책에 눈, 쓸 수 있으면 책에 펜
-        readModeButton.setImageResource(if (readMode) R.drawable.ic_read_mode else R.drawable.ic_write_mode)
-        readModeButton.contentDescription = if (readMode) "읽기 모드 끝내기" else "읽기 모드"
+        // 쓸 수 있으면 책에 펜, 읽기면 책에 눈, 필기를 숨긴 읽기면 책에 줄 그은 눈
+        readModeButton.setImageResource(
+            when (viewMode) {
+                ViewMode.WRITE -> R.drawable.ic_write_mode
+                ViewMode.READ -> R.drawable.ic_read_mode
+                ViewMode.READ_HIDDEN -> R.drawable.ic_read_hidden
+            }
+        )
+        val label = when (viewMode) {
+            ViewMode.WRITE -> "읽기 모드 (필기 보임)"
+            ViewMode.READ -> "필기 숨기기"
+            ViewMode.READ_HIDDEN -> "읽기 모드 끝내기"
+        }
+        readModeButton.contentDescription = label
+        readModeButton.tooltipText = label
         review.sync()
     }
 
@@ -1276,8 +1292,13 @@ class ViewerActivity : AppCompatActivity() {
         }
     }
 
-    /** 읽기 모드: 툴바와 도구 줄을 숨기고, 펜으로도 넘기기·확대만 한다 */
-    private fun setReadMode(on: Boolean) {
+    /**
+     * 읽기 모드: 툴바와 도구 줄을 숨기고, 펜으로도 넘기기·확대만 한다.
+     * [ViewMode.READ_HIDDEN]이면 필기도 가려서 원래 문서만 보인다 (읽기 단추를 누를 때마다 쓰기 → 읽기 → 필기 숨김 → 쓰기)
+     */
+    private fun setViewMode(mode: ViewMode) {
+        if (mode == viewMode) return
+        val on = mode.readOnly
         if (on) {
             docView.clearLaser()
             textEditor.commit()
@@ -1285,14 +1306,23 @@ class ViewerActivity : AppCompatActivity() {
             tools.closeFlyout()
             docView.clearSelection()
         }
-        readMode = on
-        for (p in panes) p.view.readOnly = on
+        viewMode = mode
+        for (p in panes) {
+            p.view.readOnly = on
+            p.view.inkHidden = mode.inkHidden
+        }
         // 링크를 미리 꺼내 둔다 (처음 누를 때 기다리지 않게)
         if (on) currentLinks()
         findViewById<View>(R.id.toolbar).visibility = if (on) View.GONE else View.VISIBLE
         tools.updateShapeBarForReadMode(on)
         updateActions()
-        toast(if (on) "읽기 모드: 필기하지 않고 넘겨 보기만 합니다." else "읽기 모드를 끝냈습니다.")
+        toast(
+            when (mode) {
+                ViewMode.READ -> "읽기 모드: 필기하지 않고 넘겨 보기만 합니다."
+                ViewMode.READ_HIDDEN -> "읽기 모드 (필기 숨김): 원래 문서만 보입니다."
+                ViewMode.WRITE -> "읽기 모드를 끝냈습니다."
+            }
+        )
     }
 
     /**
@@ -1338,6 +1368,7 @@ class ViewerActivity : AppCompatActivity() {
                 R.id.action_save_now -> current?.let { if (it.ink != null) saver.save(it, asNew = false) }
                 R.id.action_save_as -> current?.let { if (it.ink != null) saver.save(it, asNew = true) }
                 R.id.action_save_image -> current?.let { if (it.ink != null) saver.askExportImages(it) }
+                R.id.action_timer -> timer.open()
                 R.id.action_options -> showOptionsDialog(0)
                 R.id.action_finger -> {
                     docView.fingerDrawing = !docView.fingerDrawing
@@ -1456,6 +1487,11 @@ class ViewerActivity : AppCompatActivity() {
             findViewById(R.id.bottomOverlay), progress, { current }, saver, ::toast, ::openReviewTab, ::removeTab,
             { autoSaver.saveNow(it) }, { openTab(Uri.fromFile(it), writable = true, newNote = false) },
         )
+    }
+
+    /** 시험·풀이 타이머 (⋮ 메뉴 ▸ 타이머). 칩은 문서 칸 위에 뜬다 */
+    private val timer: TimerController by lazy {
+        TimerController(this, findViewById(R.id.docFrame), prefs, ::toast)
     }
 
     private val shot: ShotController by lazy {
@@ -1594,7 +1630,7 @@ class ViewerActivity : AppCompatActivity() {
             val shown = label.text.toString().trim().ifEmpty { url.text.toString().trim() }
             val text = InkText(RichDoc(shown, listOf(RichDoc.Run(0, shown.length, 'u')), emptyList()), defaultTextSize)
             dialog.dismiss()
-            if (readMode) setReadMode(false)
+            if (readMode) setViewMode(ViewMode.WRITE)
             // 넣은 링크를 바로 옮길 수 있게 선택 도구로
             tools.selectTool(Tool.LASSO)
             if (!docView.insertLink(text, LINK_COLOR, u.toString())) toast("링크를 넣지 못했습니다.")
@@ -2210,6 +2246,7 @@ class ViewerActivity : AppCompatActivity() {
         b.view.copyToolsFrom(a.view)
         b.view.twoPage = a.view.twoPage
         b.view.readOnly = readMode
+        b.view.inkHidden = viewMode.inkHidden
         splitHost.split = true
         showIn(b, second)
         updateFocusBars()

@@ -19,5 +19,6 @@
     <item android:id="@+id/action_delete_page" android:title="쪽 지우기" />
     <item android:id="@+id/action_finger" android:title="손가락으로 쓰기"
         android:checkable="true" />
+    <item android:id="@+id/action_timer" android:title="시험·풀이 타이머…" />
     <item android:id="@+id/action_options" android:title="옵션…" />
 </menu>

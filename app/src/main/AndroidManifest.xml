@@ -10,6 +10,9 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="29" />
 
+    <!-- 시험 타이머: 시간이 다 되면 진동 -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
     <!-- 다른 앱 화면 가져오기: 다른 앱 위의 캡처 단추, 화면 전송 서비스 -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
