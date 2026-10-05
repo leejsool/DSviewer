@@ -29,7 +29,8 @@ import android.content.SharedPreferences
  */
 internal class ToolbarController(
     private val activity: AppCompatActivity,
-    private val docView: DocumentView,
+    /** 지금 고른 칸의 문서 화면 (분할 보기에서는 칸이 바뀐다) */
+    private val docViewOf: () -> DocumentView,
     private val textEditor: InlineTextEditor,
     private val prefs: SharedPreferences,
     /** 지금 보는 문서의 필기 */
@@ -38,7 +39,13 @@ internal class ToolbarController(
     private val startWrongPick: () -> Unit,
     /** 옵션 창 (⋮ ▸ 옵션, 툴바 손잡이 톡) */
     private val showOptions: (start: Int) -> Unit,
+
 ) {
+    private val docView get() = docViewOf()
+    /** 모든 칸의 문서 화면 (겹쳐 뜬 줄이 가리는 만큼을 칸마다 따로 알려 줄 때) */
+    var allViews: () -> List<DocumentView> = { listOf(docView) }
+    /** 겹쳐 뜬 줄들의 둘레를 담는 틀 (칸의 자리를 이 틀 기준으로 재려고) */
+    private val docFrame get() = findViewById<FrameLayout>(R.id.docFrame)
     private val resources get() = activity.resources
     private val window get() = activity.window
     private val theme get() = activity.theme
@@ -237,12 +244,37 @@ internal class ToolbarController(
         updateOverlayInsets()
     }
 
+    /** 칸의 크기나 자리가 바뀌었을 때 (분할 보기를 켜고 끄거나 구분선을 끌 때) */
+    fun refreshOverlayInsets() = updateOverlayInsets()
+
     private fun updateOverlayInsets() {
         fun barsHeight(o: ViewGroup) = (0 until o.childCount).map { o.getChildAt(it) }
             .filter { it === shapeBar || it === optionBar || it === formatBar || it.id == R.id.reviewBar }
             .sumOf { if (it.visibility == View.VISIBLE) it.height else 0 }.toFloat()
-        docView.topInset = barsHeight(topOverlay)
-        docView.bottomInset = barsHeight(bottomOverlay)
+        val top = barsHeight(topOverlay)
+        val bottom = barsHeight(bottomOverlay)
+        // 줄은 문서 틀 위·아래에 겹쳐 뜨므로, 칸마다 그 줄에 가려지는 만큼만 (위아래 분할이면 아래 칸만 아래 줄에 가려진다)
+        val frame = docFrame
+        for (v in allViews()) {
+            val pos = offsetIn(v, frame)
+            val vTop = pos.y
+            val vBottom = pos.y + v.height
+            v.topInset = (top - vTop).coerceIn(0f, v.height.toFloat())
+            v.bottomInset = (vBottom - (frame.height - bottom)).coerceIn(0f, v.height.toFloat())
+        }
+    }
+
+    /** [v]의 왼쪽 위가 [ancestor] 안 어디인지 */
+    private fun offsetIn(v: View, ancestor: View): android.graphics.PointF {
+        var x = 0f
+        var y = 0f
+        var cur: View = v
+        while (cur !== ancestor) {
+            x += cur.left + cur.translationX
+            y += cur.top + cur.translationY
+            cur = cur.parent as? View ?: break
+        }
+        return android.graphics.PointF(x, y)
     }
 
 
@@ -887,8 +919,10 @@ internal class ToolbarController(
         val maxY = (docView.height - h - gap).coerceAtLeast(gap)
         var y = rect.top - h - gap
         if (y < gap) y = rect.bottom + gap
-        selectionBar.translationX = (rect.centerX() - w / 2f).coerceIn(gap, maxX)
-        selectionBar.translationY = y.coerceIn(gap, maxY)
+        // 문서 틀 안에서의 자리로 (분할 보기에서는 칸이 틀의 한쪽에 있다)
+        val at = offsetIn(docView, docFrame)
+        selectionBar.translationX = at.x + (rect.centerX() - w / 2f).coerceIn(gap, maxX)
+        selectionBar.translationY = at.y + y.coerceIn(gap, maxY)
     }
 
     // ================= 도구 막대 =================

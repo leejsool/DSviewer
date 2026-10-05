@@ -77,7 +77,7 @@
             android:src="@drawable/ic_wrong_note"
             android:tooltipText="오답 (담기 · 목록 · 복습 · 문제지 · 통계)" />
 
-        <!-- 보기: 양쪽 보기 · 페이지 관리 · 쪽 한눈에 보기 · 읽기 모드 · 전체 화면 (켜진 것은 바탕에 동그라미) -->
+        <!-- 보기: 양쪽 보기 · 분할 보기 · 페이지 관리 · 쪽 한눈에 보기 · 읽기 모드 · 전체 화면 (켜진 것은 바탕에 동그라미) -->
         <ImageButton
             android:id="@+id/actionTwoPage"
             style="@style/TabBarAction"
@@ -85,6 +85,13 @@
             android:contentDescription="양쪽 보기"
             android:src="@drawable/ic_two_page"
             android:tooltipText="양쪽 보기 (가로 화면)" />
+
+        <ImageButton
+            android:id="@+id/actionSplit"
+            style="@style/TabBarAction"
+            android:contentDescription="분할 보기"
+            android:src="@drawable/ic_split_view"
+            android:tooltipText="분할 보기 (두 문서 나란히: 가로 화면은 좌우, 세로 화면은 위아래)" />
 
         <ImageButton
             android:id="@+id/actionPages"
@@ -148,17 +155,61 @@
         android:layout_height="match_parent"
         android:layout_weight="1">
 
-        <com.dsviewer.app.DocumentView
-            android:id="@+id/docView"
+        <!-- 문서 화면: 보통은 첫 칸 하나, 분할 보기를 켜면 가로 화면은 좌우·세로 화면은 위아래로 두 칸 (SplitLayout).
+             칸마다 문서 화면 + 문서 위에서 바로 치는 글 상자 층(InlineTextEditor, 빈 곳은 터치를 문서로 넘긴다) + 고른 칸 표시줄 -->
+        <com.dsviewer.app.SplitLayout
+            android:id="@+id/splitHost"
             android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:background="@color/doc_bg" />
+            android:layout_height="match_parent">
 
-        <!-- 문서 위에서 바로 치는 글 상자 (InlineTextEditor). 빈 곳은 터치를 문서로 넘긴다 -->
-        <com.dsviewer.app.TextEditHost
-            android:id="@+id/textEditHost"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent" />
+            <com.dsviewer.app.PaneFrame
+                android:id="@+id/paneA"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent">
+
+                <com.dsviewer.app.DocumentView
+                    android:id="@+id/docView"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:background="@color/doc_bg" />
+
+                <com.dsviewer.app.TextEditHost
+                    android:id="@+id/textEditHost"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent" />
+
+                <View
+                    android:id="@+id/focusBarA"
+                    android:layout_width="match_parent"
+                    android:layout_height="3dp"
+                    android:background="@color/active_stroke"
+                    android:visibility="gone" />
+            </com.dsviewer.app.PaneFrame>
+
+            <com.dsviewer.app.PaneFrame
+                android:id="@+id/paneB"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent">
+
+                <com.dsviewer.app.DocumentView
+                    android:id="@+id/docView2"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:background="@color/doc_bg" />
+
+                <com.dsviewer.app.TextEditHost
+                    android:id="@+id/textEditHost2"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent" />
+
+                <View
+                    android:id="@+id/focusBarB"
+                    android:layout_width="match_parent"
+                    android:layout_height="3dp"
+                    android:background="@color/active_stroke"
+                    android:visibility="gone" />
+            </com.dsviewer.app.PaneFrame>
+        </com.dsviewer.app.SplitLayout>
 
         <ProgressBar
             android:id="@+id/progress"

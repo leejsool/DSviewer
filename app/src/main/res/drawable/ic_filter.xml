@@ -2,6 +2,6 @@
     android:width="24dp" android:height="24dp"
     android:viewportWidth="24" android:viewportHeight="24"
     android:tint="?attr/colorControlNormal">
-    <!-- 형식 고르기: 깔때기 -->
-    <path android:fillColor="@android:color/white" android:pathData="M4.25,5.61C6.27,8.2 10,13 10,13v6c0,0.55 0.45,1 1,1h2c0.55,0 1,-0.45 1,-1v-6c0,0 3.72,-4.8 5.74,-7.39C20.25,4.95 19.78,4 18.95,4H5.04C4.21,4 3.74,4.95 4.25,5.61z" />
+    <!-- 형식 고르기: 속이 빈 가는 선 깔때기 (다른 아이콘과 같은 굵기) -->
+    <path android:strokeColor="@android:color/white" android:strokeWidth="1.8" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M4.5,5.5h15L14,12.5v6l-4,1.5v-7.5z" />
 </vector>

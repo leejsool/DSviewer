@@ -20,7 +20,8 @@ import kotlin.math.roundToInt
 internal class WrongController(
     private val activity: AppCompatActivity,
     prefs: SharedPreferences,
-    private val docView: DocumentView,
+    /** 지금 고른 칸의 문서 화면 (분할 보기에서는 칸이 바뀐다) */
+    private val docViewOf: () -> DocumentView,
     private val textEditor: InlineTextEditor,
     private val progress: View,
     /** 지금 보는 탭 */
@@ -32,7 +33,9 @@ internal class WrongController(
     private val startReview: (DocTab, List<WrongEntry>) -> Unit,
     /** 고른 오답들의 문제지 PDF를 만든다 */
     private val exportSheet: (DocTab, List<WrongEntry>) -> Unit,
+
 ) {
+    private val docView get() = docViewOf()
     private val wrongUi by lazy { WrongUi(activity, prefs) }
 
     /** '문제 영역을 끌어 고르세요' 안내 (고르거나 취소하면 닫는다) */

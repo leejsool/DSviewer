@@ -1,0 +1,8 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24"
+    android:tint="?attr/colorControlNormal">
+    <!-- 분할 보기: 바깥 네모를 가운데 선으로 나눈 두 칸 (왼쪽 칸은 속을 채워 '고른 칸'을 보여 준다) -->
+    <path android:strokeColor="@android:color/white" android:strokeWidth="1.8" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M3.5,5h17v14h-17z M12,5v14" />
+    <path android:fillColor="@android:color/white" android:fillAlpha="0.45" android:pathData="M4.4,5.9h6.7v12.2h-6.7z" />
+</vector>

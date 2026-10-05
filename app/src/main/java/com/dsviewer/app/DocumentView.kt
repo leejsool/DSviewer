@@ -393,6 +393,29 @@ class DocumentView @JvmOverloads constructor(
     private var clipboard: List<Stroke> = emptyList()
     private val clipSize = RectF()
     val hasClipboard get() = clipboard.isNotEmpty()
+
+    /**
+     * 분할 보기: 다른 칸 문서 화면의 도구 설정(도구·색·굵기·지우개·테이프·채우기·선택 방식 …)과 복사해 둔 획을 이어받는다.
+     * 칸을 바꿔 눌러도 툴바가 가리키는 설정이 그대로 이어지게 한다 (읽기 모드·양쪽 보기는 뷰어가 모든 칸에 같이 건다)
+     */
+    fun copyToolsFrom(o: DocumentView) {
+        if (o === this) return
+        if (tool != o.tool) tool = o.tool
+        penColor = o.penColor; penWidth = o.penWidth; penStyle = o.penStyle; penSmoothing = o.penSmoothing
+        hlColor = o.hlColor; hlWidth = o.hlWidth; hlStraight = o.hlStraight
+        eraserRadiusDp = o.eraserRadiusDp; eraserMode = o.eraserMode; eraseHlOnly = o.eraseHlOnly
+        scribbleErase = o.scribbleErase; palmErase = o.palmErase; fingerDrawing = o.fingerDrawing
+        laserColor = o.laserColor; laserWidthDp = o.laserWidthDp; laserFadeMs = o.laserFadeMs
+        shapeKind = o.shapeKind; shapeGuide = o.shapeGuide; shapeDashed = o.shapeDashed
+        tapeColor = o.tapeColor; tapeWidth = o.tapeWidth; tapePattern = o.tapePattern; tapeRect = o.tapeRect
+        tapeStraight = o.tapeStraight; tapeFitText = o.tapeFitText; tapeErasing = o.tapeErasing; tapeEraseMode = o.tapeEraseMode
+        fillColor = o.fillColor; fillPattern = o.fillPattern; fillMode = o.fillMode; fillSmoothing = o.fillSmoothing
+        fillPolygon = o.fillPolygon; fillErasing = o.fillErasing; fillEraseMode = o.fillEraseMode
+        lassoRect = o.lassoRect; lassoTap = o.lassoTap
+        noteColor = o.noteColor
+        clipboard = o.clipboard
+        clipSize.set(o.clipSize)
+    }
     private val previewRect = RectF()
     private val handleFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
     private val handleLine = Paint(Paint.ANTI_ALIAS_FLAG).apply {

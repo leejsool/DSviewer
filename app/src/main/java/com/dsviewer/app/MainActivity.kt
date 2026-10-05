@@ -575,7 +575,7 @@ class MainActivity : AppCompatActivity() {
         filterButton.iconTint = ColorStateList.valueOf(com.google.android.material.color.MaterialColors.getColor(filterButton, attr))
         filterButton.backgroundTintList = if (active) ColorStateList.valueOf(
             com.google.android.material.color.MaterialColors.getColor(filterButton, com.google.android.material.R.attr.colorSecondaryContainer)
-        ) else null
+        ) else ColorStateList.valueOf(android.graphics.Color.TRANSPARENT)  // null을 주면 Material 버튼이 검정으로 칠한다
         val desc = if (active) "보여 줄 형식: ${shown.joinToString(", ") { it.label }}" else "보여 줄 형식: 모두"
         filterButton.contentDescription = desc
         filterButton.tooltipText = desc

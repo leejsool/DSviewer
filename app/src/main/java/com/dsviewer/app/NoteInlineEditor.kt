@@ -7,6 +7,7 @@ import android.text.Layout
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
@@ -19,7 +20,7 @@ import kotlin.math.roundToInt
  * (쪽에 그려질 글과 같은 자리·크기), 스크롤·확대를 따라간다. 메모 밖을 누르거나 다른 일을 하면 [commit]으로 글을 넣는다
  * (실행 취소 한 단계, [DocumentView.setNoteText]).
  */
-class NoteInlineEditor(private val host: TextEditHost, private val docView: DocumentView) {
+class NoteInlineEditor(private var host: TextEditHost, private var docView: DocumentView) {
     private val density = host.resources.displayMetrics.density
 
     private val edit: EditText = EditText(host.context).apply {
@@ -48,12 +49,31 @@ class NoteInlineEditor(private val host: TextEditHost, private val docView: Docu
     private var note: Stroke? = null
     private var appliedScale = -1f
 
+    /** 글자판 변화를 지켜보고 있는 층들 (init보다 먼저 만들어져야 한다) */
+    private val watched = HashSet<TextEditHost>()
+
     init {
         host.addView(edit, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT))
-        // 화면 키보드가 올라와 판이 줄면 메모가 가려지지 않게 문서를 올린다
-        host.addOnLayoutChangeListener { _, _, top, _, bottom, _, oldTop, _, oldBottom ->
-            if (isEditing && bottom - top != oldBottom - oldTop) host.post { ensureVisible() }
+        watchLayout(host)
+    }
+
+    /** 화면 키보드가 올라와 판이 줄면 메모가 가려지지 않게 문서를 올린다 */
+    private fun watchLayout(h: TextEditHost) {
+        if (!watched.add(h)) return
+        h.addOnLayoutChangeListener { _, _, top, _, bottom, _, oldTop, _, oldBottom ->
+            if (isEditing && h === host && bottom - top != oldBottom - oldTop) host.post { ensureVisible() }
         }
+    }
+
+    /** 분할 보기에서 입력칸을 다른 칸으로 옮긴다. 치던 글은 먼저 지금 칸의 메모에 넣는다 */
+    fun rebind(newHost: TextEditHost, newView: DocumentView) {
+        if (newHost === host && newView === docView) return
+        commit()
+        (edit.parent as? ViewGroup)?.removeView(edit)
+        host = newHost
+        docView = newView
+        host.addView(edit, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT))
+        watchLayout(host)
     }
 
     /** 펼친 메모 [st]의 몸통에서 글 치기를 시작한다 (끝에 커서) */

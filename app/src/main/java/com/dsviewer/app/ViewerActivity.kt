@@ -47,7 +47,16 @@ import kotlin.math.min
 
 class ViewerActivity : AppCompatActivity() {
 
-    private lateinit var docView: DocumentView
+    /** 문서 화면 칸: 첫 칸(왼쪽·위)과 둘째 칸(오른쪽·아래, 분할 보기에서만 보임). 필기·툴바는 늘 [focused] 칸에 닿는다 */
+    private lateinit var panes: List<ViewerPane>
+    private lateinit var focused: ViewerPane
+    private val docView get() = focused.view
+    private lateinit var splitHost: SplitLayout
+    /** 분할 보기(두 문서 나란히) 중인지 */
+    private var split = false
+    /** 분할 보기를 켜려고 다른 문서를 고르는 중 (골라 열면 그 문서가 둘째 칸에 뜬다) */
+    private var pendingSplit = false
+    private lateinit var splitButton: ImageButton
     private lateinit var progress: ProgressBar
     private lateinit var pageLabel: TextView
     private lateinit var textEditor: InlineTextEditor
@@ -77,7 +86,7 @@ class ViewerActivity : AppCompatActivity() {
     private var current: DocTab? = null
     private val ink get() = current?.ink
     private val saver: DocSaver by lazy {
-        DocSaver(this, docView, textEditor, progress, { current }, { createDoc.launch(it) }, ::removeTab, ::updateTabTitle)
+        DocSaver(this, { docView }, textEditor, progress, { current }, { createDoc.launch(it) }, ::removeTab, ::updateTabTitle)
     }
     /** 필기 데이터 받기를 이번에 이미 물었는지 */
     private var handwritingAsked = false
@@ -158,31 +167,55 @@ class ViewerActivity : AppCompatActivity() {
         insertButton = findViewById(R.id.actionInsert)
         wrongButton = findViewById(R.id.actionWrong)
 
-        docView = findViewById(R.id.docView)
-        textEditor = InlineTextEditor(findViewById(R.id.textEditHost), docView)
-        noteEditor = NoteInlineEditor(findViewById(R.id.textEditHost), docView)
+        splitHost = findViewById(R.id.splitHost)
+        panes = listOf(
+            ViewerPane(findViewById(R.id.paneA), findViewById(R.id.docView), findViewById(R.id.textEditHost), findViewById(R.id.focusBarA)),
+            ViewerPane(findViewById(R.id.paneB), findViewById(R.id.docView2), findViewById(R.id.textEditHost2), findViewById(R.id.focusBarB)),
+        )
+        focused = panes[0]
+        textEditor = InlineTextEditor(focused.host, focused.view)
+        noteEditor = NoteInlineEditor(focused.host, focused.view)
         // 글 상자를 닫는 모든 자리(도구 바꾸기·저장·탭 전환…)에서 포스트잇 입력도 함께 넣는다
         textEditor.alsoCommit = { noteEditor.commit() }
         progress = findViewById(R.id.progress)
         pageLabel = findViewById(R.id.pageLabel)
         // 쪽 번호를 누르면 쪽 이동
         pageLabel.setOnClickListener { showGoToPage() }
-        tools = ToolbarController(this, docView, textEditor, prefs, { current?.ink }, { wrong.startPick() }, ::showOptionsDialog)
+        tools = ToolbarController(this, { docView }, textEditor, prefs, { current?.ink }, { wrong.startPick() }, ::showOptionsDialog)
         tools.setupSelectionTools()
         tools.setupEraserTools()
         tools.setupToolbarDock()
+        tools.allViews = { panes.map { it.view } }
+        setupSplit()
+        for (p in panes) p.view.listener = paneListener(p)
+        tools.setupTools()
+        tools.setupFormatBar()
+        tools.watchOverlays()
+        setupTabs()
+        setupActions()
+        onBackPressedDispatcher.addCallback(this, backCallback)
 
-        docView.listener = object : DocumentView.Listener {
+        if (!handleIntent(intent)) {
+            Toast.makeText(this, "열 파일이 없습니다.", Toast.LENGTH_SHORT).show()
+            finish()
+        }
+    }
+
+    /** 문서 화면 칸 [pane]이 뷰어에 알리는 일. 쪽 번호·선택 막대·글 상자 따라가기처럼 눈에 보이는 것은 고른 칸의 것만 쓴다 */
+    private fun paneListener(pane: ViewerPane) = object : DocumentView.Listener {
             override fun onPageChanged(page: Int, count: Int) {
+                if (pane !== focused) return
                 flashPageLabel()
                 // 양쪽 보기면 나란히 놓인 두 쪽을 '1-2 / 20'처럼
-                pageLabel.text = if (docView.isSpread && page + 1 < count) "${page + 1}-${page + 2} / $count" else "${page + 1} / $count"
+                pageLabel.text = if (pane.view.isSpread && page + 1 < count) "${page + 1}-${page + 2} / $count" else "${page + 1} / $count"
                 pagePanel.setCurrent(page)
                 overview.setCurrent(page)
                 if (current?.review != null) review.sync()
             }
 
-            override fun onSelectionChanged(rect: RectF?, count: Int) = tools.placeSelectionBar(rect, count)
+            override fun onSelectionChanged(rect: RectF?, count: Int) {
+                if (pane === focused) tools.placeSelectionBar(rect, count)
+            }
 
             override fun onPenDown() {
                 tools.hideOptionBar()
@@ -193,6 +226,7 @@ class ViewerActivity : AppCompatActivity() {
                 this@ViewerActivity.onTextTap(page, x, y, existing)
 
             override fun onViewportChanged() {
+                if (pane !== focused) return
                 textEditor.reposition()
                 noteEditor.reposition()
             }
@@ -200,7 +234,9 @@ class ViewerActivity : AppCompatActivity() {
             // 포스트잇 입력칸 밖을 누르면 친 글을 메모에 넣는다 (누름은 그대로 처리된다)
             override fun onTouchDown() = noteEditor.commit()
 
-            override fun onScrolled() = flashPageLabel()
+            override fun onScrolled() {
+                if (pane === focused) flashPageLabel()
+            }
 
             override fun onPullAddPage() = appendBlankPage()
 
@@ -239,19 +275,12 @@ class ViewerActivity : AppCompatActivity() {
             override fun onShapeFailed(kind: ShapeKind) {
                 Toast.makeText(this@ViewerActivity, "${withRo(kind.label)} 맞추지 못했어요. 조금 더 크게 그려 보세요.", Toast.LENGTH_SHORT).show()
             }
-        }
+    }
 
-        tools.setupTools()
-        tools.setupFormatBar()
-        tools.watchOverlays()
-        setupTabs()
-        setupActions()
-        onBackPressedDispatcher.addCallback(this, backCallback)
-
-        if (!handleIntent(intent)) {
-            Toast.makeText(this, "열 파일이 없습니다.", Toast.LENGTH_SHORT).show()
-            finish()
-        }
+    override fun onResume() {
+        super.onResume()
+        // 둘째 칸에 띄울 문서를 고르러 갔다가 아무것도 안 고르고 돌아왔으면 분할 보기 준비를 거둔다
+        pendingSplit = false
     }
 
     override fun onPause() {
@@ -328,7 +357,11 @@ class ViewerActivity : AppCompatActivity() {
         startReview: Boolean = false,
     ) {
         docs.firstOrNull { it.uri == uri }?.let {
-            // 이미 열려 있는 문서면 그 탭으로
+            // 이미 열려 있는 문서면 그 탭으로 (분할 보기용으로 골랐다면 둘째 칸에)
+            if (pendingSplit) {
+                pendingSplit = false
+                if (it !== current) beginSplit(it)
+            }
             docTabs.select(docs.indexOf(it), notify = true)
             if (startReview && it.ink != null) docView.post { wrong.reviewDue() }
             else if (startReview) it.startReviewOnLoad = true
@@ -354,6 +387,10 @@ class ViewerActivity : AppCompatActivity() {
         updateAddButton()
         docTabs.addTab(t.name, R.drawable.ic_doc, TAB_ICON_GRAY, closable = true)
         updateTabTitle(t)
+        if (pendingSplit) {
+            pendingSplit = false
+            beginSplit(t)
+        }
         docTabs.select(docs.lastIndex, notify = true)
         if (review != null) {
             load(t)
@@ -409,11 +446,14 @@ class ViewerActivity : AppCompatActivity() {
     /** 이 탭의 문서를 화면에 띄운다 */
     private fun showTab(t: DocTab) {
         if (current === t) return
+        // 분할 보기에서 이미 반대쪽 칸에 떠 있는 문서면 그 칸을 고른다
+        paneOf(t)?.let { if (it !== focused) { focusPane(it); return } }
         textEditor.commit()
         overview.hide()
         docView.searchHits = emptyMap()
         current?.let { it.viewState = docView.viewState() }
         current = t
+        focused.tab = t
         val d = t.pdf
         val inkDoc = t.ink
         if (d != null && inkDoc != null) {
@@ -479,11 +519,15 @@ class ViewerActivity : AppCompatActivity() {
         val index = docs.indexOf(t)
         if (index < 0) return
         val wasCurrent = current === t
+        val pane = paneOf(t)
         if (wasCurrent) {
             overview.hide()
             current = null
-            docView.clearDocument()
             pagePanel.clear()
+        }
+        if (pane != null) {
+            pane.view.clearDocument()
+            pane.tab = null
         }
         docs.removeAt(index)
         // 저장했거나 '저장 안 함'으로 닫았으니 자동 저장본은 더 필요 없다 (열다 만 복구 탭은 남겨 둔다)
@@ -502,8 +546,16 @@ class ViewerActivity : AppCompatActivity() {
             finish()
             return
         }
-        // 보고 있던 탭을 닫았으면 옆 탭으로, 뒤에 있던 탭을 닫았으면 그대로
-        if (wasCurrent) docTabs.select(minOf(index, docs.size - 1), notify = true)
+        // 떠 있던 칸은 옆 탭으로 채우고(보고 있던 칸이면 그 탭을 고른다), 채울 탭이 없으면 분할 보기를 끝낸다. 뒤에 있던 탭을 닫았으면 그대로
+        if (pane != null) {
+            val hidden = docs.filter { d -> paneOf(d) == null }
+            val next = hidden.firstOrNull { docs.indexOf(it) >= index } ?: hidden.lastOrNull()
+            when {
+                next == null -> if (split) endSplit(keep = panes.first { it !== pane })
+                pane === focused -> docTabs.select(docs.indexOf(next), notify = true)
+                else -> showIn(pane, next)
+            }
+        }
     }
 
     /** ＋ 버튼: 탐색기를 '새 탭에 열 문서 고르기'로 띄운다 */
@@ -622,10 +674,12 @@ class ViewerActivity : AppCompatActivity() {
             File(HandwritingIndex.dir(this), drafts.idOf(t.uri.toString()) + ".txt"),
         ).also { hw -> hw.onNeedsData = { askHandwritingData(hw, auto = true) } }
         inkDoc.onChanged = {
+            paneOf(t)?.view?.let {
+                it.refreshMargin()
+                it.invalidate()
+            }
             if (current === t) {
                 updateActions()
-                docView.refreshMargin()
-                docView.invalidate()
                 pagePanel.inkChanged()
                 overview.inkChanged()
             }
@@ -634,12 +688,12 @@ class ViewerActivity : AppCompatActivity() {
             t.handwriting?.inkChanged()
         }
         inkDoc.swapPages = { files, apply -> restorePageFiles(t, files as PageFiles, apply) }
-        inkDoc.jumpTo = { spot -> if (current === t) (spot as Spot).let { docView.scrollToPageY(it.page, it.y) } }
+        inkDoc.jumpTo = { spot -> paneOf(t)?.view?.let { v -> (spot as Spot).let { v.scrollToPageY(it.page, it.y) } } }
         t.pdf = d
         t.ink = inkDoc
         updateTabTitle(t)  // 복구한 필기면 디스켓 표시
+        paneOf(t)?.view?.setDocument(d, inkDoc)
         if (current === t) {
-            docView.setDocument(d, inkDoc)
             syncPagePanel()
             progress.visibility = View.GONE
             updateActions()
@@ -682,13 +736,15 @@ class ViewerActivity : AppCompatActivity() {
             prefs.edit().putBoolean("pagePanel", open).apply()
             syncPagePanel()
         }
+        splitButton = findViewById(R.id.actionSplit)
+        splitButton.setOnClickListener { onSplitClicked() }
         twoPageButton = findViewById(R.id.actionTwoPage)
-        docView.twoPage = prefs.getBoolean("twoPage", false)
+        for (p in panes) p.view.twoPage = prefs.getBoolean("twoPage", false)
         twoPageButton.setOnClickListener {
             val on = !docView.twoPage
             prefs.edit().putBoolean("twoPage", on).apply()
             textEditor.commit()
-            docView.twoPage = on
+            for (p in panes) p.view.twoPage = on
             updateActions()
             if (on && docView.width <= docView.height) toast("가로 화면에서 두 쪽씩 나란히 보입니다.")
         }
@@ -714,6 +770,7 @@ class ViewerActivity : AppCompatActivity() {
         wrongButton.setEnabledAlpha(inkDoc != null)
         pagesButton.setActive(pagePanel.isShowing)
         twoPageButton.setActive(docView.twoPage)
+        splitButton.setActive(split)
         readModeButton.setActive(readMode)
         // 읽기 전용이면 책에 눈, 쓸 수 있으면 책에 펜
         readModeButton.setImageResource(if (readMode) R.drawable.ic_read_mode else R.drawable.ic_write_mode)
@@ -1196,7 +1253,7 @@ class ViewerActivity : AppCompatActivity() {
             docView.clearSelection()
         }
         readMode = on
-        docView.readOnly = on
+        for (p in panes) p.view.readOnly = on
         // 링크를 미리 꺼내 둔다 (처음 누를 때 기다리지 않게)
         if (on) currentLinks()
         findViewById<View>(R.id.toolbar).visibility = if (on) View.GONE else View.VISIBLE
@@ -1362,14 +1419,14 @@ class ViewerActivity : AppCompatActivity() {
 
     private val review: ReviewController by lazy {
         ReviewController(
-            this, docView, findViewById(R.id.docFrame), findViewById(R.id.reviewBar), findViewById(R.id.reviewRow),
+            this, { docView }, findViewById(R.id.docFrame), findViewById(R.id.reviewBar), findViewById(R.id.reviewRow),
             findViewById(R.id.bottomOverlay), progress, { current }, saver, ::toast, ::openReviewTab, ::removeTab,
             { autoSaver.saveNow(it) }, { openTab(Uri.fromFile(it), writable = true, newNote = false) },
         )
     }
 
     private val wrong: WrongController by lazy {
-        WrongController(this, prefs, docView, textEditor, progress, { current }, ::toast, ::editPages, { t, list -> review.start(t, list) }, { t, list -> review.exportSheet(t, list) })
+        WrongController(this, prefs, { docView }, textEditor, progress, { current }, ::toast, ::editPages, { t, list -> review.start(t, list) }, { t, list -> review.exportSheet(t, list) })
     }
 
     /**
@@ -1919,7 +1976,7 @@ class ViewerActivity : AppCompatActivity() {
         t.pagesBusy = true
         textEditor.commit()
         docView.clearSelection()
-        val before = PageFiles(src, render, docView.currentPage().coerceAtLeast(0))
+        val before = PageFiles(src, render, (paneOf(t)?.view ?: docView).currentPage().coerceAtLeast(0))
         lifecycleScope.launch {
             progress.visibility = View.VISIBLE
             try {
@@ -1942,11 +1999,14 @@ class ViewerActivity : AppCompatActivity() {
                 val after = PageFiles(newSrc, newRender, 0)
                 inkDoc.changePages(before, after) { pages -> after.page = applyInk(pages) }
                 val target = after.page
-                if (current === t) {
-                    docView.setDocument(nd, inkDoc, docView.viewState())
-                    pagePanel.setDocument(nd, inkDoc)
-                    overview.setDocument(nd, inkDoc)
-                    docView.post { docView.scrollToPage(target) }
+                val v = paneOf(t)?.view
+                if (v != null) {
+                    v.setDocument(nd, inkDoc, v.viewState())
+                    if (current === t) {
+                        pagePanel.setDocument(nd, inkDoc)
+                        overview.setDocument(nd, inkDoc)
+                    }
+                    v.post { v.scrollToPage(target) }
                 } else t.viewState = null
                 old?.close()
                 updateTabTitle(t)
@@ -1958,7 +2018,7 @@ class ViewerActivity : AppCompatActivity() {
                     .show()
             } finally {
                 t.pagesBusy = false
-                if (current === t) progress.visibility = View.GONE
+                syncProgress()
             }
         }
     }
@@ -1981,11 +2041,14 @@ class ViewerActivity : AppCompatActivity() {
                 t.pdf = nd
                 t.sourcePdf = f.source
                 t.renderPdf = f.render
-                if (current === t) {
-                    docView.setDocument(nd, inkDoc, docView.viewState())
-                    pagePanel.setDocument(nd, inkDoc)
-                    overview.setDocument(nd, inkDoc)
-                    docView.post { docView.scrollToPage(f.page.coerceIn(0, nd.pageCount - 1)) }
+                val v = paneOf(t)?.view
+                if (v != null) {
+                    v.setDocument(nd, inkDoc, v.viewState())
+                    if (current === t) {
+                        pagePanel.setDocument(nd, inkDoc)
+                        overview.setDocument(nd, inkDoc)
+                    }
+                    v.post { v.scrollToPage(f.page.coerceIn(0, nd.pageCount - 1)) }
                 } else t.viewState = null
                 old?.close()
                 updateTabTitle(t)
@@ -1996,9 +2059,160 @@ class ViewerActivity : AppCompatActivity() {
                     .show()
             } finally {
                 t.pagesBusy = false
-                if (current === t) progress.visibility = View.GONE
+                syncProgress()
             }
         }
+    }
+
+    // ================= 분할 보기 (두 문서 나란히) =================
+    // 가로 화면은 좌우, 세로 화면은 위아래 두 칸. 툴바·필기는 늘 '고른 칸'(문서를 마지막으로 누른 칸, 위에 파란 줄)에 닿고,
+    // 탭 줄에서 탭을 누르면 고른 칸의 문서가 그 탭으로 바뀐다. 가운데 구분선을 끌어 두 칸의 비율을 바꾼다 (SplitLayout)
+
+    private fun setupSplit() {
+        splitHost.ratio = prefs.getFloat("splitRatio", SplitMath.DEFAULT_RATIO)
+        splitHost.onRatioChanged = { r, done -> if (done) prefs.edit().putFloat("splitRatio", r).apply() }
+        for (p in panes) {
+            p.frame.onTouched = { if (split) focusPane(p) }
+            // 칸의 크기나 자리가 바뀌면 겹쳐 뜬 줄이 칸마다 가리는 만큼을 다시 잰다
+            p.frame.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> tools.refreshOverlayInsets() }
+        }
+    }
+
+    /** 지금 [t]를 보여 주는 칸 (없으면 null) */
+    private fun paneOf(t: DocTab) = panes.firstOrNull { it.shown && it.tab === t }
+
+    /** [t]를 [pane]에 띄운다 (아직 다 안 열렸으면 빈 화면). 고른 칸이나 탭 줄·쪽 관리 창은 건드리지 않는다 */
+    private fun showIn(pane: ViewerPane, t: DocTab) {
+        pane.view.searchHits = emptyMap()
+        pane.tab = t
+        val d = t.pdf
+        val inkDoc = t.ink
+        if (d != null && inkDoc != null) pane.view.setDocument(d, inkDoc, t.viewState)
+        else pane.view.clearDocument()
+    }
+
+    /** 고른 칸에만 위쪽에 파란 줄 (분할 보기가 아니면 없음) */
+    private fun updateFocusBars() {
+        for (p in panes) p.focusBar.visibility = if (split && p === focused) View.VISIBLE else View.GONE
+    }
+
+    /** 고른 탭이 아직 열리는 중이거나 쪽을 바꾸는 중이면 돌아가는 표시 */
+    private fun syncProgress() {
+        val t = current
+        progress.visibility = if (t != null && (t.ink == null || t.pagesBusy)) View.VISIBLE else View.GONE
+    }
+
+    /** 문서를 누른 칸 [p]로 툴바·필기·탭 줄의 기준을 옮긴다. 치던 글은 먼저 지금 칸에 넣는다 */
+    private fun focusPane(p: ViewerPane) {
+        if (p === focused || !p.shown) return
+        textEditor.commit()
+        val old = focused
+        // 지금 칸에 남은 선택·레이저·진행 중인 고르기를 거둔다 (선택 막대는 아직 지금 칸이 고른 칸일 때 숨긴다)
+        old.view.clearSelection()
+        old.view.clearLaser()
+        old.view.cancelNotePlacement()
+        old.view.cancelWrongPick()
+        old.view.searchHits = emptyMap()
+        overview.hide()
+        focused = p
+        p.view.copyToolsFrom(old.view)
+        textEditor.rebind(p.host, p.view)
+        noteEditor.rebind(p.host, p.view)
+        current = p.tab
+        updateFocusBars()
+        p.tab?.let { docTabs.select(docs.indexOf(it), notify = false) }
+        syncPagePanel()
+        syncProgress()
+        tools.refreshOverlayInsets()
+        updateActions()
+    }
+
+    /** 분할 보기 단추: 켜져 있으면 끝내고(고른 칸의 문서만 남긴다), 아니면 둘째 칸에 띄울 문서를 고른다 */
+    private fun onSplitClicked() {
+        if (split) {
+            endSplit(keep = focused)
+            return
+        }
+        val t = current ?: return
+        val others = docs.filter { it !== t }
+        if (others.isEmpty()) {
+            askSplitDocument()
+            return
+        }
+        // 이미 열려 있는 다른 문서들 중에서, 아니면 새로 열 문서
+        val popup = PopupMenu(this, splitButton)
+        others.forEachIndexed { i, d -> popup.menu.add(0, i, i, d.name) }
+        if (docs.size < MAX_TABS) popup.menu.add(0, others.size, others.size, "다른 문서 열기…")
+        popup.setOnMenuItemClickListener { item ->
+            others.getOrNull(item.itemId)?.let { beginSplit(it) } ?: askSplitDocument()
+            true
+        }
+        popup.show()
+    }
+
+    /** 열려 있는 문서가 하나뿐이면 탐색기에서 둘째 칸에 띄울 문서를 고른다 (골라 열면 [openTab]이 분할 보기를 켠다) */
+    private fun askSplitDocument() {
+        if (docs.size >= MAX_TABS) {
+            toast("문서는 ${MAX_TABS}개까지 열 수 있습니다. 탭을 하나 닫아 주세요.")
+            return
+        }
+        toast("둘째 칸에 띄울 문서를 골라 주세요.")
+        pendingSplit = true
+        pickAnotherDocument()
+    }
+
+    /** 분할 보기를 켠다: 지금 문서는 첫 칸에 두고 [second]를 둘째 칸에 띄운다 (고른 칸은 그대로) */
+    private fun beginSplit(second: DocTab) {
+        if (split) return
+        textEditor.commit()
+        split = true
+        val a = panes[0]
+        val b = panes[1]
+        b.view.copyToolsFrom(a.view)
+        b.view.twoPage = a.view.twoPage
+        b.view.readOnly = readMode
+        splitHost.split = true
+        showIn(b, second)
+        updateFocusBars()
+        tools.refreshOverlayInsets()
+        updateActions()
+    }
+
+    /** 분할 보기를 끝낸다: [keep] 칸의 문서만 남기고 (첫 칸으로 옮기고) 다른 칸 문서는 탭으로만 남는다 */
+    private fun endSplit(keep: ViewerPane) {
+        if (!split) return
+        textEditor.commit()
+        val a = panes[0]
+        val b = panes[1]
+        val drop = if (keep === a) b else a
+        if (focused !== keep) keep.view.copyToolsFrom(focused.view)
+        drop.view.clearSelection()
+        drop.view.clearLaser()
+        drop.tab?.viewState = drop.view.viewState()
+        drop.view.clearDocument()
+        drop.tab = null
+        split = false
+        splitHost.split = false
+        if (keep === b) {
+            // 문서 화면은 첫 칸이 맡으니 남은 문서를 첫 칸으로 옮긴다
+            val t = b.tab
+            t?.viewState = b.view.viewState()
+            a.view.copyToolsFrom(b.view)
+            b.view.clearDocument()
+            b.tab = null
+            a.tab = t
+            if (t != null) showIn(a, t)
+        }
+        focused = a
+        textEditor.rebind(a.host, a.view)
+        noteEditor.rebind(a.host, a.view)
+        current = a.tab
+        updateFocusBars()
+        a.tab?.let { docTabs.select(docs.indexOf(it), notify = false) }
+        syncPagePanel()
+        syncProgress()
+        tools.refreshOverlayInsets()
+        updateActions()
     }
 
     // ================= 저장 =================
@@ -2041,6 +2255,7 @@ class ViewerActivity : AppCompatActivity() {
             TopAction("insert", "삽입", { insertButton }, R.drawable.ic_insert),
             TopAction("wrong", "오답", { wrongButton }, R.drawable.ic_wrong_note),
             TopAction("twoPage", "양쪽 보기", { twoPageButton }, R.drawable.ic_two_page),
+            TopAction("split", "분할 보기", { splitButton }, R.drawable.ic_split_view),
             TopAction("pages", "페이지 관리", { pagesButton }, R.drawable.ic_page_panel),
             TopAction("overview", "쪽 한눈에 보기", { overviewButton }, R.drawable.ic_grid_view),
             TopAction("readMode", "읽기 모드", { readModeButton }, R.drawable.ic_write_mode),

@@ -27,7 +27,8 @@ import kotlin.math.roundToInt
  */
 internal class DocSaver(
     private val activity: AppCompatActivity,
-    private val docView: DocumentView,
+    /** 지금 고른 칸의 문서 화면 (분할 보기에서는 칸이 바뀐다) */
+    private val docViewOf: () -> DocumentView,
     private val textEditor: InlineTextEditor,
     private val progress: View,
     /** 지금 보는 탭 */
@@ -36,7 +37,9 @@ internal class DocSaver(
     private val launchSaveAs: (suggestedName: String) -> Unit,
     private val removeTab: (DocTab) -> Unit,
     private val updateTabTitle: (DocTab) -> Unit,
+
 ) {
+    private val docView get() = docViewOf()
     /** '다른 이름으로 저장' 창을 띄운 탭 */
     private var saveTarget: DocTab? = null
     /** 저장이 끝나면 닫을 탭 */

@@ -56,7 +56,8 @@ internal class ReviewSession(val source: DocTab, val problems: List<ReviewProble
  */
 internal class ReviewController(
     private val activity: AppCompatActivity,
-    private val docView: DocumentView,
+    /** 지금 고른 칸의 문서 화면 (분할 보기에서는 칸이 바뀐다) */
+    private val docViewOf: () -> DocumentView,
     private val frame: FrameLayout,
     private val bar: HorizontalScrollView,
     private val row: LinearLayout,
@@ -75,6 +76,7 @@ internal class ReviewController(
     /** 만든 PDF를 새 탭으로 연다 */
     private val openFile: (File) -> Unit,
 ) {
+    private val docView get() = docViewOf()
     private val density = activity.resources.displayMetrics.density
     private fun dp(v: Int) = (v * density).roundToInt()
 

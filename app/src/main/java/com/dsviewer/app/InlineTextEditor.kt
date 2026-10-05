@@ -15,6 +15,7 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
@@ -45,7 +46,7 @@ class TextEditHost @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
  * 서식: 글자 서식은 고른 글자에(고른 게 없으면 이어서 칠 글자에), 문단 서식은 고른 문단에 붙는다.
  * 문단 서식은 [paras]가 원본이고 ParaSpan은 그리기용으로 바뀔 때마다 새로 붙인다.
  */
-class InlineTextEditor(private val host: TextEditHost, private val docView: DocumentView) {
+class InlineTextEditor(private var host: TextEditHost, private var docView: DocumentView) {
     /** 서식 줄에 보일 지금 서식 (고른 글자, 없으면 이어서 칠 글자 기준) */
     data class FormatState(val style: CharStyle, val para: ParaAttrs, val sizePt: Float)
 
@@ -172,13 +173,32 @@ class InlineTextEditor(private val host: TextEditHost, private val docView: Docu
         }
     }
 
+    /** 글자판 변화를 지켜보고 있는 층들 (init보다 먼저 만들어져야 한다) */
+    private val watched = HashSet<TextEditHost>()
+
     init {
         host.addView(edit, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT))
         edit.addTextChangedListener(watcher)
-        // 화면 키보드가 올라와 판이 줄면 커서가 가려지지 않게 문서를 올린다
-        host.addOnLayoutChangeListener { _, _, top, _, bottom, _, oldTop, _, oldBottom ->
-            if (isEditing && bottom - top != oldBottom - oldTop) host.post { ensureCaretVisible() }
+        watchLayout(host)
+    }
+
+    /** 화면 키보드가 올라와 판이 줄면 커서가 가려지지 않게 문서를 올린다 */
+    private fun watchLayout(h: TextEditHost) {
+        if (!watched.add(h)) return
+        h.addOnLayoutChangeListener { _, _, top, _, bottom, _, oldTop, _, oldBottom ->
+            if (isEditing && h === host && bottom - top != oldBottom - oldTop) host.post { ensureCaretVisible() }
         }
+    }
+
+    /** 분할 보기에서 글 상자를 다른 칸(글 상자 층·문서 화면)으로 옮긴다. 치던 글은 먼저 지금 칸에 넣는다 */
+    fun rebind(newHost: TextEditHost, newView: DocumentView) {
+        if (newHost === host && newView === docView) return
+        commit()
+        (edit.parent as? ViewGroup)?.removeView(edit)
+        host = newHost
+        docView = newView
+        host.addView(edit, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT))
+        watchLayout(host)
     }
 
     /** 커서 줄이 판 아래(서식 줄·키보드)나 위로 가려지면 보이는 곳까지 문서를 스크롤한다 */
