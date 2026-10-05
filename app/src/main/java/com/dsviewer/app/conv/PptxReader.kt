@@ -4,7 +4,9 @@ import com.dsviewer.app.hwp.Align
 import com.dsviewer.app.hwp.BorderFill
 import com.dsviewer.app.hwp.BorderLine
 import com.dsviewer.app.hwp.HCell
+import com.dsviewer.app.hwp.HCtrl
 import com.dsviewer.app.hwp.HDoc
+import com.dsviewer.app.hwp.HLinks
 import com.dsviewer.app.hwp.HObject
 import com.dsviewer.app.hwp.HPara
 import com.dsviewer.app.hwp.HPicture
@@ -62,7 +64,10 @@ class PptxReader private constructor(private val pkg: OpcPackage) {
         val layout: XNode?,
         val master: XNode?,
         val slideNo: Int,
-    )
+    ) {
+        /** 지금 그리는 부분(슬라이드·레이아웃·마스터)의 경로. 글의 하이퍼링크 대상을 그 관계 파일에서 찾는 데 쓴다 */
+        var part: String = ""
+    }
 
     /** 아이 좌표(EMU) → 슬라이드 좌표(EMU): x' = ax + x·kx */
     private class Xf(val ax: Double, val kx: Double, val ay: Double, val ky: Double) {
@@ -184,6 +189,7 @@ class PptxReader private constructor(private val pkg: OpcPackage) {
     // ================= 도형 나무 =================
 
     private fun tree(node: XNode, part: String, xf: Xf, ctx: Ctx, placeholders: Boolean, out: MutableList<HObject>) {
+        ctx.part = part
         for (c in node.children) {
             when (c.name) {
                 "sp", "cxnSp" -> shape(c, part, xf, ctx, placeholders, out)
@@ -565,7 +571,12 @@ class PptxReader private constructor(private val pkg: OpcPackage) {
                         var t = c.child("t")?.text ?: ""
                         if (c.name == "fld" && (c["type"] == "slidenum" || t == "‹#›")) t = ctx.slideNo.toString()
                         if (caps(rPr)) t = t.uppercase()
+                        // 바깥(웹·메일·전화) 주소 링크만 PDF 링크가 된다. 슬라이드 이동 같은 것은 주소가 없어 건너뜀
+                        val url = rPr?.child("hlinkClick")?.get("id")?.let { pkg.rels(ctx.part)[it] }
+                            ?.takeIf { it.external }?.let { HLinks.fromTarget(it.target) }
+                        if (url != null && t.isNotEmpty()) para.ctrl(HCtrl.FieldBegin(url), cs)
                         appendText(para, t, cs, r.size)
+                        if (url != null && t.isNotEmpty()) para.ctrl(HCtrl.FieldEnd, cs)
                     }
                     "br" -> para.text("\n", b.charShape(run(c.child("rPr"))))
                 }

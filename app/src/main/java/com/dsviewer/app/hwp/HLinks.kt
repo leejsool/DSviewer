@@ -37,6 +37,31 @@ object HLinks {
         }
     }
 
+    /**
+     * 오피스(DOCX·PPTX) 관계 파일의 링크 대상 주소를 PDF에서 열 수 있는 주소로. 웹·메일·전화 주소만 돌려주고
+     * (www로 시작하면 http://를 붙인다), 문서 안 이동·파일 경로는 null. [parseCommand]와 달리 ';'와 '\'는 주소의 일부
+     */
+    fun fromTarget(target: String?): String? {
+        val url = target?.trim() ?: return null
+        return when {
+            url.isEmpty() -> null
+            SCHEME.containsMatchIn(url) -> url
+            url.startsWith("www.", ignoreCase = true) -> "http://$url"
+            else -> null
+        }
+    }
+
+    /**
+     * 워드 필드 코드 (`HYPERLINK "https://x.com" \o "설명"`)에서 주소. 주소 없이 `\l "책갈피"`만 있으면(문서 안 이동) null
+     */
+    fun fromFieldCode(code: String?): String? {
+        val c = code?.trim() ?: return null
+        if (!c.startsWith("HYPERLINK", ignoreCase = true)) return null
+        val rest = c.substring("HYPERLINK".length).trim()
+        val url = if (rest.startsWith("\"")) rest.substring(1).substringBefore('"') else rest.substringBefore(' ')
+        return fromTarget(url)
+    }
+
     /** 링크 글자의 위치 범위 [start, end) (문단 글자 위치) */
     class Span(val start: Int, val end: Int, val url: String)
 

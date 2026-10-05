@@ -7,6 +7,7 @@ import com.dsviewer.app.hwp.HCell
 import com.dsviewer.app.hwp.HCtrl
 import com.dsviewer.app.hwp.HDoc
 import com.dsviewer.app.hwp.HEquation
+import com.dsviewer.app.hwp.HLinks
 import com.dsviewer.app.hwp.HObject
 import com.dsviewer.app.hwp.HPara
 import com.dsviewer.app.hwp.HPicture
@@ -51,6 +52,9 @@ class DocxReader private constructor(private val pkg: OpcPackage) {
     private var fieldSkip = false
     private var fieldInstr = StringBuilder()
     private var inFieldCode = false
+    /** 복잡한 필드로 된 하이퍼링크가 열려 있는지(글 결과가 이어지는 동안)와 그 안에 겹친 필드 수 */
+    private var linkOpen = false
+    private var linkDepth = 0
 
     companion object {
         fun read(file: File, maxPages: Int = 0): HDoc {
@@ -492,7 +496,15 @@ class DocxReader private constructor(private val pkg: OpcPackage) {
         for (c in container.children) {
             when (c.name) {
                 "r" -> run(c, part, pStyle, extraR, st)
-                "hyperlink", "ins", "smartTag", "customXml", "dir", "bdo", "moveTo" -> inline(c, part, pStyle, extraR, st)
+                "hyperlink" -> {
+                    // 바깥(웹·메일·전화) 주소만 PDF 링크가 된다. 문서 안 이동(anchor)은 글만 읽는다
+                    val rel = c["id"]?.let { pkg.rels(part)[it] }
+                    val url = if (rel != null && rel.external) HLinks.fromTarget(rel.target) else null
+                    if (url != null) st.cur.ctrl(HCtrl.FieldBegin(url), st.endCs)
+                    inline(c, part, pStyle, extraR, st)
+                    if (url != null) st.cur.ctrl(HCtrl.FieldEnd, st.endCs)
+                }
+                "ins", "smartTag", "customXml", "dir", "bdo", "moveTo" -> inline(c, part, pStyle, extraR, st)
                 "sdt" -> c.child("sdtContent")?.let { inline(it, part, pStyle, extraR, st) }
                 "fldSimple" -> {
                     val instr = c["instr"].orEmpty().trim().uppercase()
@@ -500,6 +512,12 @@ class DocxReader private constructor(private val pkg: OpcPackage) {
                     when {
                         instr.startsWith("PAGE") -> st.cur.ctrl(HCtrl.AutoNum("PAGE", "DIGIT"), cs)
                         instr.startsWith("NUMPAGES") -> st.cur.ctrl(HCtrl.AutoNum("TOTAL_PAGE", "DIGIT"), cs)
+                        instr.startsWith("HYPERLINK") -> {
+                            val url = HLinks.fromFieldCode(c["instr"])
+                            if (url != null) st.cur.ctrl(HCtrl.FieldBegin(url), cs)
+                            inline(c, part, pStyle, extraR, st)
+                            if (url != null) st.cur.ctrl(HCtrl.FieldEnd, cs)
+                        }
                         else -> inline(c, part, pStyle, extraR, st)
                     }
                 }
@@ -532,10 +550,17 @@ class DocxReader private constructor(private val pkg: OpcPackage) {
         for (c in r.children) {
             when (c.name) {
                 "fldChar" -> when (c["fldCharType"]) {
-                    "begin" -> { inFieldCode = true; fieldInstr = StringBuilder(); fieldSkip = false }
+                    "begin" -> {
+                        if (linkOpen) linkDepth++
+                        inFieldCode = true; fieldInstr = StringBuilder(); fieldSkip = false
+                    }
                     "separate" -> {
                         inFieldCode = false
                         val instr = fieldInstr.toString().trim().uppercase()
+                        if (instr.startsWith("HYPERLINK") && !linkOpen) {
+                            val url = HLinks.fromFieldCode(fieldInstr.toString())
+                            if (url != null) { st.cur.ctrl(HCtrl.FieldBegin(url), cs()); linkOpen = true; linkDepth = 0 }
+                        }
                         when {
                             instr.startsWith("PAGE") -> { st.cur.ctrl(HCtrl.AutoNum("PAGE", "DIGIT"), cs()); fieldSkip = true }
                             instr.startsWith("NUMPAGES") || instr.startsWith("SECTIONPAGES") -> {
@@ -543,7 +568,12 @@ class DocxReader private constructor(private val pkg: OpcPackage) {
                             }
                         }
                     }
-                    "end" -> { inFieldCode = false; fieldSkip = false }
+                    "end" -> {
+                        inFieldCode = false; fieldSkip = false
+                        if (linkOpen) {
+                            if (linkDepth > 0) linkDepth-- else { st.cur.ctrl(HCtrl.FieldEnd, cs()); linkOpen = false }
+                        }
+                    }
                 }
                 "instrText" -> if (inFieldCode) fieldInstr.append(c.text)
             }

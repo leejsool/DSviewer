@@ -88,4 +88,28 @@ class HLinksTest {
         // 링크 글자가 하나도 없으면 범위를 만들지 않는다
         assertTrue(HLinks.spans(listOf(ctrl(0, HCtrl.FieldBegin("http://a.com")), ctrl(8, HCtrl.FieldEnd))).isEmpty())
     }
+
+    @Test fun officeTargetKeepsSemicolonAndBackslash() {
+        assertEquals("https://x.com/a;b?c=1", HLinks.fromTarget("https://x.com/a;b?c=1"))
+        assertEquals("mailto:me@x.com", HLinks.fromTarget(" mailto:me@x.com "))
+        assertEquals("http://www.x.com", HLinks.fromTarget("www.x.com"))
+        assertNull(HLinks.fromTarget(null))
+        assertNull(HLinks.fromTarget(""))
+        assertNull(HLinks.fromTarget("#slide2"))
+        assertNull(HLinks.fromTarget("file:///C:/a.docx"))
+        assertNull(HLinks.fromTarget("javascript:alert(1)"))
+    }
+
+    @Test fun fieldCodeReadsQuotedAndBareUrl() {
+        assertEquals("https://a.com/x", HLinks.fromFieldCode(""" HYPERLINK "https://a.com/x" \o "설명" """))
+        assertEquals("https://a.com/x", HLinks.fromFieldCode("hyperlink https://a.com/x"))
+        assertEquals("mailto:me@x.com", HLinks.fromFieldCode("""HYPERLINK "mailto:me@x.com" """))
+    }
+
+    @Test fun fieldCodeRejectsBookmarkAndOtherFields() {
+        assertNull(HLinks.fromFieldCode("""HYPERLINK \l "bookmark" """))
+        assertNull(HLinks.fromFieldCode("""HYPERLINK "C:\docs\a.docx" """))
+        assertNull(HLinks.fromFieldCode("PAGE"))
+        assertNull(HLinks.fromFieldCode(null))
+    }
 }
