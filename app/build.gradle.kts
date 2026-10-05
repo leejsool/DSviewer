@@ -17,8 +17,10 @@ android {
         applicationId = "com.dsviewer.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.3.1"
+        versionCode = 5
+        versionName = "1.0.0"
+        // 필기 글자 인식(ML Kit)의 네이티브 라이브러리가 CPU 구조마다 들어 APK가 커지므로 요즘 태블릿·폰의 arm64만 넣는다
+        ndk { abiFilters += "arm64-v8a" }
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
