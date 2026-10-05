@@ -563,6 +563,20 @@ class HwpxReader private constructor(private val zip: ZipFile) {
                 p.children { n -> if (n == "subList") paras = parseParas(p) else p.skipTree() }
                 HCtrl.Note(name == "endNote", number, "", "", suffix, paras)
             }
+            // 필드: 하이퍼링크면 명령(Command)에서 주소를 꺼낸다. 끝(fieldEnd)과 짝을 이룬다
+            "fieldBegin" -> {
+                val link = p.attr("type") == "HYPERLINK"
+                var command: String? = null
+                p.children { n ->
+                    if (n == "parameters") {
+                        p.children { m ->
+                            if (m == "stringParam" && p.attr("name") == "Command") command = p.nextText() else p.skipTree()
+                        }
+                    } else p.skipTree()
+                }
+                HCtrl.FieldBegin(if (link) HLinks.parseCommand(command) else null)
+            }
+            "fieldEnd" -> { p.skipTree(); HCtrl.FieldEnd }
             "newNum" -> {
                 val c = HCtrl.NewNum(p.attr("numType") ?: "PAGE", p.int("num", 1))
                 p.skipTree(); c

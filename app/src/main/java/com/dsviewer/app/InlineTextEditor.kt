@@ -334,6 +334,15 @@ class InlineTextEditor(private var host: TextEditHost, private var docView: Docu
         if (edit.rotation != deg) edit.rotation = deg
     }
 
+    /** 클립보드의 글을 커서 자리에 서식 없이 붙인다 (고른 글이 있으면 그것을 바꾼다). 붙인 글이 있으면 true */
+    fun paste(): Boolean {
+        if (!isEditing) return false
+        val cm = host.context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        if (!cm.hasPrimaryClip()) return false
+        edit.requestFocus()
+        return edit.onTextContextMenuItem(android.R.id.pasteAsPlainText)
+    }
+
     // ================= 서식 =================
 
     /** 굵게·기울임·밑줄·취소선 켜고 끄기 (고른 글자가 모두 그 서식이면 끄고, 아니면 켠다) */

@@ -1,0 +1,8 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- 형광펜 버튼 오른쪽 아래의 작은 'T' (글자 기반 주석일 때) -->
+    <path android:strokeColor="?attr/colorControlNormal" android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:pathData="M14.8,18.2H21.6M18.2,18.2V22.4" />
+</vector>

@@ -77,8 +77,10 @@ class DocumentView @JvmOverloads constructor(
         fun onFillFailed() {}
         /** 읽기 모드에서 쪽의 (x, y)를 톡 누름 (테이프가 아닌 곳). 링크를 따라갈 때 */
         fun onReadTap(page: Int, x: Float, y: Float) {}
-        /** 필기 모드에서 손가락으로 쪽의 (x, y)를 톡 누름 (테이프가 아닌 곳). 오답 배지·'원문 보기'를 따라갈 때 */
+        /** 오답 배지·'원문 보기'를 누름 (쪽의 (x, y)) */
         fun onWrongTap(page: Int, x: Float, y: Float) {}
+        /** 필기 모드에서 손가락으로 톡 누름 (손가락으로 쓰기를 꺼 두었을 때): 오답 배지·링크를 따라간다 */
+        fun onFingerTap(page: Int, x: Float, y: Float) {}
         /** 화면을 새로 누르기 시작함 (손가락·펜). 문서 위에서 치던 포스트잇 글을 넣을 때 */
         fun onTouchDown() {}
         /** 펼친 포스트잇 메모의 몸통을 누름 → 글 고치기 ([setNoteText]) */
@@ -134,6 +136,14 @@ class DocumentView @JvmOverloads constructor(
     var hlWidth = 12f
     /** 줄자: 형광펜을 시작점에서 지금 점까지 곧은 선으로만 긋는다 */
     var hlStraight = false
+    /** 글자 기반 주석 (옵션): 형광펜으로 PDF 글자를 끌면 글줄에 맞춰 칠하기·밑줄·취소선·복사. NONE이면 보통 형광펜 */
+    var textMark = TextMark.NONE
+    /** 쪽의 PDF 글자를 돌려준다 (아직 못 읽었으면 null). 뷰어가 건다 */
+    var textProvider: ((Int) -> PageText?)? = null
+    /** 글자 기반 주석의 짧은 안내 (토스트). 뷰어가 건다 */
+    var textSay: ((String) -> Unit)? = null
+    /** 지금 화면에 놓인 쪽 수 */
+    val pageTotal get() = sizes.size
     var eraserRadiusDp = 12f
     var laserColor = 0xFFFF1744.toInt()
     /** 레이저 굵기 (화면 dp, 확대해도 그대로) */
@@ -292,6 +302,20 @@ class DocumentView @JvmOverloads constructor(
         }
         override fun onFillFailed() { listener?.onFillFailed() }
     })
+    private val textMarks = TextMarkController(this, object : TextMarkController.Host {
+        override val ink get() = this@DocumentView.ink
+        override val scale get() = this@DocumentView.scale
+        override val textMark get() = this@DocumentView.textMark
+        override val hlColor get() = this@DocumentView.hlColor
+        override val penColor get() = this@DocumentView.penColor
+        override val penWidth get() = this@DocumentView.penWidth
+        override fun textOf(page: Int) = textProvider?.invoke(page)
+        override fun say(msg: String) { textSay?.invoke(msg) }
+        override fun copyText(text: String) {
+            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("DSnote", text))
+        }
+    })
     private val baseCache = object : LruCache<Int, Bitmap>((Runtime.getRuntime().maxMemory() / 4).toInt()) {
         override fun sizeOf(key: Int, value: Bitmap) = value.byteCount
     }
@@ -429,7 +453,7 @@ class DocumentView @JvmOverloads constructor(
         if (o === this) return
         if (tool != o.tool) tool = o.tool
         penColor = o.penColor; penWidth = o.penWidth; penStyle = o.penStyle; penSmoothing = o.penSmoothing
-        hlColor = o.hlColor; hlWidth = o.hlWidth; hlStraight = o.hlStraight
+        hlColor = o.hlColor; hlWidth = o.hlWidth; hlStraight = o.hlStraight; textMark = o.textMark
         eraserRadiusDp = o.eraserRadiusDp; eraserMode = o.eraserMode; eraseHlOnly = o.eraseHlOnly
         scribbleErase = o.scribbleErase; palmErase = o.palmErase; fingerDrawing = o.fingerDrawing
         laserColor = o.laserColor; laserWidthDp = o.laserWidthDp; laserFadeMs = o.laserFadeMs
@@ -749,6 +773,7 @@ class DocumentView @JvmOverloads constructor(
                 drawStroke(canvas, st)
             }
             fillCtl.drawPending(canvas, i)
+            textMarks.draw(canvas, i)
             picker.draw(canvas, i)
             if (dragging) {
                 // 옮기거나 크기를 바꾸는 중인 획은 손을 뗄 때까지 그림만 바꿔 그린다
@@ -1242,11 +1267,11 @@ class DocumentView @JvmOverloads constructor(
             }
             // 다른 도구에서는 손가락으로 테이프를 톡 누르면 보였다 가려졌다.
             // 읽기 모드에서 테이프가 아닌 곳을 누르면 (펜도) 링크를 따라간다
-            // 필기 모드에서는 손가락으로 누를 때만 오답 배지·'원문 보기'를 따라간다 (펜은 필기)
+            // 필기 모드에서는 손가락으로 누를 때만 오답 배지·'원문 보기'와 링크를 따라간다 (펜은 필기)
             else if (!toggleTapeAt(e.x, e.y)) {
                 hitPage(e.x, e.y)?.let {
                     if (readOnly) listener?.onReadTap(it.first, it.second, it.third)
-                    else if (e.getToolType(0) == MotionEvent.TOOL_TYPE_FINGER) listener?.onWrongTap(it.first, it.second, it.third)
+                    else if (e.getToolType(0) == MotionEvent.TOOL_TYPE_FINGER) listener?.onFingerTap(it.first, it.second, it.third)
                 }
             }
             return true
@@ -1626,6 +1651,9 @@ class DocumentView @JvmOverloads constructor(
         val hit = hitPage(sx, sy) ?: run { invalidate(); return }
         if (penErasing) {
             eraseAt(hit.first, hit.second, hit.third)
+        } else if (tool == Tool.HIGHLIGHTER && textMark != TextMark.NONE && textMarks.begin(hit.first, hit.second, hit.third)) {
+            // 글자 기반 주석: 글자를 끌어 고른다 (글자가 없는 자리면 위에서 false라 보통 형광펜으로 그린다)
+            clearSelection()
         } else {
             curPage = hit.first
             val st = when (tool) {
@@ -1675,6 +1703,10 @@ class DocumentView @JvmOverloads constructor(
         }
         if (fillPressing) {
             if (hypot(sx - tapDownSx, sy - tapDownSy) > TAP_SLOP_DP * density) fillTap = null
+            return
+        }
+        if (textMarks.active) {
+            textMarks.move(toPageX(textMarks.page, sx), toPageY(textMarks.page, sy))
             return
         }
         if (rotating) {
@@ -1950,6 +1982,8 @@ class DocumentView @JvmOverloads constructor(
         } else if (lassoing) {
             lassoing = false
             if (commit) finishLasso()
+        } else if (textMarks.active) {
+            textMarks.finish(commit)
         } else if (commit && tapCandidate && !penErasing && curStroke != null && (tool == Tool.TAPE || penIsFinger) &&
             System.currentTimeMillis() - tapDownTime < TAP_MS && toggleTapeAt(tapDownSx, tapDownSy)
         ) {

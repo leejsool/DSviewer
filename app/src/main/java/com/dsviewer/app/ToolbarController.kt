@@ -500,15 +500,46 @@ internal class ToolbarController(
 
     private fun setHlStraight(on: Boolean) {
         docView.hlStraight = on
-        prefs.edit().putBoolean("hlStraight", on).apply()
+        // 자유·직선을 고르면 글자 기반 주석은 끈다
+        docView.textMark = TextMark.NONE
+        prefs.edit().putBoolean("hlStraight", on).putString("textMark", TextMark.NONE.name).apply()
         updateHighlighterIcon()
     }
 
-    /** 형광펜 버튼: 직선(줄자)이면 오른쪽 아래에 작은 자 */
+    private fun setTextMark(m: TextMark) {
+        docView.textMark = m
+        prefs.edit().putString("textMark", m.name).apply()
+        updateHighlighterIcon()
+    }
+
+    /** 옵션 ▸ 글자 기반 주석이 켜져 있는가 (처음 설치하면 켜짐. 꺼 두면 형광펜 펼침 창에 글자 모드가 안 나온다) */
+    fun textMarkupOn() = prefs.getBoolean("textMarkup", true)
+
+    /** 옵션에서 글자 기반 주석을 켜거나 껐을 때: 끄면 보통 형광펜으로 돌아간다 */
+    fun onTextMarkupChanged() {
+        if (!textMarkupOn()) {
+            docView.textMark = TextMark.NONE
+            prefs.edit().putString("textMark", TextMark.NONE.name).apply()
+        }
+        updateHighlighterIcon()
+    }
+
+    /** 형광펜 버튼: 직선(줄자)이면 오른쪽 아래에 작은 자, 글자 기반 주석이면 작은 'T' */
     private fun updateHighlighterIcon() {
         val button = toolButtons.getValue(Tool.HIGHLIGHTER)
-        button.setImageResource(if (docView.hlStraight) R.drawable.ic_highlighter_ruler else R.drawable.ic_highlighter)
-        button.contentDescription = if (docView.hlStraight) "직선 형광펜" else "형광펜"
+        val mark = docView.textMark
+        button.setImageResource(
+            when {
+                mark != TextMark.NONE -> R.drawable.ic_highlighter_text
+                docView.hlStraight -> R.drawable.ic_highlighter_ruler
+                else -> R.drawable.ic_highlighter
+            }
+        )
+        button.contentDescription = when {
+            mark != TextMark.NONE -> mark.label
+            docView.hlStraight -> "직선 형광펜"
+            else -> "형광펜"
+        }
         updateToolMarks()
     }
 
@@ -806,10 +837,27 @@ internal class ToolbarController(
     private fun showToolFlyout(t: Tool, anchor: View) {
         fun item(res: Int, label: String, on: Boolean) = Triple(getDrawable(res)!!, label, on)
         when (t) {
-            Tool.HIGHLIGHTER -> showFlyout(anchor, listOf(
-                item(R.drawable.ic_highlighter, "자유 형광펜", !docView.hlStraight),
-                item(R.drawable.ic_ruler, "직선 형광펜", docView.hlStraight),
-            )) { i -> setHlStraight(i == 1) }
+            Tool.HIGHLIGHTER -> {
+                val plain = docView.textMark == TextMark.NONE
+                val items = arrayListOf(
+                    item(R.drawable.ic_highlighter, "자유 형광펜", plain && !docView.hlStraight),
+                    item(R.drawable.ic_ruler, "직선 형광펜", plain && docView.hlStraight),
+                )
+                // 옵션에서 켠 글자 기반 주석: 형광펜으로 PDF 글자를 끌어 글줄에 맞춰 칠하기·밑줄·취소선·복사
+                val marks = if (textMarkupOn()) TextMark.entries.filter { it != TextMark.NONE } else emptyList()
+                for (m in marks) {
+                    val icon = when (m) {
+                        TextMark.HIGHLIGHT -> R.drawable.ic_text_highlight
+                        TextMark.UNDERLINE -> R.drawable.ic_text_underline
+                        TextMark.STRIKE -> R.drawable.ic_text_strike
+                        else -> R.drawable.ic_text_copy
+                    }
+                    items.add(item(icon, m.label, docView.textMark == m))
+                }
+                showFlyout(anchor, items, separatorBefore = if (marks.isEmpty()) emptySet() else setOf(2)) { i ->
+                    if (i < 2) setHlStraight(i == 1) else setTextMark(marks[i - 2])
+                }
+            }
             Tool.LASSO -> showFlyout(anchor, listOf(
                 item(R.drawable.ic_lasso, "자유 선택", !docView.lassoRect && !docView.lassoTap),
                 item(R.drawable.ic_select_rect, "네모 선택", docView.lassoRect),
@@ -1133,6 +1181,7 @@ internal class ToolbarController(
         docView.tapePattern = TapePattern.of(prefs.getString("tapePattern", null))
         docView.laserFadeMs = prefs.getLong("laserFadeMs", 2000L)
         docView.hlStraight = prefs.getBoolean("hlStraight", false)
+        docView.textMark = if (textMarkupOn()) TextMark.named(prefs.getString("textMark", null)) else TextMark.NONE
         docView.penStyle = PenStyle.named(prefs.getString("penStyle", null))
         docView.penSmoothing = prefs.getInt("penSmoothing", 0)
         widthSlots = listOf(Tool.HIGHLIGHTER, Tool.ERASER, Tool.LASER, Tool.TAPE).associateWith { loadWidths(WidthKind.of(it)) }

@@ -42,9 +42,9 @@ import kotlin.math.min
 
 /**
  * 한 쪽의 글자: 띄어쓰기·줄바꿈을 뺀 소문자 글자들과, 글자마다 쪽 좌표의 상자 (왼, 위, 오른, 아래).
- * 띄어쓰기를 빼고 찾으므로 'f(x) 의 값'으로 찾아도 'f(x)의 값'이 나온다 (시험지 PDF는 띄어쓰기가 들쭉날쭉해서)
+ * [raw]는 같은 글자들의 원래 대소문자 (글자 복사용). 띄어쓰기를 빼고 찾으므로 'f(x) 의 값'으로 찾아도 'f(x)의 값'이 나온다 (시험지 PDF는 띄어쓰기가 들쭉날쭉해서)
  */
-class PageText(val chars: String, val boxes: FloatArray)
+class PageText(val chars: String, val boxes: FloatArray, val raw: String = chars)
 
 /** PDF에서 글자와 자리를 꺼내고 찾는다 (PDFBox) */
 object PdfText {
@@ -84,6 +84,7 @@ object PdfText {
      */
     private class GlyphCollector : PDFStreamEngine() {
         private val sb = StringBuilder()
+        private val rawSb = StringBuilder()
         private var boxes = FloatArray(1024)
         private var crop = PDRectangle()
         private var rot = 0
@@ -101,10 +102,11 @@ object PdfText {
 
         fun collect(page: PDPage): PageText {
             sb.setLength(0)
+            rawSb.setLength(0)
             crop = page.cropBox
             rot = ((page.rotation % 360) + 360) % 360
             processPage(page)
-            return PageText(sb.toString(), boxes.copyOf(sb.length * 4))
+            return PageText(sb.toString(), boxes.copyOf(sb.length * 4), rawSb.toString())
         }
 
         private fun toPage(x: Float, y: Float, out: FloatArray, at: Int) = PdfText.toPage(crop, rot, x, y, out, at)
@@ -134,6 +136,7 @@ object PdfText {
                 boxes[i * 4 + 2] = l + (r - l) * (k + 1) / n
                 boxes[i * 4 + 3] = b
                 sb.append(ch.lowercaseChar())
+                rawSb.append(ch)
                 k++
             }
         }
@@ -232,12 +235,20 @@ class DocSearch(val file: File, private val scope: CoroutineScope) {
 
     val indexed get() = texts.size
 
+    /** [page]쪽의 글자 (아직 꺼내지 못했으면 null). 글자 기반 주석이 쓴다 */
+    fun pageText(page: Int): PageText? = texts[page]
+
     fun start(pages: Int) {
         // 필기 읽기는 찾기를 열 때마다 (그 사이 필기가 바뀌었을 수 있으니) 다시 훑는다. 바뀐 쪽만 읽는다
         handwriting?.let {
             it.onProgress = { onProgress?.invoke() }
             it.start()
         }
+        startText(pages)
+    }
+
+    /** 글자만 꺼내기 시작한다 (필기 읽기는 건드리지 않고). 이미 시작했으면 그대로 */
+    fun startText(pages: Int) {
         if (job != null) return
         pageCount = pages
         job = scope.launch {

@@ -80,6 +80,8 @@ class HwpReader private constructor(private val cfb: Cfb) {
         private val ID_ATNO = id("atno")
         private val ID_NWNO = id("nwno")
         private val ID_PGHD = id("pghd")
+        /** 하이퍼링크 필드 */
+        private val ID_HLK = id("%hlk")
         private val ID_PIC = id("\$pic")
         private val ID_REC = id("\$rec")
         private val ID_ELL = id("\$ell")
@@ -454,7 +456,17 @@ class HwpReader private constructor(private val cfb: Cfb) {
                         items.add(PItem.Tab(i, if (width in 1..200000) width else 4000, "NONE", csAt(i)))
                         i += 8
                     }
-                    4, 5, 6, 7, 8, 19, 20 -> { flush(); i += 8 }
+                    // 필드 끝: 짝이 되는 시작과 함께 링크 글자의 범위를 이룬다 (HLinks)
+                    4 -> { flush(); items.add(PItem.Ctrl(i, HCtrl.FieldEnd, csAt(i))); i += 8 }
+                    5, 6, 7, 8, 19, 20 -> { flush(); i += 8 }
+                    // 필드 시작: 하이퍼링크가 아닌 필드도 끝과 짝을 맞추려고 주소 없는 시작으로 둔다
+                    3 -> {
+                        flush()
+                        val ctrl = ctrls.getOrNull(ctrlIdx++)
+                        val item = ctrl?.let { parseCtrl(it, i, csAt(i)) }
+                        items.add(if (item is PItem.Ctrl && item.ctrl is HCtrl.FieldBegin) item else PItem.Ctrl(i, HCtrl.FieldBegin(null), csAt(i)))
+                        i += 8
+                    }
                     else -> {
                         // 확장 컨트롤: 순서대로 CTRL_HEADER 와 짝을 이룬다
                         flush()
@@ -592,6 +604,8 @@ class HwpReader private constructor(private val cfb: Cfb) {
                 val p = r.u32(4)
                 PItem.Ctrl(pos, HCtrl.PageHide(p and 1L != 0L, p and 2L != 0L, p and 32L != 0L), cs)
             }
+            // 하이퍼링크: 속성(4) 기타(1) 명령 길이(2) 명령(글자) 순서
+            ID_HLK -> PItem.Ctrl(pos, HCtrl.FieldBegin(HLinks.parseCommand(r.wstr(11, r.u16(9)))), cs)
             else -> PItem.Ctrl(pos, HCtrl.Other, cs)
         }
     }

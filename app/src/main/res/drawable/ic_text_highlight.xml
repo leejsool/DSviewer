@@ -1,0 +1,9 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- 글자 형광펜: 칠한 띠 위의 글자 A -->
+    <path android:fillColor="#66FFC107" android:pathData="M3,8H21V19H3z" />
+    <path android:strokeColor="?attr/colorControlNormal" android:strokeWidth="1.8"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M7,17L12,6L17,17M8.9,13H15.1" />
+</vector>

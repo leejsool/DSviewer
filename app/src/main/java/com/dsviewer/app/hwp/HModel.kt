@@ -158,6 +158,9 @@ sealed class HCtrl {
     ) : HCtrl()
     class NewNum(val numType: String, val num: Int) : HCtrl()
     class PageHide(val header: Boolean, val footer: Boolean, val pageNum: Boolean) : HCtrl()
+    /** 필드(누름틀·하이퍼링크 …) 시작. 하이퍼링크면 [url] (웹·메일·전화 주소), 아니면 null. 끝은 [FieldEnd] */
+    class FieldBegin(val url: String?) : HCtrl()
+    object FieldEnd : HCtrl()
     class SectionDef(val page: PageDef, val footShape: NoteShape = NoteShape(), val endShape: NoteShape = NoteShape()) : HCtrl()
     object Other : HCtrl()
 }

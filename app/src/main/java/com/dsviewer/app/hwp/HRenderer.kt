@@ -38,6 +38,10 @@ class HRenderer(private val doc: HDoc) {
     private var pageNumber = 1
     private var pageLimit = 0
     private class PageLimit : RuntimeException()
+    /** 하이퍼링크 글자 자리 (쪽을 다 그린 뒤 PDF에 링크 주석으로 단다). 앞쪽만 그리는 썸네일에서는 모으지 않는다 */
+    private val linkBoxes = ArrayList<LinkBox>()
+    private val linkSpans = java.util.IdentityHashMap<HPara, List<HLinks.Span>>()
+    private val linkMatrix = android.graphics.Matrix()
 
     // ---- 쪽 설정 ----
     private var pd = PageDef()
@@ -83,6 +87,7 @@ class HRenderer(private val doc: HDoc) {
     /** 썸네일처럼 앞쪽만 필요하면 [maxPages]쪽까지만 그린다 (전체 쪽 수 세기도 건너뜀) */
     fun render(out: File, maxPages: Int = 0) {
         pageLimit = maxPages
+        linkBoxes.clear()
         val needTotal = maxPages <= 0 && doc.sections.any { s -> s.paras.any { hasTotalPage(it) } }
         if (needTotal) {
             dry = true
@@ -103,6 +108,9 @@ class HRenderer(private val doc: HDoc) {
             doc.close()
             pdf = null
         }
+        // 하이퍼링크: 글자가 놓인 자리에 링크 주석을 단다 (눌러서 열 수 있게)
+        if (linkBoxes.isNotEmpty()) LinkWriter.add(out, ArrayList(linkBoxes))
+        linkBoxes.clear()
     }
 
     private fun hasTotalPage(p: HPara): Boolean = p.items.any { item ->
@@ -672,6 +680,7 @@ class HRenderer(private val doc: HDoc) {
         }
 
         val c = canvas
+        if (c != null && pageLimit <= 0) collectLinks(c, para, pieces, baseline)
         // 1) 음영
         if (c != null) for (pc in pieces) {
             if (pc.kind != Piece.CHAR) continue
@@ -736,6 +745,47 @@ class HRenderer(private val doc: HDoc) {
                 c.drawLine(pc.x, sy, pc.x + pc.width, sy, linePaint)
             }
         }
+    }
+
+    /**
+     * 이 줄의 하이퍼링크 글자 자리를 모은다: 같은 링크로 이어지는 글자는 한 줄에 상자 하나.
+     * 자리는 지금 캔버스 변환(옮김·크기·돌림)을 거친 쪽 좌표로 적는다
+     */
+    private fun collectLinks(c: Canvas, para: HPara, pieces: List<Piece>, baseline: Float) {
+        val spans = linkSpans.getOrPut(para) { HLinks.spans(para.items, para.textLength) }
+        if (spans.isEmpty()) return
+        var cur: HLinks.Span? = null
+        var l = 0f
+        var r = 0f
+        var size = 0f
+        fun flushLink() {
+            val sp = cur ?: return
+            cur = null
+            val box = android.graphics.RectF(l, baseline - size * 0.9f, r, baseline + size * 0.25f)
+            try {
+                c.getMatrix(linkMatrix)
+                linkMatrix.mapRect(box)
+            } catch (e: Throwable) {
+                // 변환을 알 수 없으면 그대로 (대부분의 글은 변환 없이 그려진다)
+            }
+            linkBoxes.add(LinkBox(pageCount - 1, pageH.roundToInt().coerceAtLeast(1).toFloat(), box.left, box.top, box.right, box.bottom, sp.url))
+        }
+        for (pc in pieces) {
+            val sp = if (pc.kind == Piece.CHAR && pc.pos >= 0) HLinks.spanAt(spans, pc.pos) else null
+            if (sp == null) {
+                flushLink()
+                continue
+            }
+            if (sp !== cur) {
+                flushLink()
+                cur = sp
+                l = pc.x
+                size = 0f
+            }
+            r = pc.x + pc.width
+            size = max(size, pc.paint?.textSize ?: 0f)
+        }
+        flushLink()
     }
 
     // ================= 직접 줄 나누기 (줄 정보가 없을 때) =================

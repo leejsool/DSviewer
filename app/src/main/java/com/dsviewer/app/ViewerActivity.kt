@@ -187,7 +187,11 @@ class ViewerActivity : AppCompatActivity() {
         tools.setupToolbarDock()
         tools.allViews = { panes.map { it.view } }
         setupSplit()
-        for (p in panes) p.view.listener = paneListener(p)
+        for (p in panes) {
+            p.view.listener = paneListener(p)
+            p.view.textProvider = { page -> pageTextOf(p, page) }
+            p.view.textSay = ::toast
+        }
         tools.setupTools()
         tools.setupFormatBar()
         tools.watchOverlays()
@@ -243,6 +247,12 @@ class ViewerActivity : AppCompatActivity() {
             override fun onReadTap(page: Int, x: Float, y: Float) = followLinkAt(page, x, y)
             override fun onWrongTap(page: Int, x: Float, y: Float) {
                 current?.ink?.wrongLinkAt(page, x, y)?.let { (p, yy) -> wrong.goToSpot(p, yy) }
+            }
+
+            override fun onFingerTap(page: Int, x: Float, y: Float) {
+                // 오답 배지가 먼저, 아니면 링크 (웹 주소는 물어보고 브라우저로, 문서 안 링크는 바로 그 쪽으로)
+                val spot = current?.ink?.wrongLinkAt(page, x, y)
+                if (spot != null) wrong.goToSpot(spot.first, spot.second) else followLinkAt(page, x, y, fromReadMode = false)
             }
 
             override fun onNoteEdit(page: Int, note: Stroke) {
@@ -866,14 +876,28 @@ class ViewerActivity : AppCompatActivity() {
     }
 
     /** 지금 탭의 글자 찾기. 화면용 PDF가 바뀌었으면(쪽 넣기·지우기 등) 새로 */
-    private fun currentSearch(): DocSearch? {
-        val t = current ?: return null
+    private fun currentSearch(): DocSearch? = searchOf(current)
+
+    private fun searchOf(t: DocTab?): DocSearch? {
+        if (t == null) return null
         val f = t.renderPdf ?: return null
         t.search?.let { if (it.file == f) return it else it.cancel() }
         return DocSearch(f, lifecycleScope).also {
             it.handwriting = t.handwriting
             t.search = it
         }
+    }
+
+    /**
+     * 글자 기반 주석이 쓰는 [pane] 문서의 [page]쪽 글자. 아직 못 읽었으면 읽기를 시작하고 null,
+     * 글자를 꺼낼 수 없는 PDF면 글자 없는 쪽(보통 형광펜으로 그린다)
+     */
+    private fun pageTextOf(pane: ViewerPane, page: Int): PageText? {
+        val s = searchOf(pane.tab) ?: return null
+        s.pageText(page)?.let { return it }
+        if (s.failed) return PageText("", FloatArray(0))
+        s.startText(pane.view.pageTotal)
+        return null
     }
 
     /** 지금 탭의 PDF 링크. 화면용 PDF가 바뀌었으면(쪽 넣기·지우기 등) 새로 */
@@ -888,13 +912,13 @@ class ViewerActivity : AppCompatActivity() {
      * 읽기 모드에서 누른 자리의 링크: 다른 쪽이면 바로 가고(실행 취소하면 돌아온다),
      * 웹 주소면 물어보고 브라우저로. 링크 삽입으로 단 글이 PDF 링크보다 먼저
      */
-    private fun followLinkAt(page: Int, x: Float, y: Float) {
+    private fun followLinkAt(page: Int, x: Float, y: Float, fromReadMode: Boolean = true) {
         docView.inkLinkAt(page, x, y)?.let { openWebLink(it); return }
         current?.ink?.wrongLinkAt(page, x, y)?.let { (p, yy) -> wrong.goToSpot(p, yy); return }
         val links = currentLinks() ?: return
         links.whenReady { l ->
             val t = current
-            if (t?.links !== l || !readMode) return@whenReady
+            if (t?.links !== l || readMode != fromReadMode) return@whenReady
             val link = l.at(page, x, y) ?: return@whenReady
             val uri = link.uri
             if (uri != null) {
@@ -2339,6 +2363,12 @@ class ViewerActivity : AppCompatActivity() {
                     prefs.edit().putBoolean("penTilt", on).apply()
                     true
                 }, "연필과 붓펜을 눕혀 쥐면 그만큼 넓게 칠해집니다. (기울기를 알려 주는 펜에서만)"),
+                OptionItem(icon(R.drawable.ic_text_underline), "글자 기반 주석", { tools.textMarkupOn() }, { on ->
+                    prefs.edit().putBoolean("textMarkup", on).apply()
+                    tools.onTextMarkupChanged()
+                    if (!on) for (p in panes) p.view.textMark = TextMark.NONE
+                    true
+                }, "켜면 형광펜 단추의 펼침 창에 글자 형광펜·밑줄·취소선·복사가 생깁니다. PDF 본문 글자를 끌면 글줄에 맞게 붙습니다. (스캔한 PDF는 글자가 없어 안 됩니다)"),
             ),
             listOf(
                 OptionChoice(
@@ -2362,7 +2392,9 @@ class ViewerActivity : AppCompatActivity() {
                 p.view.penButtonAction = PenInputRules.ButtonAction.ERASER
                 p.view.penTilt = true
             }
-            prefs.edit().remove("penButton").remove("penTilt").apply()
+            prefs.edit().remove("penButton").remove("penTilt").remove("textMarkup").remove("textMark").apply()
+            tools.onTextMarkupChanged()
+            for (p in panes) p.view.textMark = TextMark.NONE
             applyActionVisibility()
             tools.applyToolVisibility()
         }.show(start)

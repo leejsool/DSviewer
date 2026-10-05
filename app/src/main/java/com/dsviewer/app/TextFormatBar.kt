@@ -9,6 +9,7 @@ import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.PopupMenu
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.color.MaterialColors
 import kotlin.math.roundToInt
@@ -90,6 +91,10 @@ class TextFormatBar(
             setBackgroundColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOutlineVariant))
         })
 
+        icon(R.drawable.ic_paste, "붙여넣기") {
+            if (!textEditor.paste()) Toast.makeText(ctx, "붙여넣을 글이 없습니다.", Toast.LENGTH_SHORT).show()
+        }
+        sep()
         // 글자색: '가' 아래 색 막대
         val colorCell = cell(FrameLayout(ctx).apply {
             contentDescription = "글자색"
