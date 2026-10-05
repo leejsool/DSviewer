@@ -2259,7 +2259,7 @@ class ViewerActivity : AppCompatActivity() {
         val popup = PopupMenu(this, splitButton)
         if (t.pdf != null && t.ink != null) popup.menu.add(0, SPLIT_SAME, 0, "지금 문서를 둘로 나눠 보기")
         others.forEachIndexed { i, d -> popup.menu.add(0, i, i + 1, d.name) }
-        if (docs.size < MAX_TABS) popup.menu.add(0, SPLIT_OTHER, others.size + 1, "다른 문서 열기…")
+        if (docs.size < MAX_TABS) popup.menu.add(0, SPLIT_OTHER, others.size + 1, "다른 문서 나눠 보기…")
         popup.setOnMenuItemClickListener { item ->
             when (item.itemId) {
                 SPLIT_SAME -> beginSplit(t)

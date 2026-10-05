@@ -81,7 +81,6 @@
         <ImageButton
             android:id="@+id/actionTwoPage"
             style="@style/TabBarAction"
-            android:layout_marginStart="6dp"
             android:contentDescription="양쪽 보기"
             android:src="@drawable/ic_two_page"
             android:tooltipText="양쪽 보기 (가로 화면)" />
