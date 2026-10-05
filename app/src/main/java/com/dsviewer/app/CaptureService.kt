@@ -108,6 +108,8 @@ class CaptureService : Service() {
     /** 화면을 돌리면 받는 크기도 바꾼다 (가로·세로가 뒤바뀐 채로 찍히지 않게) */
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        // 화면이 돌아간 뒤 두께·크기가 정해질 때까지 기다렸다 단추를 안쪽으로
+        main.postDelayed({ keepOverlayOnScreen() }, 400)
         val d = display ?: return
         val (w, h, dpi) = screenSize()
         val old = reader
@@ -198,10 +200,14 @@ class CaptureService : Service() {
         val lp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.TOP or Gravity.START
+            // 좌표를 화면 맨 위·왼쪽 기준으로 (안 그러면 상태 표시줄 두께만큼 아래로 밀려 바 쪽 한계가 어긋난다)
+            layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            if (Build.VERSION.SDK_INT >= 30) fitInsetsTypes = 0
             val (w, h) = screenSize()
             x = w - size - dp(28f)
             y = h / 2 - size
@@ -220,6 +226,7 @@ class CaptureService : Service() {
                         moved = true
                         lp.x = startX + dx.roundToInt()
                         lp.y = startY + dy.roundToInt()
+                        clampOverlay(box, lp)
                         runCatching { wm.updateViewLayout(box, lp) }
                     }
                 }
@@ -235,7 +242,30 @@ class CaptureService : Service() {
             return
         }
         overlay = box
+        overlayParams = lp
         addProbe()
+        // 줄 두께를 읽을 수 있게 된 뒤 (그려진 뒤) 바에 가려진 자리면 끌어올린다
+        box.postDelayed({ keepOverlayOnScreen() }, 300)
+    }
+
+    private var overlayParams: WindowManager.LayoutParams? = null
+
+    /** 떠 있는 단추를 상태 표시줄·내비게이션 줄(작업 표시줄) 안쪽에 둔다 */
+    private fun clampOverlay(box: View, lp: WindowManager.LayoutParams) {
+        val (sw, sh) = screenSize()
+        val bars = barInsets()
+        val w = if (box.width > 0) box.width else box.measuredWidth
+        val h = if (box.height > 0) box.height else box.measuredHeight
+        lp.x = lp.x.coerceIn(bars.left, maxOf(bars.left, sw - w - bars.right))
+        lp.y = lp.y.coerceIn(bars.top, maxOf(bars.top, sh - h - bars.bottom))
+    }
+
+    /** 화면을 돌리거나 분할이 바뀌어 단추가 바에 가려졌을 때 안쪽으로 */
+    private fun keepOverlayOnScreen() {
+        val box = overlay ?: return
+        val lp = overlayParams ?: return
+        clampOverlay(box, lp)
+        runCatching { wm.updateViewLayout(box, lp) }
     }
 
     /**
