@@ -1799,7 +1799,8 @@ class ViewerActivity : AppCompatActivity() {
     }
 
     /**
-     * 일부분 가져오기: 찍어 온 화면을 크게 보여 주고 끌어서 네모로 고르면 그 부분만 새 쪽으로 넣는다.
+     * 일부분 가져오기: 찍어 온 화면을 크게 보여 주고 끌어서 네모로 고르면 그 부분을 복사해 둔다.
+     * 넣을 쪽에서 선택 도구의 '붙여넣기'로 기존 쪽에 넣는다 (새 쪽으로 만들지 않는다).
      * [고른 부분 가져오기]·[전체]·[취소]
      */
     private fun pickCaptureRegion(png: File) {
@@ -1845,7 +1846,7 @@ class ViewerActivity : AppCompatActivity() {
             dialog.setOnDismissListener(null)
             dialog.dismiss()
             bmp.recycle()
-            if (file == null) { png.delete(); captureTab = null } else insertCapturedPage(file)
+            if (file == null) { png.delete(); captureTab = null } else copyCapturedImage(file)
         }
         cancel.setOnClickListener { finish(null) }
         whole.setOnClickListener { finish(png) }
@@ -1865,6 +1866,28 @@ class ViewerActivity : AppCompatActivity() {
         dialog.setContentView(root)
         dialog.setOnCancelListener { finish(null) }
         dialog.show()
+    }
+
+    /**
+     * 고른 화면 그림을 복사해 두고 선택 도구로 바꾼다. 넣을 쪽에서 '붙여넣기'를 누르면 그 쪽에 들어간다.
+     * 붙여넣을 때 쪽보다 크면 쪽에 들어오게 줄인다
+     */
+    private fun copyCapturedImage(png: File) {
+        val t = captureTab?.takeIf { it in docs } ?: current
+        captureTab = null
+        val bmp = android.graphics.BitmapFactory.decodeFile(png.path)
+        png.delete()
+        if (t == null || bmp == null) {
+            toast("그림을 복사하지 못했습니다.")
+            return
+        }
+        if (t !== current) docTabs.select(docs.indexOf(t), notify = true)
+        // 화면 픽셀을 쪽 크기(pt)로: 192dpi 정도 (전체 화면은 쪽 너비에 맞게 줄어 붙는다)
+        val k = 72f / 192f
+        // 무손실로 담는다 (글자가 또렷하게)
+        docView.copyImage(InkImage(bmp, null), bmp.width * k, bmp.height * k)
+        tools.selectTool(Tool.LASSO)
+        toast("그림을 복사했습니다. 넣을 쪽에서 선택 도구의 '붙여넣기'를 누르세요.")
     }
 
     /** 떠 있는 단추로 찍어 온 화면을 시작할 때 보던 쪽 다음에 넣는다 */
