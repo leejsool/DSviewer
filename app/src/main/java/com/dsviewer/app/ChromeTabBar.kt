@@ -50,7 +50,7 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
     private val density = resources.displayMetrics.density
     private fun px(dp: Float) = (dp * density).toInt()
 
-    private val scroll = HorizontalScrollView(ctx).apply {
+    private val scroll = EdgeArrowScrollView(ctx).apply {
         isHorizontalScrollBarEnabled = false
         overScrollMode = View.OVER_SCROLL_NEVER
     }
