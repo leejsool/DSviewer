@@ -21,4 +21,5 @@
         android:checkable="true" />
     <item android:id="@+id/action_timer" android:title="시험·풀이 타이머…" />
     <item android:id="@+id/action_options" android:title="옵션…" />
+    <item android:id="@+id/action_about" android:title="앱 정보 · 업데이트" />
 </menu>

@@ -337,6 +337,7 @@ class ViewerActivity : AppCompatActivity() {
         // 둘째 칸에 띄울 문서를 고르러 갔다가 아무것도 안 고르고 돌아왔으면 분할 보기 준비를 거둔다
         pendingSplit = false
         timer.onResume()
+        updater.onResume()
     }
 
     override fun onPause() {
@@ -1417,6 +1418,7 @@ class ViewerActivity : AppCompatActivity() {
                 R.id.action_save_image -> current?.let { if (it.ink != null) saver.askExportImages(it) }
                 R.id.action_timer -> timer.open()
                 R.id.action_options -> showOptionsDialog(0)
+                R.id.action_about -> updater.show()
                 R.id.action_finger -> {
                     docView.fingerDrawing = !docView.fingerDrawing
                     prefs.edit().putBoolean("finger", docView.fingerDrawing).apply()
@@ -1540,6 +1542,9 @@ class ViewerActivity : AppCompatActivity() {
     private val timer: TimerController by lazy {
         TimerController(this, findViewById(R.id.docFrame), prefs, ::toast)
     }
+
+    /** ⋮ ▸ 앱 정보 · 업데이트 */
+    private val updater by lazy { Updater(this) }
 
     private val shot: ShotController by lazy {
         // 복사해 두면 '붙여넣기' 단추가 보이게 올가미 도구로 (툴바를 다시 짠다)
