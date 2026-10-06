@@ -921,6 +921,8 @@ class ViewerActivity : AppCompatActivity() {
         override fun showHits(hits: Map<Int, List<RectF>>) {
             docView.searchHits = hits
         }
+        // 쪽 한눈에 보기는 제목을 고르면 닫고 그 제목으로 간다
+        override fun showOutline() = showOutline(onJump = { if (isOverview) overview.hide() })
         override fun closed() = updateActions()
     }
 
@@ -2026,10 +2028,10 @@ class ViewerActivity : AppCompatActivity() {
 
     /** 쪽 번호를 입력해 그 쪽으로 간다 (쪽 번호 표시나 ⋮ 메뉴에서) */
     /** 목차(제목들)를 보여 주고, 고르면 그 제목으로 간다. 워드 문서의 제목 스타일이나 PDF 책갈피가 목차가 된다 */
-    private fun showOutline() {
+    private fun showOutline(onJump: () -> Unit = {}) {
         val t = current ?: return
         val f = t.renderPdf ?: return
-        t.outline?.let { if (it.first == f) { showOutlineList(t, it.second); return } }
+        t.outline?.let { if (it.first == f) { showOutlineList(t, it.second, onJump); return } }
         lifecycleScope.launch {
             val items = try {
                 withContext(Dispatchers.IO) { PdfOutline.extract(f) }
@@ -2038,11 +2040,11 @@ class ViewerActivity : AppCompatActivity() {
                 emptyList()
             }
             t.outline = f to items
-            if (current === t) showOutlineList(t, items)
+            if (current === t) showOutlineList(t, items, onJump)
         }
     }
 
-    private fun showOutlineList(t: DocTab, items: List<PdfOutlineItem>) {
+    private fun showOutlineList(t: DocTab, items: List<PdfOutlineItem>, onJump: () -> Unit) {
         if (items.isEmpty()) {
             toast("이 문서에는 목차가 없습니다. (워드의 제목 스타일이나 PDF 책갈피가 있으면 여기에 나옵니다)")
             return
@@ -2056,6 +2058,7 @@ class ViewerActivity : AppCompatActivity() {
                 val to = Spot(item.page, item.y ?: 0f)
                 docView.scrollToPageY(to.page, to.y)
                 if (before != null) t.ink?.jumped(Spot(before.first, before.second), to)
+                onJump()
             }
             .setNegativeButton("닫기", null)
             .show()

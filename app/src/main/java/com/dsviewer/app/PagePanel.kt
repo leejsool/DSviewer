@@ -80,6 +80,8 @@ class PagePanel(
         fun showHits(hits: Map<Int, List<RectF>>)
         /** 필기 검색에 쓸 한국어 필기 데이터를 받을지 묻고 받는다 */
         fun downloadHandwriting() {}
+        /** 목차(제목 목록)를 열어 고른 제목으로 간다 */
+        fun showOutline() {}
         /** 쪽 한눈에 보기가 닫힘 */
         fun closed() {}
     }
@@ -112,6 +114,8 @@ class PagePanel(
         isSingleLine = true
     }
     private val filterButtons = HashMap<Filter, ImageButton>()
+    /** 페이지 관리 창 머리 줄의 단추들 (목차 · 찾기 · 북마크). 세로 화면에서 크기를 줄인다 */
+    private val panelIcons = ArrayList<View>()
     private val searchField = EditText(ctx).apply {
         hint = "글자 찾기"
         isSingleLine = true
@@ -264,16 +268,21 @@ class PagePanel(
             normalBar.addIcon(iconButton(R.drawable.ic_zoom_out, "미리보기 작게") { zoom(+1) })
             normalBar.addIcon(iconButton(R.drawable.ic_zoom_in, "미리보기 크게") { zoom(-1) })
             normalBar.addView(selectButton())
+            normalBar.addIcon(iconButton(R.drawable.ic_outline, "목차") { host.showOutline() })
             normalBar.addIcon(iconButton(R.drawable.ic_search, "글자 찾기") { openSearch(null) })
             normalBar.addIcon(iconButton(R.drawable.ic_close, "닫기") { hide() }, 44f)
         } else {
             // 페이지 관리 창은 폭이 좁으니 '선택' 단추 없이 꾹 눌러 선택
-            normalBar.addIcon(iconButton(R.drawable.ic_search, "글자 찾기") { openSearch(null) }, 36f)
+            // 세로 화면은 창이 좁아 단추를 작게·촘촘히 ([fitWidth])
             val mark = iconButton(R.drawable.ic_bookmark_border, "북마크한 쪽만 보기") {
                 setFilter(if (filter == Filter.MARKED) Filter.ALL else Filter.MARKED)
             }
             filterButtons[Filter.MARKED] = mark
-            normalBar.addIcon(mark, 36f)
+            for (b in listOf(iconButton(R.drawable.ic_outline, "목차") { host.showOutline() },
+                iconButton(R.drawable.ic_search, "글자 찾기") { openSearch(null) }, mark)) {
+                normalBar.addIcon(b, 36f)
+                panelIcons.add(b)
+            }
         }
     }
 
@@ -465,7 +474,11 @@ class PagePanel(
         val land = ctx.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         val w = px(if (land) 250f else 160f)
         panel.layoutParams = panel.layoutParams.apply { width = w }
-        title.textSize = if (land) 20f else 16f
+        title.textSize = if (land) 20f else 15f
+        // 세로 화면(창 폭 160dp)은 단추 셋이 들어가도록 작게, 왼쪽 여백도 줄인다
+        val icon = px(if (land) 36f else 30f)
+        for (b in panelIcons) b.layoutParams = LinearLayout.LayoutParams(icon, icon)
+        normalBar.setPadding(px(if (land) 14f else 8f), 0, px(if (land) 4f else 2f), 0)
         applyColumns(if (land) 2 else 1, w)
     }
 
