@@ -4,7 +4,6 @@ import android.graphics.RectF
 import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
-import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -49,7 +48,8 @@ class TableBar(
     private val tables get() = view().tables
 
     init {
-        val scroll = HorizontalScrollView(activity).apply {
+        // 스크롤이 생기면 양 끝에 « » 단추가 나타난다 (다른 툴바와 같게)
+        val scroll = EdgeArrowScrollView(activity).apply {
             isHorizontalScrollBarEnabled = false
             overScrollMode = View.OVER_SCROLL_NEVER
             addView(row)
@@ -123,8 +123,8 @@ class TableBar(
             "칸을 가로지르거나 세로지르게 줄을 그으면 그 칸이 나뉩니다.",
         )
         modeItem(
-            TableController.Mode.ERASE, R.drawable.ic_tbl_erase, "표 지우개", "줄을 지워 칸 합치기",
-            "지우고 싶은 줄 위를 지나가면 양쪽 칸이 하나로 합쳐집니다.",
+            TableController.Mode.ERASE, R.drawable.ic_tbl_erase, "표 지우개", "줄을 따라 그어 그 줄만 지워 칸 합치기",
+            "지우려는 줄 위를 따라 그으면, 그은 구간의 그 줄만 지워져 양쪽 칸이 합쳐집니다.",
         )
         separator()
         item(R.drawable.ic_tbl_row_add, "줄 추가 ▾", "고른 칸의 위나 아래에 줄 넣기", needsCells = true) { a ->

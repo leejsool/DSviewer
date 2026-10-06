@@ -82,22 +82,36 @@ object TableInsertDialog {
         picker.onPick = { r, c -> rows = r; cols = c; refresh() }
 
         fun stepper(name: String, get: () -> Int, set: (Int) -> Unit, max: Int): Pair<View, TextView> {
-            val line = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+            val line = LinearLayout(activity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            }
             line.addView(TextView(activity).apply {
                 text = name
                 textSize = 16f
-                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                    .apply { marginEnd = (6 * d).toInt() }
             })
-            val value = TextView(activity).apply {
-                textSize = 18f
-                gravity = Gravity.CENTER
-                minWidth = (40 * d).toInt()
-            }
             fun button(text: String, delta: Int) = MaterialButton(
                 activity, null, com.google.android.material.R.attr.materialIconButtonFilledTonalStyle,
             ).apply {
                 this.text = text
+                setPadding(0, 0, 0, 0)
+                insetTop = 0
+                insetBottom = 0
+                minWidth = 0
+                minimumWidth = 0
+                minHeight = 0
+                minimumHeight = 0
+                layoutParams = LinearLayout.LayoutParams((34 * d).toInt(), (34 * d).toInt())
+                contentDescription = "$name ${if (delta < 0) "줄이기" else "늘리기"}"
                 setOnClickListener { set((get() + delta).coerceIn(1, max)); refresh() }
+            }
+            val value = TextView(activity).apply {
+                textSize = 17f
+                gravity = Gravity.CENTER
+                minWidth = (30 * d).toInt()
             }
             line.addView(button("−", -1))
             line.addView(value)
@@ -106,21 +120,24 @@ object TableInsertDialog {
         }
 
         // 격자 + 줄·칸 수 + 미리 보기
-        root.addView(picker, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            .apply { gravity = Gravity.CENTER_HORIZONTAL })
+        root.addView(picker, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         root.addView(label)
-        val rowStep = stepper("줄 수", { rows }, { rows = it }, MAX_ROWS)
-        val colStep = stepper("칸 수", { cols }, { cols = it }, MAX_COLS)
+        // 줄 수와 칸 수는 한 줄에 나란히 (폰의 좁은 창에서 세로로 길어지지 않게)
+        val rowStep = stepper("줄", { rows }, { rows = it }, MAX_ROWS)
+        val colStep = stepper("칸", { cols }, { cols = it }, MAX_COLS)
         rowsText = rowStep.second
         colsText = colStep.second
-        root.addView(rowStep.first)
-        root.addView(colStep.first)
+        root.addView(LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(rowStep.first)
+            addView(colStep.first)
+        })
 
         // 제목 줄
         root.addView(TextView(activity).apply {
-            text = "제목 줄"
+            text = "제목 줄 (칠하고 굵은 선으로 나눔)"
             textSize = 14f
-            setPadding(0, (12 * d).toInt(), 0, (2 * d).toInt())
+            setPadding(0, (8 * d).toInt(), 0, 0)
         })
         val group = RadioGroup(activity).apply { orientation = RadioGroup.HORIZONTAL }
         val ids = HashMap<TableHeader, Int>()
@@ -131,8 +148,9 @@ object TableInsertDialog {
                     TableHeader.NONE -> "없음"
                     TableHeader.ROW -> "가로"
                     TableHeader.COL -> "세로"
-                    TableHeader.BOTH -> "가로·세로"
+                    TableHeader.BOTH -> "둘 다"
                 }
+                textSize = 15f
                 contentDescription = when (h) {
                     TableHeader.NONE -> "제목 줄 없음"
                     TableHeader.ROW -> "첫 줄을 제목으로 (가로)"
@@ -179,7 +197,7 @@ object TableInsertDialog {
         }
         val sizeRow = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(0, (10 * d).toInt(), 0, 0)
+            setPadding(0, (6 * d).toInt(), 0, 0)
         }
         val wf = sizeField("너비 ", widthMm) { widthMm = it; preview.table = table() }
         val hf = sizeField("높이 ", heightMm) {
@@ -191,8 +209,8 @@ object TableInsertDialog {
         sizeRow.addView(wf.first)
         sizeRow.addView(hf.first)
         root.addView(sizeRow)
-        root.addView(preview, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (110 * d).toInt())
-            .apply { topMargin = (10 * d).toInt() })
+        root.addView(preview, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (84 * d).toInt())
+            .apply { topMargin = (8 * d).toInt() })
         refresh()
 
         val scroll = android.widget.ScrollView(activity).apply { addView(root) }
@@ -209,10 +227,10 @@ object TableInsertDialog {
 
     /** 칸을 끌어 줄·칸 수를 고르는 격자 (한글의 표 넣기 격자처럼, 왼쪽 위부터 고른 곳까지 칠한다) */
     private class GridPicker(ctx: Context) : View(ctx) {
-        private val maxRows = 8
+        private val maxRows = 6
         private val maxCols = 10
         private val d = resources.displayMetrics.density
-        private val cell = 26f * d
+        private var cell = 26f * d
         private val gap = 3f * d
         private var rows = 1
         private var cols = 1
@@ -235,7 +253,10 @@ object TableInsertDialog {
         }
 
         override fun onMeasure(w: Int, h: Int) {
-            setMeasuredDimension(((cell + gap) * maxCols).toInt(), ((cell + gap) * maxRows).toInt())
+            // 창 폭에 맞춰 칸 크기를 줄인다 (폰의 좁은 창에서 양옆이 잘리지 않게). 넓은 화면에서는 26dp까지만
+            val avail = MeasureSpec.getSize(w).takeIf { it > 0 } ?: ((26f * d + gap) * maxCols).toInt()
+            cell = ((avail - gap * (maxCols - 1)) / maxCols).coerceAtMost(26f * d)
+            setMeasuredDimension(avail, ((cell + gap) * maxRows - gap).toInt())
         }
 
         override fun onDraw(canvas: Canvas) {

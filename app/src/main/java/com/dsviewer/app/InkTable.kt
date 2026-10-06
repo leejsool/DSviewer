@@ -276,25 +276,40 @@ class InkTable private constructor(
         transposed().splitHorizontal(at, from, to, eps)?.transposed()
 
     /**
-     * 표 지우개: (x, y)에 닿은 선의 그 칸 사이 한 토막을 지운다 (양쪽 셀이 하나로 합쳐진다).
-     * 가까운 선이 없으면 null
+     * 표 지우개: 가로선을 y=[at] 근처([eps] 안)에서 x가 [from]~[to]인 구간만큼 지운다 (세로선은 [eraseVertical]).
+     * 그은 길이가 그 칸 너비의 [COVER] 이상 덮은 칸의 선 토막만 지우고, 지운 토막의 위아래 셀은 하나로 합쳐진다.
+     * 가까운 가로선만 지우므로 지나가는 세로선은 그대로다. 지울 선이 없으면 null
      */
-    fun eraseAt(x: Float, y: Float, eps: Float): InkTable? {
-        val hit = lineAt(x, y, eps) ?: return null
-        val a: Int
-        val b: Int
-        if (hit.horizontal) {
-            val c = colAt(x)
-            a = id(hit.index - 1, c); b = id(hit.index, c)
-        } else {
-            val r = rowAt(y)
-            a = id(r, hit.index - 1); b = id(r, hit.index)
+    fun eraseHorizontal(at: Float, from: Float, to: Float, eps: Float): InkTable? {
+        val lo = min(from, to)
+        val hi = max(from, to)
+        // 가까운 안쪽 가로선 중 그은 구간 아래에 보이는 토막이 있는 가장 가까운 것
+        var g = -1
+        var bestD = Float.MAX_VALUE
+        for (k in 1 until rows) {
+            val d = abs(rowY[k] - at)
+            if (d <= eps && d < bestD && coveredCols(k, lo, hi).isNotEmpty()) { g = k; bestD = d }
         }
-        val ra = bounds.getValue(a)
-        val rb = bounds.getValue(b)
-        val merged = merge(CellRange(min(ra.r0, rb.r0), min(ra.c0, rb.c0), max(ra.r1, rb.r1), max(ra.c1, rb.c1))) ?: return null
+        if (g < 0) return null
+        var cur = this
+        for (c in coveredCols(g, lo, hi)) {
+            if (cur.id(g - 1, c) == cur.id(g, c)) continue
+            val a = cur.cellAt(g - 1, c)
+            val b = cur.cellAt(g, c)
+            cur = cur.merge(CellRange(min(a.r0, b.r0), min(a.c0, b.c0), max(a.r1, b.r1), max(a.c1, b.c1))) ?: continue
+        }
+        if (cur === this) return null
         // 줄을 지웠으니 어디에도 보이지 않게 된 선은 격자에서도 뺀다
-        return make(merged.colW, merged.rowH, merged.ids, header)
+        return make(cur.colW, cur.rowH, cur.ids, header)
+    }
+
+    /** 표 지우개: 세로선을 x=[at] 근처에서 y가 [from]~[to]인 구간만큼 지운다 */
+    fun eraseVertical(at: Float, from: Float, to: Float, eps: Float): InkTable? =
+        transposed().eraseHorizontal(at, from, to, eps)?.transposed()
+
+    /** 가로선 [g](줄 g-1과 g 사이)에서 x가 [lo]~[hi]에 [COVER] 이상 덮이고 위아래가 다른 셀인 칸들 */
+    private fun coveredCols(g: Int, lo: Float, hi: Float): List<Int> = (0 until cols).filter { c ->
+        id(g - 1, c) != id(g, c) && min(hi, colX[c + 1]) - max(lo, colX[c]) >= COVER * colW[c]
     }
 
     /** 셀 합치기: [range]를 셀 경계까지 넓힌 범위를 한 셀로. 이미 한 셀이면 null */
@@ -434,7 +449,7 @@ class InkTable private constructor(
     override fun hashCode() = (header.hashCode() * 31 + colW.contentHashCode()) * 31 + rowH.contentHashCode() + ids.contentHashCode()
 
     companion object {
-        /** 줄이 셀 너비의 이만큼 이상 지나야 그 셀을 나눈다 */
+        /** 줄을 긋거나 지울 때 셀 너비의 이만큼 이상 지나야 그 칸에 해당한다 */
         private const val COVER = 0.4f
 
         /** 줄 높이가 모두 같은 [rows]줄 × [cols]칸 표 (크기는 표 좌표 pt) */

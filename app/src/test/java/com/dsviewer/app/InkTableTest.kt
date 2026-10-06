@@ -238,29 +238,57 @@ class InkTableTest {
 
     // ---- 표 지우개 ----
 
-    @Test fun eraseMergesAcrossLine() {
+    @Test fun eraseOnlyTheDrawnPartOfALine() {
         val t = table(2, 2, 200f, 200f)
-        val e = t.eraseAt(50f, 100f, 6f)!!   // 가로선(위쪽 칸 아래) 한 토막
+        val e = t.eraseHorizontal(100f, 0f, 100f, 6f)!!     // 왼쪽 칸 아래의 가로선 토막만
         check(e, true)
         assertEquals(CellRange(0, 0, 1, 0), e.cellAt(0, 0))
         assertEquals(3, e.cellCount)
-        val v = t.eraseAt(100f, 150f, 6f)!!  // 세로선 한 토막
-        assertEquals(CellRange(1, 0, 1, 1), v.cellAt(1, 0))
+        assertEquals(CellRange(0, 1, 0, 1), e.cellAt(0, 1))  // 오른쪽 칸 사이 선은 그대로
     }
 
-    @Test fun eraseMissesWhenNoLineNear() {
+    @Test fun eraseHorizontalKeepsCrossingVerticalLines() {
+        val t = table(3, 3, 300f, 300f)
+        val e = t.eraseHorizontal(100f, -10f, 310f, 6f)!!    // 위쪽 가로선 한 줄 전체
+        check(e, true)
+        assertEquals(2, e.rows)
+        assertEquals(3, e.cols)                             // 세로선은 모두 남는다
+        assertEquals(200f, e.rowH[0], 0.001f)               // 합쳐진 두 줄이 한 줄로 정리된다
+        assertEquals(CellRange(0, 0, 0, 0), e.cellAt(0, 0))
+    }
+
+    @Test fun eraseVerticalOnlyTouchesVerticalLine() {
+        val t = table(3, 3, 300f, 300f)
+        val e = t.eraseVertical(100f, 0f, 300f, 6f)!!
+        check(e, true)
+        assertEquals(3, e.rows)
+        assertEquals(2, e.cols)
+        assertEquals(200f, e.colW[0], 0.001f)
+        assertEquals(CellRange(0, 0, 0, 0), e.cellAt(0, 0))
+    }
+
+    @Test fun eraseIgnoresShortOrMissedStrokes() {
         val t = table(2, 2, 200f, 200f)
-        assertNull(t.eraseAt(50f, 50f, 6f))
-        val m = t.merge(CellRange(0, 0, 1, 0))!!
-        assertNull(m.eraseAt(50f, 100f, 6f))   // 합쳐진 셀 속 선은 이미 없다
+        assertNull(t.eraseHorizontal(100f, 10f, 30f, 6f))    // 칸 너비의 40% 미만
+        assertNull(t.eraseHorizontal(50f, 0f, 200f, 6f))     // 가까운 가로선이 없음
+        assertNull(t.eraseHorizontal(0f, 0f, 200f, 6f))      // 바깥 테두리는 지우지 않는다
+        assertNull(t.eraseVertical(50f, 0f, 200f, 6f))
     }
 
-    @Test fun eraseLastLinesRemovesLine() {
+    @Test fun eraseSkipsHiddenSegments() {
+        val m = table(2, 2, 200f, 200f).merge(CellRange(0, 0, 1, 0))!!
+        assertNull(m.eraseHorizontal(100f, 0f, 100f, 6f))    // 합쳐진 셀 속은 이미 선이 없다
+        val e = m.eraseHorizontal(100f, 0f, 200f, 6f)!!      // 오른쪽 칸 토막만 지워지고, 보이는 가로선이 없어져 한 줄로 정리된다
+        assertEquals(1, e.rows)
+        assertEquals(2, e.cols)
+    }
+
+    @Test fun eraseAllHorizontalLinesLeavesOneRow() {
         var t = table(2, 2, 200f, 200f)
-        t = t.eraseAt(50f, 100f, 6f)!!
-        t = t.eraseAt(150f, 100f, 6f)!!
+        t = t.eraseHorizontal(100f, 0f, 100f, 6f)!!
+        t = t.eraseHorizontal(100f, 100f, 200f, 6f)!!
         check(t, true)
-        assertEquals(1, t.rows)   // 가로선이 모두 지워지면 줄이 하나로
+        assertEquals(1, t.rows)
         assertEquals(2, t.cols)
     }
 

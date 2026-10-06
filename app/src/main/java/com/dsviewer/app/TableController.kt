@@ -11,11 +11,11 @@ import kotlin.math.min
 
 /**
  * 고른 표 하나를 고치는 일 (한글의 표 편집을 본뜸): 칸 고르기(누르거나 끌어 범위), 선 끌어 간격 바꾸기,
- * 표 그리기(줄 긋기로 칸 나누기), 표 지우개(줄 지워 칸 합치기), 줄·칸 넣기와 지우기, 셀 합치기·나누기, 제목 줄, 선 굵기.
+ * 표 그리기(줄 긋기로 칸 나누기), 표 지우개(줄을 따라 그어 그 줄만 지워 칸 합치기), 줄·칸 넣기와 지우기, 셀 합치기·나누기, 제목 줄, 선 굵기.
  *
  * 표 모양을 바꾸는 계산은 [InkTable]이 한다. 여기서는 터치를 표 좌표로 옮기고, 결과를 실행 취소 기록에 남기며
  * (표 모양은 바꿀 수 없는 값이라 획을 새 획으로 갈아 끼운다), 고른 칸 표시를 그린다.
- * 선을 끌거나 지우는 동안은 획의 표를 미리 보기 모양으로 잠깐 바꿔 두고, 손을 떼면 되돌린 뒤 한 번에 기록한다
+ * 선을 끄는 동안은 획의 표를 미리 보기 모양으로 잠깐 바꿔 두고, 손을 떼면 되돌린 뒤 한 번에 기록한다
  */
 class TableController(private val host: Host) {
 
@@ -131,6 +131,18 @@ class TableController(private val host: Host) {
     /** 표 안팎의 허용 거리 (표 좌표, 선을 집거나 줄을 긋는 자리) */
     private fun eps(f: TableFrame) = TOUCH_DP * host.density / host.scale / ((f.scaleX + f.scaleY) / 2f)
 
+    /**
+     * 칸 선택 방식에서 선을 집는 거리 (표 좌표). 칸을 누르려다 선을 집지 않게 줄 긋기·지우기보다 좁게 잡고,
+     * 칸이 작으면 가장 작은 칸의 [GRAB_CELL_RATIO]를 넘지 않게 해서 칸 안쪽이 남도록 한다
+     */
+    private fun grabEps(t: InkTable, f: TableFrame): Float {
+        var minCell = Float.MAX_VALUE
+        for (w in t.colW) minCell = min(minCell, w * f.scaleX)
+        for (h in t.rowH) minCell = min(minCell, h * f.scaleY)
+        val page = min(GRAB_DP * host.density / host.scale, minCell * GRAB_CELL_RATIO)
+        return page / ((f.scaleX + f.scaleY) / 2f)
+    }
+
     /** 선을 끌 때 이웃 선과 이만큼(표 좌표)은 떨어져 있게 */
     private fun minSize(f: TableFrame, horizontal: Boolean) =
         MIN_CELL_DP * host.density / host.scale / (if (horizontal) f.scaleY else f.scaleX)
@@ -171,7 +183,7 @@ class TableController(private val host: Host) {
         curLoc = loc
         when (mode) {
             Mode.SELECT -> {
-                val hit = t.lineAt(loc[0], loc[1], eps(f))
+                val hit = t.lineAt(loc[0], loc[1], grabEps(t, f))
                 if (hit != null) {
                     touch = Touch.LINE
                     line = hit
@@ -193,10 +205,8 @@ class TableController(private val host: Host) {
             Mode.DRAW -> touch = Touch.DRAW
             Mode.ERASE -> {
                 touch = Touch.ERASE
-                orig = t
                 trail.clear()
                 trail.add(loc[0]); trail.add(loc[1])
-                eraseAlong(st, f, loc[0], loc[1], loc[0], loc[1])
             }
         }
         host.invalidate()
@@ -209,7 +219,6 @@ class TableController(private val host: Host) {
         val t = st.table ?: return
         val page = host.selectedPage
         val loc = f.toLocal(host.toPageX(page, sx), host.toPageY(page, sy)) ?: return
-        val prev = curLoc
         curLoc = loc
         if (!moved && hypot(sx - startSx, sy - startSy) > SLOP_DP * host.density) moved = true
         when (touch) {
@@ -229,27 +238,10 @@ class TableController(private val host: Host) {
                 st.table = o.moveLine(h, at, minSize(f, h.horizontal)) ?: o
             }
             Touch.DRAW -> {}
-            Touch.ERASE -> {
-                trail.add(loc[0]); trail.add(loc[1])
-                eraseAlong(st, f, prev[0], prev[1], loc[0], loc[1])
-            }
+            Touch.ERASE -> { trail.add(loc[0]); trail.add(loc[1]) }
             Touch.NONE -> {}
         }
         host.invalidate()
-    }
-
-    /** (x0, y0)에서 (x1, y1)까지 걸으며 닿은 선 토막을 지운다 (미리 보기로 획의 표를 바꿔 둔다) */
-    private fun eraseAlong(st: Stroke, f: TableFrame, x0: Float, y0: Float, x1: Float, y1: Float) {
-        var cur = st.table ?: return
-        val e = eps(f)
-        val dist = hypot(x1 - x0, y1 - y0)
-        val steps = max(1, (dist / (e * 0.5f)).toInt())
-        for (k in 0..steps) {
-            val x = x0 + (x1 - x0) * k / steps
-            val y = y0 + (y1 - y0) * k / steps
-            cur = cur.eraseAt(x, y, e) ?: cur
-        }
-        st.table = cur
     }
 
     fun endTouch(commit: Boolean) {
@@ -276,13 +268,16 @@ class TableController(private val host: Host) {
                 val cell = p?.let { st.table?.cellAt(it.r0, it.c0) }
                 if (commit && !moved && p != null && p == cells && cell == p) setCells(null)
             }
-            Touch.LINE, Touch.ERASE -> {
+            Touch.LINE -> {
                 val preview = st.table
                 val o = orig
                 st.table = o
                 orig = null
-                trail.clear()
                 if (commit && preview != null && o != null && preview != o) apply(st, preview, f, null)
+            }
+            Touch.ERASE -> {
+                if (commit) finishErase(st, f)
+                trail.clear()
             }
             Touch.DRAW -> if (commit) finishDraw(st, f)
             Touch.NONE -> {}
@@ -302,6 +297,36 @@ class TableController(private val host: Host) {
         else t.splitVertical((startLoc[0] + curLoc[0]) / 2f, startLoc[1], curLoc[1], e)
         if (result == null) host.hint("나눌 칸이 없습니다. 칸을 가로질러 끝까지 그어 주세요.")
         else apply(st, result, f, null)
+    }
+
+    /**
+     * 표 지우개: 그은 길이와 모양이 가로(세로)에 가까우면 그은 구간의 가로(세로)선만 지운다.
+     * 그은 길 전체의 가운데 위치로 어느 줄인지 정하고, 그은 길이만큼만 지운다 (지나가는 반대쪽 선은 그대로)
+     */
+    private fun finishErase(st: Stroke, f: TableFrame) {
+        val t = st.table ?: return
+        val n = trail.size / 2
+        if (n < 2) return
+        var minX = Float.MAX_VALUE; var maxX = -Float.MAX_VALUE
+        var minY = Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
+        var sumX = 0f
+        var sumY = 0f
+        for (i in 0 until n) {
+            val x = trail[i * 2]
+            val y = trail[i * 2 + 1]
+            minX = min(minX, x); maxX = max(maxX, x)
+            minY = min(minY, y); maxY = max(maxY, y)
+            sumX += x; sumY += y
+        }
+        val w = (maxX - minX) * f.scaleX
+        val h = (maxY - minY) * f.scaleY
+        if (hypot(w, h) < MIN_DRAW_DP * host.density / host.scale) {
+            host.hint("지우려는 줄 위를 따라 끝까지 그어 주세요.")
+            return
+        }
+        val e = eps(f)
+        val result = if (w >= h) t.eraseHorizontal(sumY / n, minX, maxX, e) else t.eraseVertical(sumX / n, minY, maxY, e)
+        if (result == null) host.hint("지울 줄이 없습니다. 지우려는 줄 위를 따라 끝까지 그어 주세요.") else apply(st, result, f, null)
     }
 
     // ================= 고치기 =================
@@ -552,8 +577,12 @@ class TableController(private val host: Host) {
     }
 
     companion object {
-        /** 선을 집거나 줄을 붙이는 거리 (dp) */
+        /** 줄을 긋거나 지울 때 선에 붙는 거리 (dp) */
         private const val TOUCH_DP = 14f
+        /** 칸 선택 방식에서 선을 집는 거리 (dp): 칸을 누르려다 선이 잡히지 않게 좁게 */
+        private const val GRAB_DP = 8f
+        /** 선을 집는 거리가 가장 작은 칸의 이 비율을 넘지 않게 */
+        private const val GRAB_CELL_RATIO = 0.3f
         /** 선을 끌 때 이웃 선과 떨어져 있어야 할 최소 간격 (dp) */
         private const val MIN_CELL_DP = 14f
         /** 줄 긋기로 치는 최소 길이 (dp) */
