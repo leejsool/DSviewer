@@ -34,8 +34,21 @@ class OptionChoice(
     val set: (Int) -> Unit,
 )
 
-/** 옵션 창 왼쪽 목록의 한 범주와 그 안의 줄들 ([choices]는 켜고 끄는 줄들 아래에 이어진다) */
-class OptionCategory(val title: String, val desc: String, val items: List<OptionItem>, val choices: List<OptionChoice> = emptyList())
+/**
+ * 옵션 창 왼쪽 목록의 한 범주와 그 안의 줄들 ([choices]는 켜고 끄는 줄들 아래에 이어진다).
+ * [items]는 줄을 그릴 때마다 불러 지금 차례를 얻는다. [onReorder]가 있으면 줄 왼쪽에 손잡이가 생겨
+ * 끌어서 차례를 바꿀 수 있다 (옮기는 줄의 원래 번호, 새 번호)
+ */
+class OptionCategory(
+    val title: String,
+    val desc: String,
+    val items: () -> List<OptionItem>,
+    val choices: List<OptionChoice> = emptyList(),
+    val onReorder: ((from: Int, to: Int) -> Unit)? = null,
+) {
+    constructor(title: String, desc: String, items: List<OptionItem>, choices: List<OptionChoice> = emptyList()) :
+        this(title, desc, { items }, choices)
+}
 
 /**
  * ⋮ ▸ 옵션: 한컴오피스 '사용자 설정'처럼 왼쪽에 범주(상단 툴바 · 하단 툴바 · 편의 옵션), 오른쪽에 그 범주의 항목을
@@ -52,6 +65,7 @@ class OptionsDialog(
     private var selected = 0
     private lateinit var leftCol: LinearLayout
     private lateinit var rightCol: LinearLayout
+    private lateinit var scroll: ScrollView
 
     fun show(start: Int = 0) {
         selected = start.coerceIn(0, categories.size - 1)
@@ -69,7 +83,8 @@ class OptionsDialog(
             setPadding(dp(20), dp(8), dp(20), 0)
             addView(leftCol, LinearLayout.LayoutParams(dp(130), ViewGroup.LayoutParams.MATCH_PARENT))
             addView(View(a).apply { setBackgroundColor(outline) }, LinearLayout.LayoutParams(dp(1), ViewGroup.LayoutParams.MATCH_PARENT))
-            addView(ScrollView(a).apply { addView(rightCol) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+            scroll = ScrollView(a).apply { addView(rightCol) }
+            addView(scroll, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         }
         rebuild()
         val box = LinearLayout(a).apply {
@@ -108,7 +123,9 @@ class OptionsDialog(
             setTextColor(MaterialColors.getColor(a.window.decorView, com.google.android.material.R.attr.colorOnSurfaceVariant))
             setPadding(dp(12), dp(4), dp(8), dp(10))
         })
-        for (item in c.items) rightCol.addView(itemRow(item))
+        val box = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
+        c.items().forEachIndexed { i, item -> box.addView(itemRow(item, if (c.onReorder != null) i else -1, box, c)) }
+        rightCol.addView(box)
         for (choice in c.choices) rightCol.addView(choiceBlock(choice))
     }
 
@@ -168,11 +185,27 @@ class OptionsDialog(
         setOnClickListener { click() }
     }
 
-    private fun itemRow(item: OptionItem): View {
+    /**
+     * 줄 하나. [index]가 0 이상이면 왼쪽에 손잡이를 달아 끌어서 [box] 안의 차례를 바꿀 수 있다
+     * (끄는 동안 줄이 손가락을 따라오고 다른 줄들이 비켜선다. 가장자리로 끌면 목록이 스크롤된다)
+     */
+    private fun itemRow(item: OptionItem, index: Int, box: LinearLayout, c: OptionCategory): View {
         val row = LinearLayout(a).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(12), dp(6), dp(8), dp(6))
+            setPadding(dp(if (index >= 0) 0 else 12), dp(6), dp(8), dp(6))
+        }
+        if (index >= 0) {
+            val handle = ImageView(a).apply {
+                setImageResource(R.drawable.ic_drag_handle)
+                imageTintList = android.content.res.ColorStateList.valueOf(
+                    MaterialColors.getColor(a.window.decorView, com.google.android.material.R.attr.colorOnSurfaceVariant)
+                )
+                scaleType = ImageView.ScaleType.CENTER
+                contentDescription = "끌어서 순서 바꾸기"
+            }
+            row.addView(handle, LinearLayout.LayoutParams(dp(40), dp(44)))
+            enableDrag(handle, row, box, index, c)
         }
         row.addView(ImageView(a).apply {
             setImageDrawable(item.icon())
@@ -191,7 +224,7 @@ class OptionsDialog(
                 setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurfaceVariant))
             })
         }
-        row.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(14) })
+        row.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(if (index >= 0) 10 else 14) })
         val sw = MaterialSwitch(a).apply { isChecked = item.get() }
         sw.setOnCheckedChangeListener { _, on ->
             if (!item.set(on)) sw.post { sw.isChecked = item.get() }
@@ -199,5 +232,76 @@ class OptionsDialog(
         row.addView(sw)
         row.setOnClickListener { sw.toggle() }
         return row
+    }
+    /** [handle]을 잡고 끌면 [row]가 따라오고, 놓으면 [c]의 [OptionCategory.onReorder]로 새 차례를 알린 뒤 목록을 새로 그린다 */
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
+    private fun enableDrag(handle: View, row: View, box: LinearLayout, from: Int, c: OptionCategory) {
+        var startY = 0f
+        var startScroll = 0
+        var lastRaw = 0f
+        var target = from
+        var dragging = false
+        fun update() {
+            val dy = lastRaw - startY + (scroll.scrollY - startScroll)
+            row.translationY = dy
+            val center = row.top + row.height / 2f + dy
+            target = (0 until box.childCount).count { it != from && box.getChildAt(it).let { v -> v.top + v.height / 2f < center } }
+            for (j in 0 until box.childCount) {
+                if (j == from) continue
+                box.getChildAt(j).translationY = when {
+                    j in (from + 1)..target -> -row.height.toFloat()
+                    j in target until from -> row.height.toFloat()
+                    else -> 0f
+                }
+            }
+        }
+        val auto = object : Runnable {
+            override fun run() {
+                if (!dragging) return
+                val loc = IntArray(2)
+                scroll.getLocationOnScreen(loc)
+                val rel = lastRaw - loc[1]
+                when {
+                    rel < dp(56) -> scroll.scrollBy(0, -dp(8))
+                    rel > scroll.height - dp(56) -> scroll.scrollBy(0, dp(8))
+                }
+                update()
+                scroll.postDelayed(this, 16)
+            }
+        }
+        handle.setOnTouchListener { _, ev ->
+            when (ev.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    dragging = true
+                    startY = ev.rawY
+                    lastRaw = ev.rawY
+                    startScroll = scroll.scrollY
+                    target = from
+                    row.elevation = dp(6).toFloat()
+                    row.setBackgroundColor(MaterialColors.getColor(row, com.google.android.material.R.attr.colorSurfaceContainerHigh))
+                    scroll.requestDisallowInterceptTouchEvent(true)
+                    scroll.post(auto)
+                }
+                android.view.MotionEvent.ACTION_MOVE -> {
+                    lastRaw = ev.rawY
+                    update()
+                }
+                android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                    dragging = false
+                    scroll.removeCallbacks(auto)
+                    val to = target
+                    // 그림자·밀림을 거두고, 목록은 이 터치 처리가 끝난 뒤에 새로 그린다
+                    // (처리 중에 줄들을 지우면 그림자 있는 자식의 그리기 순서가 어긋나 앱이 죽는다)
+                    row.elevation = 0f
+                    for (j in 0 until box.childCount) box.getChildAt(j).translationY = 0f
+                    val commit = ev.actionMasked == android.view.MotionEvent.ACTION_UP && to != from
+                    scroll.post {
+                        if (commit) c.onReorder?.invoke(from, to)
+                        rebuild()
+                    }
+                }
+            }
+            true
+        }
     }
 }

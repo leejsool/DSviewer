@@ -2513,11 +2513,28 @@ class ViewerActivity : AppCompatActivity() {
         )
     }
 
+    /** 옵션에서 끌어 바꾼 차례(prefs topOrder)대로 늘어놓은 상단 단추들 */
+    private fun orderedTopActions(): List<TopAction> {
+        val saved = prefs.getString("topOrder", null)?.split(',')?.mapNotNull { k -> topActions.firstOrNull { it.key == k } }?.distinct().orEmpty()
+        return saved + topActions.filter { a -> saved.none { it.key == a.key } }
+    }
+
+    /** 상단 단추들을 저장한 차례로 다시 늘어놓는다 (⋮ 단추는 늘 맨 끝) */
+    private fun applyActionOrder() {
+        val buttons = orderedTopActions().map { it.button() }
+        val box = buttons.firstOrNull()?.parent as? LinearLayout ?: return
+        if (buttons.indices.all { box.getChildAt(it) === buttons[it] }) return
+        for (b in buttons) box.removeView(b)
+        buttons.forEachIndexed { i, b -> box.addView(b, i) }
+        box.requestLayout()
+    }
+
     private fun hiddenActions(): Set<String> =
         prefs.getString("hiddenActions", null)?.split(',')?.filter { it.isNotEmpty() }?.toSet() ?: emptySet()
 
     /** 숨긴 상단 단추를 감춘다. 읽기 모드 중에는 끝낼 길이 필요해서 읽기 모드 단추는 늘 보인다 */
     private fun applyActionVisibility() {
+        applyActionOrder()
         val hidden = hiddenActions()
         for (a in topActions) a.button().visibility = if (a.key in hidden && !(a.key == "readMode" && readMode)) View.GONE else View.VISIBLE
     }
@@ -2553,21 +2570,29 @@ class ViewerActivity : AppCompatActivity() {
     private fun showOptionsDialog(start: Int = 0) {
         fun icon(res: Int) = { getDrawable(res)?.mutate() }
         val top = OptionCategory(
-            "상단 툴바", "탭 줄 오른쪽의 아이콘을 표시하거나 숨깁니다. ⋮(더 보기)는 늘 보입니다.",
-            topActions.map { a ->
-                OptionItem(icon(a.icon), a.label, { a.key !in hiddenActions() }, { on ->
-                    val hidden = hiddenActions().toMutableSet()
-                    if (on) hidden.remove(a.key) else hidden.add(a.key)
-                    prefs.edit().putString("hiddenActions", hidden.joinToString(",")).apply()
-                    applyActionVisibility()
-                    true
-                })
+            "상단 툴바", "탭 줄 오른쪽의 아이콘을 표시하거나 숨깁니다. 왼쪽 손잡이를 위아래로 끌어 순서를 바꿀 수 있습니다. ⋮(더 보기)는 늘 보입니다.",
+            {
+                orderedTopActions().map { a ->
+                    OptionItem(icon(a.icon), a.label, { a.key !in hiddenActions() }, { on ->
+                        val hidden = hiddenActions().toMutableSet()
+                        if (on) hidden.remove(a.key) else hidden.add(a.key)
+                        prefs.edit().putString("hiddenActions", hidden.joinToString(",")).apply()
+                        applyActionVisibility()
+                        true
+                    })
+                }
             },
             listOf(iconSizeChoice("topIconSize", ::applyTopIconSize)),
+            onReorder = { from, to ->
+                val keys = orderedTopActions().map { it.key }.toMutableList()
+                keys.add(to, keys.removeAt(from))
+                prefs.edit().putString("topOrder", keys.joinToString(",")).apply()
+                applyActionOrder()
+            },
         )
         val bottom = OptionCategory(
-            "하단 툴바", "펜·지우개 같은 도구 아이콘을 표시하거나 숨깁니다. 도구는 하나는 남겨 두어야 합니다.",
-            tools.toolNames.map { (t, name) ->
+            "하단 툴바", "펜·지우개 같은 도구 아이콘을 표시하거나 숨깁니다. 왼쪽 손잡이를 위아래로 끌어 순서를 바꿀 수 있습니다. 도구는 하나는 남겨 두어야 합니다.",
+            { tools.toolNames.map { (t, name) ->
                 // 보정 펜 아이콘은 직접 그리는 Drawable이라 복사할 수 없어서 새로 만든다
                 OptionItem({
                     if (t == Tool.SHAPE) ShapePenDrawable(this).also { it.markColor = docView.penColor }
@@ -2583,8 +2608,13 @@ class ViewerActivity : AppCompatActivity() {
                     tools.applyToolVisibility()
                     true
                 })
-            },
+            } },
             listOf(iconSizeChoice("toolIconSize", tools::applyToolIconSize)),
+            onReorder = { from, to ->
+                val order = tools.toolNames.map { it.first }.toMutableList()
+                order.add(to, order.removeAt(from))
+                tools.setToolOrder(order)
+            },
         )
         val convenience = OptionCategory(
             "편의 옵션", "필기할 때 쓰는 편의 기능을 켜고 끕니다.",
@@ -2640,7 +2670,7 @@ class ViewerActivity : AppCompatActivity() {
             ),
         )
         OptionsDialog(this, listOf(top, bottom, convenience)) {
-            prefs.edit().remove("hiddenActions").remove("hiddenTools").remove("topIconSize").remove("toolIconSize").putBoolean("scribbleErase", true).putBoolean("palmErase", true).apply()
+            prefs.edit().remove("topOrder").remove("hiddenActions").remove("hiddenTools").remove("topIconSize").remove("toolIconSize").putBoolean("scribbleErase", true).putBoolean("palmErase", true).apply()
             docView.scribbleErase = true
             docView.palmErase = true
             for (p in panes) {
@@ -2651,6 +2681,7 @@ class ViewerActivity : AppCompatActivity() {
             setHorizontalFlow(false)
             tools.onTextMarkupChanged()
             for (p in panes) p.view.textMark = TextMark.NONE
+            tools.setToolOrder(emptyList())
             applyActionVisibility()
             tools.applyToolVisibility()
             applyTopIconSize()

@@ -10,5 +10,6 @@ class App : Application() {
         PDFBoxResourceLoader.init(applicationContext)
         EqRenderer.init(assets)
         TextFont.init(this)
+        CrashLog.install(this)
     }
 }

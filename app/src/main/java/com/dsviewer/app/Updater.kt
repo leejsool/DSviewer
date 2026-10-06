@@ -89,6 +89,7 @@ class Updater(private val activity: AppCompatActivity) {
             .setTitle("앱 정보 · 업데이트")
             .setView(box)
             .setPositiveButton("업데이트 확인", null)
+            .setNeutralButton("건의 · 오류 신고", null)
             .setNegativeButton("닫기", null)
             .create()
             .also { dlg ->
@@ -96,6 +97,7 @@ class Updater(private val activity: AppCompatActivity) {
                 dlg.show()
                 // 단추를 눌러도 상자가 닫히지 않게 직접 건다
                 dlg.getButton(DialogInterface.BUTTON_NEGATIVE).setOnClickListener { dlg.dismiss() }
+                dlg.getButton(DialogInterface.BUTTON_NEUTRAL).setOnClickListener { Feedback(activity).show() }
             }
         check()
     }

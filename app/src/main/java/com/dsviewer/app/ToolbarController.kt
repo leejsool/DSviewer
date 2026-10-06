@@ -180,11 +180,48 @@ internal class ToolbarController(
     // ================= 툴바에 보일 도구 =================
     // 툴바 손잡이를 톡 누르거나 ⋮ 메뉴 '툴바 옵션'에서 도구마다 보이기·숨기기 (prefs hiddenTools)
 
-    /** 툴바 도구 차례와 이름 (보이기·숨기기 창) */
-    val toolNames = listOf(
+    /** 툴바 도구 처음 차례와 이름 */
+    private val defaultToolNames = listOf(
         Tool.PEN to "펜", Tool.SHAPE to "보정 펜", Tool.HIGHLIGHTER to "형광펜", Tool.FILL to "채우기", Tool.TAPE to "테이프",
         Tool.TEXT to "글 넣기", Tool.ERASER to "지우개", Tool.LASSO to "선택", Tool.LASER to "레이저 포인터",
     )
+
+    /** 툴바 도구 차례와 이름 (보이기·숨기기 창). 옵션에서 끌어 바꾼 차례(prefs toolOrder)를 따른다 */
+    val toolNames: List<Pair<Tool, String>>
+        get() {
+            val saved = prefs.getString("toolOrder", null)?.split(',')
+                ?.mapNotNull { n -> defaultToolNames.firstOrNull { it.first.name == n } }?.distinct().orEmpty()
+            return saved + defaultToolNames.filter { d -> saved.none { it.first == d.first } }
+        }
+
+    /** 옵션에서 끌어 바꾼 도구 차례를 저장하고 툴바에 적용한다 ([order]가 비면 처음 차례로) */
+    fun setToolOrder(order: List<Tool>) {
+        prefs.edit().apply { if (order.isEmpty()) remove("toolOrder") else putString("toolOrder", order.joinToString(",") { it.name }) }.apply()
+        applyToolOrder()
+    }
+
+    /**
+     * 도구 버튼들을 저장한 차례로 다시 늘어놓는다. 버튼 사이 여백은 버튼이 아니라 자리에 붙어 있어야 하므로
+     * (맨 앞 칸은 여백 없음) 옮기기 전 자리별 여백을 그대로 다시 준다. 가로·세로 툴바 모두 같다
+     */
+    fun applyToolOrder() {
+        if (!::toolButtons.isInitialized) return
+        val first = toolButtons.getValue(Tool.PEN)
+        val box = first.parent as? LinearLayout ?: return
+        val buttons = toolNames.map { toolButtons.getValue(it.first) }
+        val slots = (0 until buttons.size).map { box.getChildAt(it) }
+        val margins = slots.map { v -> (v.layoutParams as ViewGroup.MarginLayoutParams).let { intArrayOf(it.leftMargin, it.topMargin, it.rightMargin, it.bottomMargin, it.marginStart, it.marginEnd) } }
+        if (slots.zip(buttons).all { (a, b) -> a === b }) return
+        for (b in buttons) box.removeView(b)
+        buttons.forEachIndexed { i, b ->
+            val lp = b.layoutParams as ViewGroup.MarginLayoutParams
+            val m = margins[i]
+            lp.setMargins(m[0], m[1], m[2], m[3])
+            lp.marginStart = m[4]
+            lp.marginEnd = m[5]
+            box.addView(b, i, lp)
+        }
+    }
 
     fun hiddenTools(): Set<Tool> =
         prefs.getString("hiddenTools", null)?.split(',')?.mapNotNull { n -> Tool.entries.firstOrNull { it.name == n } }?.toSet()
@@ -1259,6 +1296,7 @@ internal class ToolbarController(
             }
         }
         selectTool(Tool.PEN)
+        applyToolOrder()
         applyToolVisibility()
         setupRuler()
     }
