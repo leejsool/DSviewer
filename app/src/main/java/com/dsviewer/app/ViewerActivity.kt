@@ -208,6 +208,7 @@ class ViewerActivity : AppCompatActivity() {
         for (p in panes) {
             p.view.listener = paneListener(p)
             p.view.textProvider = { page -> pageTextOf(p, page) }
+            p.view.textPrefetch = { page -> prefetchText(p, page) }
             p.view.textSay = ::toast
         }
         tools.setupTools()
@@ -526,6 +527,7 @@ class ViewerActivity : AppCompatActivity() {
         val inkDoc = t.ink
         if (d != null && inkDoc != null) {
             docView.setDocument(d, inkDoc, t.viewState)
+            docView.prefetchTextIfWanted()
             syncPagePanel()
             progress.visibility = View.GONE
         } else {
@@ -966,8 +968,15 @@ class ViewerActivity : AppCompatActivity() {
         val s = searchOf(pane.tab) ?: return null
         s.pageText(page)?.let { return it }
         if (s.failed) return PageText("", FloatArray(0))
-        s.startText(pane.view.pageTotal)
+        s.startText(pane.view.pageTotal, page)
         return null
+    }
+
+    /** 글자 기반 주석을 고른 때부터 [pane] 문서의 글자를 [page]쪽부터 미리 읽어 둔다 (처음 끌 때 기다리지 않게) */
+    private fun prefetchText(pane: ViewerPane, page: Int) {
+        if (pane.view.pageTotal == 0) return
+        val s = searchOf(pane.tab) ?: return
+        if (!s.failed) s.startText(pane.view.pageTotal, page.coerceAtLeast(0))
     }
 
     /** 지금 탭의 PDF 링크. 화면용 PDF가 바뀌었으면(쪽 넣기·지우기 등) 새로 */

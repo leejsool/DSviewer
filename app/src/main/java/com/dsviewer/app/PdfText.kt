@@ -64,14 +64,20 @@ object PdfText {
     /** 찾을 말을 글자 목록과 같은 모양으로 (띄어쓰기 빼고 소문자) */
     fun normalize(s: String) = buildString { for (c in s) if (!c.isWhitespace()) append(c.lowercaseChar()) }
 
-    /** [file]의 쪽마다 글자를 꺼낸다. 한 쪽을 끝낼 때마다 [onPage]. [cancelled]가 true면 그만둔다 */
-    fun extract(file: File, cancelled: () -> Boolean, onPage: (page: Int, text: PageText) -> Unit) {
+    /**
+     * [file]의 쪽마다 글자를 꺼낸다. 한 쪽을 끝낼 때마다 [onPage]. [cancelled]가 true면 그만둔다.
+     * [first]쪽부터 끝까지 읽고 나서 앞쪽을 읽는다 (지금 보는 쪽의 글자를 먼저 쓸 수 있게)
+     */
+    fun extract(file: File, cancelled: () -> Boolean, first: Int = 0, onPage: (page: Int, text: PageText) -> Unit) {
         PDDocument.load(file).use { doc ->
             if (doc.isEncrypted) doc.isAllSecurityToBeRemoved = true
             val c = GlyphCollector()
-            for ((i, page) in doc.pages.withIndex()) {
+            val n = doc.numberOfPages
+            val start = first.coerceIn(0, (n - 1).coerceAtLeast(0))
+            for (k in 0 until n) {
                 if (cancelled()) throw CancellationException()
-                onPage(i, c.collect(page))
+                val i = (start + k) % n
+                onPage(i, c.collect(doc.getPage(i)))
             }
         }
     }
@@ -247,14 +253,14 @@ class DocSearch(val file: File, private val scope: CoroutineScope) {
         startText(pages)
     }
 
-    /** 글자만 꺼내기 시작한다 (필기 읽기는 건드리지 않고). 이미 시작했으면 그대로 */
-    fun startText(pages: Int) {
+    /** 글자만 꺼내기 시작한다 (필기 읽기는 건드리지 않고). [firstPage]쪽부터 읽는다. 이미 시작했으면 그대로 */
+    fun startText(pages: Int, firstPage: Int = 0) {
         if (job != null) return
         pageCount = pages
         job = scope.launch {
             try {
                 withContext(Dispatchers.IO) {
-                    PdfText.extract(file, { cancelled }) { p, t ->
+                    PdfText.extract(file, { cancelled }, firstPage) { p, t ->
                         scope.launch { texts[p] = t; onProgress?.invoke() }
                     }
                 }

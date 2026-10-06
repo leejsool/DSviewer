@@ -112,6 +112,7 @@ class DocumentView @JvmOverloads constructor(
                 buttonLassoReturn = null
                 clearSelection()
             }
+            prefetchTextIfWanted()
         }
     /** 직전에 쓰던 도구 (펜 버튼 '직전 도구로 전환'에서 번갈아 쓴다) */
     private var previousTool = Tool.PEN
@@ -142,8 +143,19 @@ class DocumentView @JvmOverloads constructor(
     var hlStraight = false
     /** 글자 기반 주석 (옵션): 형광펜으로 PDF 글자를 끌면 글줄에 맞춰 칠하기·밑줄·취소선·복사. NONE이면 보통 형광펜 */
     var textMark = TextMark.NONE
+        set(v) {
+            field = v
+            prefetchTextIfWanted()
+        }
     /** 쪽의 PDF 글자를 돌려준다 (아직 못 읽었으면 null). 뷰어가 건다 */
     var textProvider: ((Int) -> PageText?)? = null
+    /** 쪽 번호를 받아 그 쪽부터 글자를 미리 읽기 시작한다. 뷰어가 건다 */
+    var textPrefetch: ((Int) -> Unit)? = null
+
+    /** 형광펜이 글자 기반 주석이면 지금 보는 쪽부터 글자를 미리 읽어 둔다 (이미 읽는 중이면 그대로) */
+    fun prefetchTextIfWanted() {
+        if (tool == Tool.HIGHLIGHTER && textMark != TextMark.NONE && sizes.isNotEmpty()) textPrefetch?.invoke(currentPage())
+    }
     /** 글자 기반 주석의 짧은 안내 (토스트). 뷰어가 건다 */
     var textSay: ((String) -> Unit)? = null
     /** 지금 화면에 놓인 쪽 수 */
