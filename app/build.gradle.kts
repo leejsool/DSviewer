@@ -35,6 +35,11 @@ android {
     }
 
     buildTypes {
+        debug {
+            // 시험용 빌드는 배포본(com.dsviewer.app)과 다른 앱 'DSnote 개발'로 깔린다: 지우고 다시 깔아도 진짜 앱의 자료·버전이 안 건드려진다
+            applicationIdSuffix = ".dev"
+            versionNameSuffix = "-dev"
+        }
         release {
             isMinifyEnabled = false
             // 다른 기기에 옮겨 설치하는 APK: 배포용 키로 서명 (디버그 키로 서명한 APK는 플레이 프로텍트가 더 의심한다)
