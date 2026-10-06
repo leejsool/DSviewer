@@ -1,0 +1,11 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- 표 그리기: 줄 긋기 -->
+    <path android:strokeColor="?attr/colorControlNormal" android:strokeWidth="1.6"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M3.5,4.5h14v14h-14z M3.5,11.5h7" />
+    <path android:strokeColor="?attr/colorControlNormal" android:strokeWidth="1.4"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M13,21l0.8,-3.2l6.5,-6.5l2.4,2.4l-6.5,6.5z" />
+</vector>

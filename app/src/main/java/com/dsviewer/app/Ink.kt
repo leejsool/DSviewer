@@ -180,6 +180,10 @@ fun drawInkStroke(c: Canvas, paint: Paint, st: Stroke, alphaMul: Float = 1f) {
         drawInkText(c, st, alphaMul)
         return
     }
+    if (st.table != null) {
+        drawInkTable(c, st, alphaMul)
+        return
+    }
     if (st.tape != null) {
         drawInkTape(c, st, alphaMul)
         return
@@ -253,6 +257,8 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
     var link: String? = null
     /** 포스트잇 메모면 그 메모 (점 0은 접힌 메모, 점 1은 펼친 메모의 왼쪽 위). 지우개·선택으로는 건드리지 않는다 */
     var note: StickyNote? = null
+    /** 표면 그 표 모양 (점 네 개가 표 상자의 네 모서리, 색·굵기는 표의 선). 지우개로는 지우지 않는다 */
+    var table: InkTable? = null
 
     /** 테이프면 그 모양·무늬 */
     var tape: TapeStyle? = null
@@ -266,11 +272,11 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
     /** 테이프를 눌러 가린 내용을 보이게 했는지 (테두리만 그린다). 저장하지 않고, 파일을 열면 늘 가린 상태 */
     var revealed = false
 
-    /** 그림이나 글처럼 네 모서리로 된 상자인지 (지우개가 자르지 않고, 톡 눌러 고를 수 있다) */
-    val isBox get() = image != null || text != null
+    /** 그림·글·표처럼 네 모서리로 된 상자인지 (지우개가 자르지 않고, 톡 눌러 고를 수 있다) */
+    val isBox get() = image != null || text != null || table != null
 
     /** 사인펜이 아닌 펜 획: 채운 외곽선으로 그린다 ([outline]) */
-    val outlined get() = tool == Tool.PEN && pen != PenStyle.FELT && !dashed && image == null && text == null
+    val outlined get() = tool == Tool.PEN && pen != PenStyle.FELT && !dashed && image == null && text == null && table == null
 
     /** 선이 가운데에서 가장 멀리 닿는 거리 (가장 굵은 곳의 절반) */
     val halfWidth get() = width * reachFactor() / 2f
@@ -445,7 +451,7 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
         val axis = if (horizontal) 0 else 1
         for (i in 0 until count) data[i * 3 + axis] = extent - data[i * 3 + axis]
         for (i in holes.indices step 3) holes[i + axis] = extent - holes[i + axis]
-        if ((image != null || text != null) && count == 4) {
+        if ((image != null || text != null || table != null) && count == 4) {
             val order = if (horizontal) intArrayOf(1, 0, 3, 2) else intArrayOf(3, 2, 1, 0)
             val old = data.copyOf(12)
             for (k in 0 until 4) for (j in 0 until 3) data[k * 3 + j] = old[order[k] * 3 + j]
@@ -470,6 +476,7 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
         s.image = image
         s.role = role
         s.text = text
+        s.table = table
         s.link = link
         s.note = note?.copy()
         s.tape = tape

@@ -152,6 +152,7 @@ object PdfInk {
                                     s.note != null -> makeNoteAnnotation(doc, page, s)
                                     s.image != null -> makeImageAnnotation(doc, page, s)
                                     s.text != null -> makeTextAnnotation(doc, page, s, texts!!)
+                                    s.table != null -> makeTableAnnotation(doc, page, s)
                                     s.tape != null -> makeTapeAnnotation(doc, page, s)
                                     s.fill != null -> makeFillAnnotation(doc, page, s)
                                     else -> makeAnnotation(doc, page, s)
@@ -395,6 +396,88 @@ object PdfInk {
         PDPageContentStream(doc, ap).use { cs ->
             // 그림 공간의 (1,0)은 오른쪽 아래, (0,1)은 왼쪽 위, 원점은 왼쪽 아래 모서리
             cs.drawImage(x, Matrix(ux[2] - ux[3], uy[2] - uy[3], ux[0] - ux[3], uy[0] - uy[3], ux[3], uy[3]))
+        }
+        val dict = COSDictionary()
+        dict.setItem(COSName.TYPE, COSName.ANNOT)
+        dict.setItem(COSName.SUBTYPE, COSName.getPDFName("Stamp"))
+        val annot = PDAnnotation.createAnnotation(dict)
+        annot.rectangle = rect
+        annot.isPrinted = true
+        annot.annotationName = UUID.randomUUID().toString()
+        annot.setModifiedDate(Calendar.getInstance())
+        annot.page = page
+        dict.setString(KEY_NAME, encode(s))
+        val apd = PDAppearanceDictionary()
+        apd.setNormalAppearance(ap)
+        annot.appearance = apd
+        return annot
+    }
+
+    /**
+     * 표 주석(Stamp): 외형에 제목 칸 색과 선을 벡터로 그려 넣는다 (다른 앱에서도 표가 그대로 보인다).
+     * 이 앱에서 다시 고칠 수 있게 표 모양은 [KEY_NAME]에 담는다
+     */
+    private fun makeTableAnnotation(doc: PDDocument, page: PDPage, s: Stroke): PDAnnotation {
+        val t = s.table!!
+        val box = page.cropBox
+        val rot = ((page.rotation % 360) + 360) % 360
+        val ux = FloatArray(4)
+        val uy = FloatArray(4)
+        for (i in 0 until 4) toUser(s.x(i), s.y(i), box, rot, ux, uy, i)
+        val pad = s.width * TABLE_HEAVY / 2f + 1f
+        val rect = PDRectangle(ux.min() - pad, uy.min() - pad, ux.max() - ux.min() + pad * 2, uy.max() - uy.min() + pad * 2)
+        // 표 좌표 → 사용자 좌표: 원점은 모서리 0, 가로는 모서리 1 쪽, 세로는 모서리 3 쪽
+        val ax = (ux[1] - ux[0]) / t.width
+        val ay = (uy[1] - uy[0]) / t.width
+        val bx = (ux[3] - ux[0]) / t.height
+        val by = (uy[3] - uy[0]) / t.height
+        fun px(x: Float, y: Float) = ux[0] + ax * x + bx * y
+        fun py(x: Float, y: Float) = uy[0] + ay * x + by * y
+        val color = PDColor(
+            floatArrayOf(Color.red(s.color) / 255f, Color.green(s.color) / 255f, Color.blue(s.color) / 255f),
+            PDDeviceRGB.INSTANCE
+        )
+        val geo = t.geometry()
+        val ap = PDAppearanceStream(doc)
+        ap.bBox = rect
+        ap.resources = PDResources()
+        PDPageContentStream(doc, ap).use { cs ->
+            if (geo.shades.isNotEmpty()) {
+                cs.saveGraphicsState()
+                val gs = PDExtendedGraphicsState()
+                gs.nonStrokingAlphaConstant = TABLE_SHADE_ALPHA
+                cs.setGraphicsStateParameters(gs)
+                cs.setNonStrokingColor(color)
+                for (sh in geo.shades) {
+                    cs.moveTo(px(sh.l, sh.t), py(sh.l, sh.t))
+                    cs.lineTo(px(sh.r, sh.t), py(sh.r, sh.t))
+                    cs.lineTo(px(sh.r, sh.b), py(sh.r, sh.b))
+                    cs.lineTo(px(sh.l, sh.b), py(sh.l, sh.b))
+                    cs.closePath()
+                    cs.fill()
+                }
+                cs.restoreGraphicsState()
+            }
+            cs.setStrokingColor(color)
+            cs.setLineCapStyle(2)
+            cs.setLineJoinStyle(0)
+            val w = s.width.coerceAtLeast(0.3f)
+            for (heavy in booleanArrayOf(false, true)) {
+                cs.setLineWidth(if (heavy) w * TABLE_HEAVY else w)
+                for (l in geo.lines) {
+                    if (l.heavy != heavy) continue
+                    cs.moveTo(px(l.x0, l.y0), py(l.x0, l.y0))
+                    cs.lineTo(px(l.x1, l.y1), py(l.x1, l.y1))
+                    cs.stroke()
+                }
+            }
+            cs.setLineWidth(w)
+            cs.moveTo(px(0f, 0f), py(0f, 0f))
+            cs.lineTo(px(t.width, 0f), py(t.width, 0f))
+            cs.lineTo(px(t.width, t.height), py(t.width, t.height))
+            cs.lineTo(px(0f, t.height), py(0f, t.height))
+            cs.closePath()
+            cs.stroke()
         }
         val dict = COSDictionary()
         dict.setItem(COSName.TYPE, COSName.ANNOT)
@@ -821,6 +904,7 @@ object PdfInk {
     // 글은 굵기 자리에 글자 크기, 끝에 |글(UTF-8 Base64)|줄 바꾸는 폭|서식(JSON, UTF-8 Base64)을 붙인다
     // 테이프는 끝에 |R(네모) 또는 P(펜)|무늬 이름, 지우개로 뚫은 구멍이 있으면 |x,y,r;x,y,r;... 을 붙인다
     // 채우기(A)는 점들이 윤곽들 (필압 1이 윤곽의 첫 점), 끝에 |무늬 이름, 구멍이 있으면 |x,y,r;... 을 붙인다
+    // 표(X)는 점이 네 모서리, 굵기 자리에 선 굵기, 끝에 |표 모양 ([InkTable.encode])
     // 포스트잇 메모(N)는 점 두 개(접힌 자리, 펼친 자리), 끝에 |글(UTF-8 Base64)|가로,세로|C(접힘) 또는 O(펼침)
     private fun encode(s: Stroke): String {
         val sb = StringBuilder(s.count * 16 + 32)
@@ -828,6 +912,7 @@ object PdfInk {
             s.note != null -> 'N'
             s.image != null -> 'I'
             s.text != null -> 'T'
+            s.table != null -> 'X'
             s.tape != null -> 'K'
             s.fill != null -> 'A'
             s.tool == Tool.HIGHLIGHTER -> 'H'
@@ -841,6 +926,7 @@ object PdfInk {
             sb.append(r2(s.x(i))).append(',').append(r2(s.y(i))).append(',').append(r2(s.p(i)))
         }
         if (s.image != null) s.role?.let { sb.append('|').append(it) }
+        s.table?.let { sb.append('|').append(it.encode()) }
         s.text?.let {
             sb.append('|').append(Base64.encodeToString(it.text.toByteArray(), Base64.NO_WRAP))
             val rich = !it.rich.isPlain
@@ -905,6 +991,8 @@ object PdfInk {
                 }
             }
             if (parts[1] == "I") s.role = parts.getOrNull(5)?.takeIf { it.isNotEmpty() }
+            val isTable = parts[1] == "X"
+            if (isTable) s.table = parts.getOrNull(5)?.let { InkTable.decode(it) }
             if (isText) {
                 val txt = String(Base64.decode(parts[5], Base64.NO_WRAP))
                 val rich = parts.getOrNull(7)?.let { RichDoc.fromJson(txt, String(Base64.decode(it, Base64.NO_WRAP))) }
@@ -917,7 +1005,7 @@ object PdfInk {
                 val h = size?.getOrNull(1)?.toFloatOrNull() ?: StickyNote.DEFAULT_H
                 s.note = StickyNote(txt, w, h).also { it.collapsed = parts.getOrNull(7) == "C" }
             }
-            if (s.count > 0 && (!isText || s.count >= 4) && (!isNote || s.count >= 2)) s else null
+            if (s.count > 0 && (!isText || s.count >= 4) && (!isNote || s.count >= 2) && (!isTable || (s.count >= 4 && s.table != null))) s else null
         }
     } catch (e: Exception) {
         null

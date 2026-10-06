@@ -151,10 +151,10 @@ fun drawInkFill(c: Canvas, st: Stroke, alphaMul: Float) = synchronized(fillPaint
     fillPaint.shader = null
 }
 
-/** 겹쳐 그리는 차례: 그림 → 채우기 → 나머지 필기 → 포스트잇 메모 (채우기가 선 아래에, 메모는 맨 위에) */
+/** 겹쳐 그리는 차례: 그림 → 채우기·표 → 나머지 필기 → 포스트잇 메모 (채우기와 표가 선 아래에, 메모는 맨 위에) */
 fun inkLayer(st: Stroke) = when {
     st.image != null -> 0
-    st.fill != null -> 1
+    st.fill != null || st.table != null -> 1
     st.note != null -> 3
     else -> 2
 }

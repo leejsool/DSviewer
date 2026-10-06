@@ -237,7 +237,7 @@ internal class HandwritingIndex(
 
     /** 쪽의 필기 중 읽을 획들 (획마다 x, y를 번갈아 담은 복사본, 쓴 차례) */
     private fun readableStrokes(strokes: List<Stroke>): List<FloatArray> = strokes.mapNotNull { s ->
-        if (s.tool != Tool.PEN || s.dashed || s.image != null || s.text != null || s.note != null ||
+        if (s.tool != Tool.PEN || s.dashed || s.image != null || s.text != null || s.note != null || s.table != null ||
             s.tape != null || s.fill != null || s.count < 2
         ) null
         else FloatArray(s.count * 2).also { xy ->

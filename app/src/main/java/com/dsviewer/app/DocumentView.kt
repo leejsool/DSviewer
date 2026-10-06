@@ -97,6 +97,8 @@ class DocumentView @JvmOverloads constructor(
         fun onShotPicked(page: Int, rect: RectF) {}
         /** 오답 영역 고르기가 끝남 (골랐거나 취소). 안내를 닫을 때 */
         fun onWrongPickEnded() {}
+        /** 표를 골랐거나 풀었다, 고른 칸·표 편집 방식·표 모양이 바뀜: 표 편집 막대를 맞춘다 */
+        fun onTableChanged() {}
     }
 
     var listener: Listener? = null
@@ -458,6 +460,33 @@ class DocumentView @JvmOverloads constructor(
         textSize = 14f * resources.displayMetrics.density
         typeface = android.graphics.Typeface.DEFAULT_BOLD
     }
+    /** 고른 표를 고치는 일 (칸 고르기·선 끌기·줄 긋기·줄 지우기·줄 칸 넣고 빼기·셀 합치기 나누기·제목 줄) */
+    internal val tables = TableController(object : TableController.Host {
+        override val ink get() = this@DocumentView.ink
+        override val scale get() = this@DocumentView.scale
+        override val density get() = this@DocumentView.density
+        override val selection get() = this@DocumentView.selection
+        override val selectedPage get() = selPage
+        override fun toPageX(page: Int, sx: Float) = this@DocumentView.toPageX(page, sx)
+        override fun toPageY(page: Int, sy: Float) = this@DocumentView.toPageY(page, sy)
+        override fun screenX(page: Int, px: Float) = (lefts[page] + px) * scale - offX
+        override fun screenY(page: Int, py: Float) = (tops[page] + py) * scale - offY
+        override fun selectionRect() = selectionScreenRect(RectF())
+        override fun reselect(page: Int, stroke: Stroke) = select(page, listOf(stroke))
+        override fun beginMove(startSx: Float, startSy: Float, curSx: Float, curSy: Float) {
+            moving = true
+            moveStartX = toPageX(selPage, startSx)
+            moveStartY = toPageY(selPage, startSy)
+            moveDx = toPageX(selPage, curSx) - moveStartX
+            moveDy = toPageY(selPage, curSy) - moveStartY
+            invalidate()
+        }
+        override fun edit(strokes: List<Stroke>, block: () -> Unit) { ink?.edit(strokes, block) }
+        override fun invalidate() = this@DocumentView.invalidate()
+        override fun hint(message: String) { android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_SHORT).show() }
+        override fun onTableChanged() { listener?.onTableChanged() }
+    })
+
     /** true면 네모 선택, false면 자유 선택(올가미) */
     var lassoRect = false
     /** 대상 선택: 누른 획·그림·글을 바로 고른다 (빈 곳을 끌면 네모 선택) */
@@ -862,6 +891,7 @@ class DocumentView @JvmOverloads constructor(
         canvas.restore()
         if (addFooter.pullPx > 0f) addFooter.drawPullPage(canvas)
         drawSelection(canvas)
+        tables.draw(canvas, moving || resizing || rotating)
         if (!range.isEmpty()) {
             // 앞뒤 한 페이지 미리 그리기
             for (p in ViewportMath.prefetchPages(range.first, range.last, sizes.size)) if (baseCache.get(p) == null) requestBase(p)
@@ -1845,6 +1875,10 @@ class DocumentView @JvmOverloads constructor(
             textMarks.move(toPageX(textMarks.page, sx), toPageY(textMarks.page, sy))
             return
         }
+        if (tables.touching) {
+            tables.moveTouch(sx, sy)
+            return
+        }
         if (rotating) {
             // 90° 배수(5° 안), 45° 배수(3° 안)에 딱 맞춘다
             rotDeg = StrokeGeometry.snapRotation(angleAt(sx, sy) - rotStart)
@@ -2087,7 +2121,9 @@ class DocumentView @JvmOverloads constructor(
             if (commit && hit != null) fillCtl.bucketFill(hit.first, hit.second, hit.third)
             return
         }
-        if (rotating) {
+        if (tables.touching) {
+            tables.endTouch(commit)
+        } else if (rotating) {
             if (commit && inkDoc != null && rotDeg != 0f) {
                 val deg = rotDeg
                 inkDoc.edit(selection) { selection.forEach { it.rotate(deg, rotCx, rotCy) } }
@@ -2217,7 +2253,8 @@ class DocumentView @JvmOverloads constructor(
 
     /** 화면 좌표가 선택 상자나 손잡이 위인지 */
     private fun onSelection(sx: Float, sy: Float) =
-        selection.isNotEmpty() && (selectionScreenRect(RectF()).contains(sx, sy) || handleAt(sx, sy) >= 0 || rotateHandleHit(sx, sy))
+        selection.isNotEmpty() && (selectionScreenRect(RectF()).contains(sx, sy) || handleAt(sx, sy) >= 0 || rotateHandleHit(sx, sy) ||
+            tables.moveHandleHit(sx, sy))
 
     /**
      * 누른 곳에 있는 손잡이: 0 왼쪽 위, 1 오른쪽 위, 2 왼쪽 아래, 3 오른쪽 아래,
@@ -2234,6 +2271,11 @@ class DocumentView @JvmOverloads constructor(
 
     private fun startLasso(sx: Float, sy: Float) {
         val handle = handleAt(sx, sy)
+        // 고른 표 안을 누르면 표 편집 (칸 고르기·선 끌기·줄 긋기·줄 지우기). 크기 조절·회전 손잡이는 그대로 먼저
+        if (handle < 0 && !rotateHandleHit(sx, sy) && tables.startTouch(sx, sy)) {
+            invalidate()
+            return
+        }
         if (lassoTap && handle < 0 && !rotateHandleHit(sx, sy)) {
             // 대상 선택: 누른 것을 고르고 그대로 끌면 옮긴다
             val hit = hitPage(sx, sy)
@@ -2324,6 +2366,7 @@ class DocumentView @JvmOverloads constructor(
         selSet = picked.toHashSet()
         val box = SelectionHit.boundsOf(picked)
         if (box != null) selBounds.set(box[0], box[1], box[2], box[3]) else selBounds.setEmpty()
+        tables.onSelectionChanged()
     }
 
     /**
@@ -2364,6 +2407,42 @@ class DocumentView @JvmOverloads constructor(
         val cy = ((offY + height / 2f) / scale - tops[page]).coerceIn(h / 2, ph - h / 2)
         val st = Stroke(Tool.PEN, Color.BLACK, 0f).apply {
             image = img
+            add(cx - w / 2, cy - h / 2, 1f)
+            add(cx + w / 2, cy - h / 2, 1f)
+            add(cx + w / 2, cy + h / 2, 1f)
+            add(cx - w / 2, cy + h / 2, 1f)
+        }
+        clearSelection()
+        inkDoc.addAll(page, listOf(st))
+        select(page, listOf(st))
+        invalidate()
+        return true
+    }
+
+    /** 보고 있는 쪽의 크기 (pt 가로, 세로). 문서가 없으면 null */
+    fun currentPageSize(): Pair<Float, Float>? {
+        if (sizes.isEmpty()) return null
+        val s = sizes[currentPage().coerceIn(0, sizes.lastIndex)]
+        return s.width.toFloat() to s.height.toFloat()
+    }
+
+    /**
+     * 표를 보고 있는 쪽 가운데에 넣고 고른다 (실행 취소 가능). 표가 쪽이나 화면보다 크면 같은 비율로 줄여 넣는다.
+     * 선을 바로 고칠 수 있게 부르는 쪽에서 도구를 선택 도구로 바꿔 둘 것
+     */
+    fun insertTable(table: InkTable, color: Int = Color.BLACK, lineWidth: Float = 1.2f): Boolean {
+        val inkDoc = ink ?: return false
+        if (sizes.isEmpty()) return false
+        val page = currentPage().coerceIn(0, sizes.lastIndex)
+        val pw = sizes[page].width
+        val ph = sizes[page].height
+        val k = min(1f, min(pw * 0.96f / table.width, ph * 0.9f / table.height))
+        val w = table.width * k
+        val h = table.height * k
+        val cx = ((offX + width / 2f) / scale - lefts[page]).coerceIn(w / 2, max(w / 2, pw - w / 2))
+        val cy = ((offY + height / 2f) / scale - tops[page]).coerceIn(h / 2, max(h / 2, ph - h / 2))
+        val st = Stroke(Tool.PEN, color, lineWidth).apply {
+            this.table = table
             add(cx - w / 2, cy - h / 2, 1f)
             add(cx + w / 2, cy - h / 2, 1f)
             add(cx + w / 2, cy + h / 2, 1f)
@@ -2582,6 +2661,7 @@ class DocumentView @JvmOverloads constructor(
         moveDy = 0f
         scaleK = 1f
         scaleKy = 1f
+        tables.onSelectionChanged()
         invalidate()
     }
 

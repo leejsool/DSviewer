@@ -237,7 +237,13 @@ class ViewerActivity : AppCompatActivity() {
             }
 
             override fun onSelectionChanged(rect: RectF?, count: Int) {
-                if (pane === focused) tools.placeSelectionBar(rect, count)
+                if (pane !== focused) return
+                tools.placeSelectionBar(rect, count)
+                tableBar.place(rect)
+            }
+
+            override fun onTableChanged() {
+                if (pane === focused) tableBar.refresh()
             }
 
             override fun onPenDown() {
@@ -1453,6 +1459,8 @@ class ViewerActivity : AppCompatActivity() {
             .isEnabled = ink != null && !docView.readOnly
         popup.menu.add(0, 7, 1, "포스트잇 메모").setIcon(R.drawable.ic_sticky_note)
             .isEnabled = ink != null && !docView.readOnly
+        popup.menu.add(0, 8, 1, "표").setIcon(R.drawable.ic_table)
+            .isEnabled = ink != null && !docView.readOnly
         popup.menu.add(0, 5, 2, "링크").setIcon(R.drawable.ic_link)
         popup.setForceShowIcon(true)
         popup.setOnMenuItemClickListener { item ->
@@ -1467,6 +1475,7 @@ class ViewerActivity : AppCompatActivity() {
                 item.itemId == 5 -> showInsertLink()
                 item.itemId == 6 -> showInsertBlankPage()
                 item.itemId == 7 -> startNotePlacement()
+                item.itemId == 8 -> showInsertTable()
                 item.itemId == 1 || item.itemId == 3 -> {
                     imageImportMode = if (item.itemId == 3) ImageImportMode.NEW_PAGE else ImageImportMode.IN_PAGE
                     pickImage.launch("image/*")
@@ -1479,6 +1488,16 @@ class ViewerActivity : AppCompatActivity() {
             true
         }
         popup.show()
+    }
+
+    /** 삽입 ▸ 표: 표 만들기 창에서 줄·칸·제목 줄·크기를 고르면 지금 보는 쪽 가운데에 넣고 고른다 (바로 옮기고 고칠 수 있게) */
+    private fun showInsertTable() {
+        val size = docView.currentPageSize() ?: return
+        TableInsertDialog.show(this, size.first, size.second, prefs) { table ->
+            if (readMode) setViewMode(ViewMode.WRITE)
+            tools.selectTool(Tool.LASSO)
+            if (!docView.insertTable(table)) toast("표를 넣지 못했습니다.")
+        }
     }
 
     /** 오답 메뉴: 담기 · 목록 · 복습 · 문제지 · 통계 (예전에는 삽입 메뉴 안에 있었다) */
@@ -1545,6 +1564,9 @@ class ViewerActivity : AppCompatActivity() {
 
     /** ⋮ ▸ 앱 정보 · 업데이트 */
     private val updater by lazy { Updater(this) }
+
+    /** 표를 골랐을 때 뜨는 표 편집 막대 */
+    private val tableBar by lazy { TableBar(this, findViewById(R.id.docFrame)) { docView } }
 
     private val shot: ShotController by lazy {
         // 복사해 두면 '붙여넣기' 단추가 보이게 올가미 도구로 (툴바를 다시 짠다)
