@@ -54,7 +54,7 @@ object PdfLinks {
     }
 
     /** 같은 문서 안의 [dest]로 가는 링크 (못 찾으면 null) */
-    private fun goTo(doc: PDDocument, rect: RectF, dest: PDDestination?): PdfLink? {
+    internal fun goTo(doc: PDDocument, rect: RectF, dest: PDDestination?): PdfLink? {
         val pd = when (dest) {
             is PDPageDestination -> dest
             is PDNamedDestination -> doc.documentCatalog.findNamedDestinationPage(dest)

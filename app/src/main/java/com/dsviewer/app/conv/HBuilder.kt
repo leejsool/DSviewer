@@ -92,7 +92,7 @@ class HBuilder {
     fun paraShape(p: ParaShape): Int {
         val key = listOf(
             p.align, p.left, p.right, p.indent, p.prev, p.next, p.lineSpacingType, p.lineSpacing,
-            p.headingType, p.headingIdRef, p.headingLevel, p.borderFillId, p.leadAbove, p.prefixTab,
+            p.headingType, p.headingIdRef, p.headingLevel, p.borderFillId, p.leadAbove, p.prefixTab, p.keepNext,
         ).joinToString("|")
         return psIds.getOrPut(key) {
             val id = psIds.size
@@ -143,6 +143,8 @@ class HBuilder {
         var pos = 0
             private set
         var pageBreak = false
+        /** 개요(제목) 수준. 제목이 아니면 -1 */
+        var outlineLevel = -1
         /** 글이 없는 문단의 높이를 정할 글자 모양 (문단 끝 표시의 모양) */
         var endCharShape = -1
 
@@ -178,7 +180,7 @@ class HBuilder {
             val list = ArrayList(items)
             // 빈 문단: 빈 글 조각으로 글자 모양을 남겨 줄 높이를 맞춘다
             if (list.none { it is PItem.Text } && endCharShape >= 0) list.add(0, PItem.Text(0, "", endCharShape))
-            return HPara(paraShapeId, 0, pageBreak, false, list, emptyList())
+            return HPara(paraShapeId, 0, pageBreak, false, list, emptyList()).also { it.outlineLevel = outlineLevel }
         }
     }
 

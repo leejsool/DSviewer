@@ -42,6 +42,8 @@ class HRenderer(private val doc: HDoc) {
     private val linkBoxes = ArrayList<LinkBox>()
     private val linkSpans = java.util.IdentityHashMap<HPara, List<HLinks.Span>>()
     private val linkMatrix = android.graphics.Matrix()
+    /** 제목(개요) 문단 자리: 변환한 PDF의 목차(탐색 창)로 단다 */
+    private val outlines = ArrayList<OutlineEntry>()
 
     // ---- 쪽 설정 ----
     private var pd = PageDef()
@@ -88,6 +90,7 @@ class HRenderer(private val doc: HDoc) {
     fun render(out: File, maxPages: Int = 0) {
         pageLimit = maxPages
         linkBoxes.clear()
+        outlines.clear()
         val needTotal = maxPages <= 0 && doc.sections.any { s -> s.paras.any { hasTotalPage(it) } }
         if (needTotal) {
             dry = true
@@ -111,6 +114,9 @@ class HRenderer(private val doc: HDoc) {
         // 하이퍼링크: 글자가 놓인 자리에 링크 주석을 단다 (눌러서 열 수 있게)
         if (linkBoxes.isNotEmpty()) LinkWriter.add(out, ArrayList(linkBoxes))
         linkBoxes.clear()
+        // 제목이 있으면 PDF 목차(탐색 창)로 (앞쪽만 그리는 썸네일은 건너뜀)
+        if (maxPages <= 0 && outlines.isNotEmpty()) OutlineWriter.add(out, ArrayList(outlines))
+        outlines.clear()
     }
 
     private fun hasTotalPage(p: HPara): Boolean = p.items.any { item ->
@@ -157,7 +163,10 @@ class HRenderer(private val doc: HDoc) {
         bodyWidth = u(pd.width - pd.left - pd.right - pd.gutter)
         bodyHeight = u(pd.height - pd.top - pd.bottom - pd.header - pd.footer)
         startPage()
-        for (para in s.paras) renderBodyPara(para)
+        for ((i, para) in s.paras.withIndex()) {
+            if (pageHasContent && paraShape(para.paraShapeId).keepNext) keepWithNext(s.paras, i)
+            renderBodyPara(para)
+        }
         if (last) renderEndnotes()
         finishPage()
     }
@@ -351,6 +360,54 @@ class HRenderer(private val doc: HDoc) {
 
     // ================= 본문 문단 =================
 
+    /**
+     * '다음 문단과 함께' 문단 [from] (제목 등)이 쪽 끝에 홀로 남지 않게: 이 문단과 따라오는 문단의 첫 줄
+     * (표면 첫 행 일부)이 이 쪽에 다 들어가지 않으면 새 쪽에서 시작한다. 직접 나누는 줄(줄 정보가 없는 문단)에서만
+     */
+    private fun keepWithNext(paras: List<HPara>, from: Int) {
+        if (paras[from].pageBreak) return
+        val bodyH = h(bodyHeight)
+        var vert = lastBottomVert
+        var j = from
+        while (j < paras.size) {
+            val p = paras[j]
+            if (j > from && p.pageBreak) return
+            if (p.lineSegs.isNotEmpty() && segsValid(p, p.lineSegs)) return
+            val ps = paraShape(p.paraShapeId)
+            val segs = layoutLines(p, ps, h(bodyWidth), vert + ps.prev)
+            if (segs.isEmpty()) return
+            val tbl = tableOnly(p)
+            val keep = ps.keepNext && tbl == null && j + 1 < paras.size
+            val first = segs.first()
+            val last = segs.last()
+            val needEnd = when {
+                j == from || keep -> last.vertPos + last.vertSize
+                tbl != null -> first.vertPos + tableMin(tbl)
+                else -> first.vertPos + first.vertSize
+            }
+            if (needEnd > bodyH) {
+                newPage()
+                return
+            }
+            if (!keep) return
+            vert = last.vertPos + last.vertSize + last.spacing + ps.next
+            j++
+        }
+    }
+
+    /** 글자처럼 놓인 표 하나뿐인 문단이면 그 표 */
+    private fun tableOnly(para: HPara): HTable? {
+        val objs = para.items.filter { it is PItem.Obj || it is PItem.Text && it.text.isNotBlank() }
+        val o = (objs.singleOrNull() as? PItem.Obj)?.obj
+        return if (o is HTable && o.treatAsChar) o else null
+    }
+
+    /** 쪽 끝에서 표를 시작하려면 최소로 필요한 높이 (HWPUNIT): 첫 행 (길면 48pt까지만) */
+    private fun tableMin(t: HTable): Int {
+        val rb = tableBounds(t)?.second ?: return h(48f)
+        return min(rb[1], h(48f))
+    }
+
     private fun renderBodyPara(para: HPara) {
         val ps = paraShape(para.paraShapeId)
         for (item in para.items) if (item is PItem.Ctrl) applyCtrl(item.ctrl)
@@ -370,9 +427,10 @@ class HRenderer(private val doc: HDoc) {
         for ((i, seg) in segs.withIndex()) {
             var vp = seg.vertPos + shift
             if (fallback) {
-                // 쪽을 넘는 긴 표는 이 쪽에서 시작해 행 단위로 나눈다 (남은 자리가 조금이라도 있으면)
-                val longTable = seg.vertSize > bodyH / 3 && bodyH - vp > bodyH / 6 && isTableLine(para, segs, i)
-                if (pageHasContent && vp + seg.vertSize > bodyH && !longTable) {
+                // 쪽에 다 못 들어가는 표는 이 쪽에서 시작해 쪽 끝에서 나눈다 (첫 행이 들어갈 자리가 있으면)
+                val splitTable = pageHasContent && vp + seg.vertSize > bodyH && isTableLine(para, segs, i) &&
+                    tableOnly(para)?.let { it.pageBreak != "NONE" && bodyH - vp >= tableMin(it) } == true
+                if (pageHasContent && vp + seg.vertSize > bodyH && !splitTable) {
                     newPage()
                     shift = -seg.vertPos
                     vp = 0
@@ -385,6 +443,7 @@ class HRenderer(private val doc: HDoc) {
             lastVert = vp
             val top = bodyTop + u(vp)
             if (i == 0) {
+                if (para.outlineLevel >= 0) noteOutline(para, ps, prefix, top)
                 anchorTop = top
                 drawFloating(para, top, bodyLeft, bodyWidth, behind = true)
             }
@@ -401,6 +460,16 @@ class HRenderer(private val doc: HDoc) {
         }
         if (fallback) lastBottomVert += ps.next
         if (!anchorTop.isNaN()) drawFloating(para, anchorTop, bodyLeft, bodyWidth, behind = false)
+    }
+
+    /** 제목 문단이 놓인 쪽과 높이를 적어 둔다 (그린 뒤 PDF 목차가 된다) */
+    private fun noteOutline(para: HPara, ps: ParaShape, prefix: String?, top: Float) {
+        if (dry) return
+        val text = para.items.filterIsInstance<PItem.Text>().joinToString("") { it.text }.replace('\n', ' ').trim()
+        val numbered = ps.headingType == "NUMBER" || ps.headingType == "OUTLINE"
+        val title = ((if (numbered) prefix.orEmpty() else "") + text).trim()
+        if (title.isEmpty()) return
+        outlines.add(OutlineEntry(para.outlineLevel, title, pageCount - 1, pageH - top))
     }
 
     /** 이 줄이 글자처럼 놓인 표 하나뿐인지 */
@@ -425,10 +494,8 @@ class HRenderer(private val doc: HDoc) {
     // ================= 문단 묶음 (셀, 머리말, 글상자) =================
 
     /** 문단들을 (x, y) 에서 폭 width 로 그린다. 반환값: 내용 높이(pt) */
-    private fun drawParaBlock(
-        paras: List<HPara>, x: Float, y: Float, width: Float,
-        vertAlign: String = "TOP", boxHeight: Float = 0f, measureOnly: Boolean = false,
-    ): Float {
+    /** 문단들의 줄 배치와 내용 높이(HWPUNIT, 마지막 문단 뒤 간격 포함) */
+    private fun paraBlockSegs(paras: List<HPara>, width: Float): Pair<List<List<LineSeg>>, Int> {
         val segLists = ArrayList<List<LineSeg>>(paras.size)
         var cursor = 0
         for (p in paras) {
@@ -442,6 +509,16 @@ class HRenderer(private val doc: HDoc) {
         for (segs in segLists) for (s in segs) contentH = max(contentH, s.vertPos + s.vertSize)
         // 워드는 칸 높이에 마지막 문단의 '문단 뒤' 간격까지 넣는다
         paras.lastOrNull()?.let { p -> paraShape(p.paraShapeId).let { ps -> if (ps.leadAbove > 0f) contentH += max(0, ps.next) } }
+        return segLists to contentH
+    }
+
+    /** [visTop]~[visBottom] (쪽 좌표) 밖에 놓이는 줄은 그리지 않는다 (표가 쪽 사이에서 잘릴 때) */
+    private fun drawParaBlock(
+        paras: List<HPara>, x: Float, y: Float, width: Float,
+        vertAlign: String = "TOP", boxHeight: Float = 0f, measureOnly: Boolean = false,
+        visTop: Float = -Float.MAX_VALUE, visBottom: Float = Float.MAX_VALUE,
+    ): Float {
+        val (segLists, contentH) = paraBlockSegs(paras, width)
         val contentPt = u(contentH)
         if (measureOnly) return contentPt
         val dy = when (vertAlign) {
@@ -461,6 +538,7 @@ class HRenderer(private val doc: HDoc) {
                     anchor = top
                     drawFloating(p, top, x, width, behind = true)
                 }
+                if (top + u(segs[i].vertSize) <= visTop + 0.5f || top >= visBottom - 0.5f) continue
                 drawSegment(p, ps, segs, i, x, top, if (i == 0) prefix else null, allowSplit = false)
             }
             if (!anchor.isNaN()) drawFloating(p, anchor, x, width, behind = false)
@@ -1028,35 +1106,42 @@ class HRenderer(private val doc: HDoc) {
     private fun drawTable(t: HTable, x: Float, y: Float, allowSplit: Boolean) {
         val (cb, rb) = tableBounds(t) ?: return
         val rows = rb.size - 1
-        val totalH = u(rb[rows])
+        val total = rb[rows]
+        val totalH = u(total)
         val bottom = bodyTop + bodyHeight
 
         if (!allowSplit || y + totalH <= bottom + 1f || t.pageBreak == "NONE") {
-            drawTableRows(t, cb, rb, 0, rows, x, y, null)
+            drawTableRows(t, cb, rb, 0, total, x, y)
             return
         }
-        // 쪽을 넘는 표: 행 단위로 나눠 여러 쪽에 그린다
+        // 쪽을 넘는 표: 쪽 끝에서 나눠 여러 쪽에 그린다 (행 사이, 행이 길면 줄 사이에서도)
         val headerRows = if (t.repeatHeader) {
             var hr = 0
             while (hr < rows && t.cells.any { it.row == hr && it.header }) hr++
             hr
         } else 0
-        var r0 = 0
+        var pos = 0
         var top = y
-        var first = true
-        while (r0 < rows) {
-            val headerH = if (!first && headerRows > 0) u(rb[headerRows]) else 0f
+        while (pos < total) {
+            // 이어지는 쪽에는 제목 행을 다시 그린다
+            val repeat = headerRows > 0 && pos >= rb[headerRows]
+            val headerH = if (repeat) u(rb[headerRows]) else 0f
             val room = bottom - top - headerH
-            var r1 = r0 + 1
-            while (r1 < rows && u(rb[r1 + 1] - rb[r0]) <= room + 0.5f) r1++
-            if (!first && headerRows > 0 && r0 >= headerRows) {
-                drawTableRows(t, cb, rb, 0, headerRows, x, top, null)
+            var end = tableChunkEnd(t, cb, rb, pos, pos + h(room))
+            if (end <= pos) {
+                // 이 쪽에는 한 줄도 못 놓는다: 쪽 중간이면 새 쪽에서 다시, 쪽 맨 위면 억지로 자른다
+                if (top > bodyTop + 1f) {
+                    newPage()
+                    top = bodyTop
+                    continue
+                }
+                end = min(total, pos + max(h(room), h(12f)))
             }
-            drawTableRows(t, cb, rb, r0, r1, x, top + headerH, r0)
-            val usedBottom = top + headerH + u(rb[r1] - rb[r0])
-            r0 = r1
-            first = false
-            if (r0 < rows) {
+            if (repeat) drawTableRows(t, cb, rb, 0, rb[headerRows], x, top)
+            drawTableRows(t, cb, rb, pos, end, x, top + headerH)
+            val usedBottom = top + headerH + u(end - pos)
+            pos = end
+            if (pos < total) {
                 newPage()
                 top = bodyTop
             } else {
@@ -1068,14 +1153,76 @@ class HRenderer(private val doc: HDoc) {
         }
     }
 
-    /** 행 [r0, r1) 을 y 위치에 그린다. clipFrom 이 있으면 걸친 셀을 잘라서 그린다 */
-    private fun drawTableRows(t: HTable, cb: IntArray, rb: IntArray, r0: Int, r1: Int, x: Float, y: Float, clipFrom: Int?) {
+    /**
+     * 표를 쪽 사이에서 나눌 때, 위에서 [pos]부터 시작해 [limit]까지 들어가는 곳 (HWPUNIT, 표 맨 위가 0).
+     * 행이 통째로 들어가면 행 사이에서, 행 하나가 걸치면 그 행의 줄 사이에서 자른다. 하나도 못 놓으면 [pos]
+     */
+    private fun tableChunkEnd(t: HTable, cb: IntArray, rb: IntArray, pos: Int, limit: Int): Int {
+        val rows = rb.size - 1
+        if (limit >= rb[rows]) return rb[rows]
+        var k = 0
+        while (k < rows - 1 && rb[k + 1] <= limit) k++
+        val from = max(pos, rb[k])
+        val cut = rowCut(t, cb, rb, k, from, limit)
+        if (cut > 0) return cut
+        return if (rb[k] > pos) rb[k] else pos
+    }
+
+    /**
+     * 행 [k]를 [limit]에서 자르되 줄을 가르지 않는 자리 (HWPUNIT). [from] 위로 새 줄이 하나도 못 들어가면 -1.
+     * 한 칸의 줄이 걸치면 그 줄 위로 올린다
+     */
+    private fun rowCut(t: HTable, cb: IntArray, rb: IntArray, k: Int, from: Int, limit: Int): Int {
+        val rows = rb.size - 1
+        val tops = ArrayList<Int>()
+        val bots = ArrayList<Int>()
+        for (cell in t.cells) {
+            if (cell.row > k || cell.row + cell.rowSpan <= k || cell.paras.isEmpty()) continue
+            val re = (cell.row + cell.rowSpan).coerceAtMost(rows)
+            val ce = (cell.col + cell.colSpan).coerceAtMost(cb.size - 1)
+            val innerW = u(cb[ce] - cb[cell.col] - cell.marginLeft - cell.marginRight)
+            if (innerW <= 1f) continue
+            val (segLists, contentH) = paraBlockSegs(cell.paras, innerW)
+            val innerH = rb[re] - rb[cell.row] - cell.marginTop - cell.marginBottom
+            val dy = when (cell.vertAlign) {
+                "CENTER" -> max(0, (innerH - contentH) / 2)
+                "BOTTOM" -> max(0, innerH - contentH)
+                else -> 0
+            }
+            val base = rb[cell.row] + cell.marginTop + dy
+            for (segs in segLists) for (sg in segs) {
+                tops.add(base + sg.vertPos)
+                bots.add(base + sg.vertPos + sg.vertSize)
+            }
+        }
+        var c = limit
+        var guard = 0
+        while (guard++ < tops.size + 2) {
+            var moved = false
+            for (n in tops.indices) if (tops[n] < c && c < bots[n]) { c = tops[n]; moved = true }
+            if (!moved) break
+        }
+        if (c <= from) return -1
+        // 새로 보이는 줄이 하나라도 있어야 한다
+        val any = bots.indices.any { bots[it] <= c && bots[it] > from }
+        return if (any) c else -1
+    }
+
+    /** 표의 [p0, p1) 구간(표 맨 위가 0, HWPUNIT)을 y 위치에 그린다. 구간이 표 일부면 잘라서 그린다 */
+    private fun drawTableRows(t: HTable, cb: IntArray, rb: IntArray, p0: Int, p1: Int, x: Float, y: Float) {
         val c = canvas
-        val originY = y - u(rb[r0])
+        val rows = rb.size - 1
+        var r0 = 0
+        while (r0 < rows - 1 && rb[r0 + 1] <= p0) r0++
+        var r1 = r0 + 1
+        while (r1 < rows && rb[r1] < p1) r1++
+        val clipped = p0 > 0 || p1 < rb[rows]
+        val originY = y - u(p0)
+        val yEnd = y + u(p1 - p0)
         val cells = t.cells.filter { it.row < r1 && it.row + it.rowSpan > r0 }
-        val clip = RectF(x, y, x + u(cb[cb.size - 1]), y + u(rb[r1] - rb[r0]))
+        val clip = RectF(x, y, x + u(cb[cb.size - 1]), yEnd)
         c?.save()
-        if (clipFrom != null) c?.clipRect(clip)
+        if (clipped) c?.clipRect(clip)
         // 배경
         if (c != null) for (cell in cells) {
             val bf = doc.borderFills[cell.borderFillId] ?: continue
@@ -1091,7 +1238,8 @@ class HRenderer(private val doc: HDoc) {
             if (cell.paras.isNotEmpty()) {
                 c?.save()
                 c?.clipRect(r)
-                drawParaBlock(cell.paras, r.left + u(cell.marginLeft), r.top + u(cell.marginTop), innerW, cell.vertAlign, innerH)
+                if (clipped) drawParaBlock(cell.paras, r.left + u(cell.marginLeft), r.top + u(cell.marginTop), innerW, cell.vertAlign, innerH, visTop = y, visBottom = yEnd)
+                else drawParaBlock(cell.paras, r.left + u(cell.marginLeft), r.top + u(cell.marginTop), innerW, cell.vertAlign, innerH)
                 c?.restore()
             }
         }
@@ -1100,6 +1248,11 @@ class HRenderer(private val doc: HDoc) {
             val bf = doc.borderFills[cell.borderFillId] ?: doc.borderFills[t.borderFillId] ?: continue
             val r = cellRect(cell, cb, rb, x, originY)
             drawBorder(c, r, bf)
+            // 잘린 자리에도 가로선을 긋는다 (칸이 다음 쪽으로 이어질 때)
+            if (clipped) {
+                if (r.top < y - 0.5f) drawLine(c, r.left, y, r.right, y, bf.top)
+                if (r.bottom > yEnd + 0.5f) drawLine(c, r.left, yEnd, r.right, yEnd, bf.bottom)
+            }
         }
         c?.restore()
     }

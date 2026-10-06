@@ -1424,6 +1424,7 @@ class ViewerActivity : AppCompatActivity() {
         popup.setOnMenuItemClickListener { item ->
             when (item.itemId) {
                 R.id.action_go_page -> showGoToPage()
+                R.id.action_outline -> showOutline()
                 R.id.action_insert_plain -> insertBlankPage(Paper.PLAIN)
                 R.id.action_insert_grid -> insertBlankPage(Paper.GRID)
                 R.id.action_insert_lined -> insertBlankPage(Paper.LINED)
@@ -2024,6 +2025,42 @@ class ViewerActivity : AppCompatActivity() {
     // ================= 쪽 이동 =================
 
     /** 쪽 번호를 입력해 그 쪽으로 간다 (쪽 번호 표시나 ⋮ 메뉴에서) */
+    /** 목차(제목들)를 보여 주고, 고르면 그 제목으로 간다. 워드 문서의 제목 스타일이나 PDF 책갈피가 목차가 된다 */
+    private fun showOutline() {
+        val t = current ?: return
+        val f = t.renderPdf ?: return
+        t.outline?.let { if (it.first == f) { showOutlineList(t, it.second); return } }
+        lifecycleScope.launch {
+            val items = try {
+                withContext(Dispatchers.IO) { PdfOutline.extract(f) }
+            } catch (e: Throwable) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                emptyList()
+            }
+            t.outline = f to items
+            if (current === t) showOutlineList(t, items)
+        }
+    }
+
+    private fun showOutlineList(t: DocTab, items: List<PdfOutlineItem>) {
+        if (items.isEmpty()) {
+            toast("이 문서에는 목차가 없습니다. (워드의 제목 스타일이나 PDF 책갈피가 있으면 여기에 나옵니다)")
+            return
+        }
+        val labels = items.map { "    ".repeat(it.level) + it.title }.toTypedArray()
+        MaterialAlertDialogBuilder(this)
+            .setTitle("목차")
+            .setItems(labels) { _, i ->
+                val item = items[i]
+                val before = docView.topSpot()
+                val to = Spot(item.page, item.y ?: 0f)
+                docView.scrollToPageY(to.page, to.y)
+                if (before != null) t.ink?.jumped(Spot(before.first, before.second), to)
+            }
+            .setNegativeButton("닫기", null)
+            .show()
+    }
+
     private fun showGoToPage() {
         val count = current?.pdf?.pageCount ?: return
         val d = resources.displayMetrics.density

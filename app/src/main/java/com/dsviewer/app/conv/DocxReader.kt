@@ -126,8 +126,14 @@ class DocxReader private constructor(private val pkg: OpcPackage) {
             val first = HBuilder.Para()
             sectPr?.let { headerFooter(it, first) }
             if (first.items.isNotEmpty()) paras.add(first.build())
-            for (n in nodes) {
-                if (n.name == "p") paragraph(n, docPart, emptyList(), paras) else table(n, docPart, paras)
+            for ((i, n) in nodes.withIndex()) {
+                if (n.name == "p") {
+                    // '같은 스타일 문단 사이에는 간격 넣지 않음' (글머리표 목록 등)
+                    val ctx = contextualOf(n)
+                    val noBefore = ctx != null && i > 0 && nodes[i - 1].takeIf { it.name == "p" }?.let { contextualOf(it)?.first } == ctx.first
+                    val noAfter = ctx != null && i + 1 < nodes.size && nodes[i + 1].takeIf { it.name == "p" }?.let { contextualOf(it)?.first } == ctx.first
+                    paragraph(n, docPart, emptyList(), paras, noBefore = noBefore, noAfter = noAfter, top = true)
+                } else table(n, docPart, paras)
                 if (++count >= limit) break
             }
             val page = pageDef(sectPr)
@@ -373,8 +379,22 @@ class DocxReader private constructor(private val pkg: OpcPackage) {
         )
     }
 
-    /** 문단 하나 (쪽 나누기가 있으면 여러 문단이 된다) → [out] */
-    private fun paragraph(p: XNode, part: String, extra: List<XNode>, out: MutableList<HPara>, extraR: List<XNode> = emptyList()) {
+    /** '같은 스타일 문단 사이 간격 없음'이 켜진 문단이면 (스타일 이름, true), 아니면 null */
+    private fun contextualOf(p: XNode): Pair<String?, Boolean>? {
+        val pPr = p.child("pPr")
+        val pStyle = pPr?.child("pStyle")?.get("val") ?: defaultParaStyle
+        val node = pPr?.child("contextualSpacing") ?: styleChain(pStyle).firstNotNullOfOrNull { it.path("pPr", "contextualSpacing") }
+        return if (on(node)) pStyle to true else null
+    }
+
+    /**
+     * 문단 하나 (쪽 나누기가 있으면 여러 문단이 된다) → [out].
+     * [noBefore]·[noAfter]: 같은 스타일 이웃과 맞닿는 쪽의 문단 간격을 뺀다. [top]: 본문 문단 (제목이면 목차에 올린다)
+     */
+    private fun paragraph(
+        p: XNode, part: String, extra: List<XNode>, out: MutableList<HPara>, extraR: List<XNode> = emptyList(),
+        noBefore: Boolean = false, noAfter: Boolean = false, top: Boolean = false,
+    ) {
         val pPr = p.child("pPr")
         val pStyle = pPr?.child("pStyle")?.get("val") ?: defaultParaStyle
         // 번호: 문단에 없으면 스타일에서
@@ -445,8 +465,9 @@ class DocxReader private constructor(private val pkg: OpcPackage) {
             spA(lines)?.toIntOrNull()?.let { return it * baseSize * 12 / 1000 }
             return HBuilder.twip(spA(tw)?.toIntOrNull() ?: 0)
         }
-        ps.prev = space("before", "beforeLines", "beforeAutospacing")
-        ps.next = space("after", "afterLines", "afterAutospacing")
+        ps.prev = if (noBefore) 0 else space("before", "beforeLines", "beforeAutospacing")
+        ps.next = if (noAfter) 0 else space("after", "afterLines", "afterAutospacing")
+        ps.keepNext = on(first(props, "keepNext"))
 
         // 번호·글머리표 (번호 뒤 글은 내어쓰기 자리에서 시작)
         ps.prefixTab = true
@@ -474,6 +495,8 @@ class DocxReader private constructor(private val pkg: OpcPackage) {
 
         val state = PState(psId, contId, out, b.charShape(markRun))
         state.cur.pageBreak = on(first(props, "pageBreakBefore"))
+        // 개요 수준이 있는 본문 문단(제목)은 PDF 목차(탐색 창)가 된다. 9는 '본문'
+        if (top) first(props, "outlineLvl")?.int("val", 9)?.let { if (it in 0..8) state.cur.outlineLevel = it }
         inline(p, part, pStyle, extraR, state)
         state.flush()
     }

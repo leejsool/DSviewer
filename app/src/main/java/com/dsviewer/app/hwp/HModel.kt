@@ -82,6 +82,8 @@ class ParaShape {
     var leadAbove = 0f
     /** 번호·글머리표 뒤를 내어쓰기 자리까지 띄운다 (워드·파워포인트처럼 둘째 줄과 글 시작을 맞춤) */
     var prefixTab = false
+    /** 다음 문단과 같은 쪽에 둔다 (워드의 '다음 문단과 함께': 제목이 쪽 끝에 홀로 남지 않게). 직접 나누는 줄에서만 */
+    var keepNext = false
 }
 
 class BorderLine(val type: String, val width: Float /* pt */, val color: Int) {
@@ -174,6 +176,8 @@ class HPara(
     val lineSegs: List<LineSeg>,
 ) {
     val textLength: Int get() = items.lastOrNull()?.let { it.pos + it.len } ?: 0
+    /** 개요(제목) 수준 (0이 가장 위). 제목이 아니면 -1. 변환한 PDF의 목차(탐색 창)로 쓴다 */
+    var outlineLevel = -1
 }
 
 /** 각주/미주 모양 (구분선, 간격, 번호 모양) */

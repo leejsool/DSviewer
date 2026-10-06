@@ -9,6 +9,7 @@
         </menu>
     </item>
     <item android:id="@+id/action_go_page" android:title="쪽 이동" />
+    <item android:id="@+id/action_outline" android:title="목차 (제목으로 이동)" />
     <item android:id="@+id/action_insert_page" android:title="이 쪽 뒤에 빈 쪽 넣기">
         <menu>
             <item android:id="@+id/action_insert_plain" android:title="흰 바탕" />
