@@ -30,7 +30,7 @@ import java.util.Locale
 
 /**
  * 건의·오류 신고를 받는 곳: 구글 설문(Form)의 '응답 제출 주소'. 보내는 사람은 로그인도 메일 앱도 필요 없다.
- * 설문에는 짧은 답변 칸 네 개(종류 · 내용 · 연락처 · 앱·기기 정보)를 만들고, 각 칸의 entry 번호를 아래에 적는다.
+ * 설문에는 짧은 답변 칸 세 개(종류 · 내용 · 앱·기기 정보)를 만들고, 각 칸의 entry 번호를 아래에 적는다.
  * [FORM_ID]가 비어 있으면 아직 받는 곳이 없는 것이라 '보내기'가 꺼진다.
  */
 internal object FeedbackConfig {
@@ -38,7 +38,6 @@ internal object FeedbackConfig {
     const val FORM_ID = ""
     const val ENTRY_KIND = "entry.0"
     const val ENTRY_MESSAGE = "entry.0"
-    const val ENTRY_CONTACT = "entry.0"
     const val ENTRY_INFO = "entry.0"
 
     val ready get() = FORM_ID.isNotBlank()
@@ -126,11 +125,6 @@ class Feedback(private val activity: AppCompatActivity) {
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
         }
         box.addView(message, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
-        val contact = EditText(activity).apply {
-            hint = "답을 받고 싶으면 연락처 (메일·전화, 안 적어도 됩니다)"
-            isSingleLine = true
-        }
-        box.addView(contact, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
         val withInfo = CheckBox(activity).apply {
             text = "앱 버전·기기 정보 함께 보내기"
             isChecked = true
@@ -174,7 +168,6 @@ class Feedback(private val activity: AppCompatActivity) {
                 listOf(
                     FeedbackConfig.ENTRY_KIND to kind,
                     FeedbackConfig.ENTRY_MESSAGE to FeedbackForm.clip(text, 4000),
-                    FeedbackConfig.ENTRY_CONTACT to contact.text.toString().trim(),
                     FeedbackConfig.ENTRY_INFO to info,
                 )
             )
