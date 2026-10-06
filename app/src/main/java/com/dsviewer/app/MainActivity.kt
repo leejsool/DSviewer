@@ -56,6 +56,9 @@ import java.util.Locale
 /** 첫 화면: 최근 파일 · 기기 전체 문서 · 폴더 탐색 */
 class MainActivity : AppCompatActivity() {
 
+    /** ⋮ ▸ 앱 정보 · 업데이트 */
+    private val updater by lazy { Updater(this) }
+
     private enum class Tab(val label: String, val icon: Int) {
         RECENT("최근 파일", R.drawable.ic_history),
         FAVORITE("즐겨찾기", R.drawable.ic_star),
@@ -172,6 +175,8 @@ class MainActivity : AppCompatActivity() {
             SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT)
         )
         super.onCreate(savedInstanceState)
+        // 업데이트로 받아 둔 설치 파일은 앱이 새로 켜질 때 지운다
+        if (savedInstanceState == null) Updater.clearOld(this)
         setContentView(R.layout.activity_main)
         applyInsets(findViewById(R.id.root))
 
@@ -261,6 +266,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        updater.onResume()
         // 권한 설정에서 돌아왔거나, 문서를 저장하고 돌아왔을 수 있으므로 매번 새로 읽는다
         refresh()
         updateOpenTabs()
@@ -305,6 +311,7 @@ class MainActivity : AppCompatActivity() {
                 R.id.action_recover -> { showRecoverDialog(pendingDrafts()); true }
                 R.id.action_review -> { showReviewDialog(); true }
                 R.id.action_lock_password -> { Locks.changePassword(this); true }
+                R.id.action_about -> { updater.show(); true }
                 else -> false
             }
         }

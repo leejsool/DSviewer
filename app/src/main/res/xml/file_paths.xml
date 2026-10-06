@@ -4,4 +4,5 @@
     <external-path name="storage" path="." />
     <root-path name="root" path="/storage" />
     <cache-path name="share" path="share/" />
+    <cache-path name="update" path="update/" />
 </paths>
