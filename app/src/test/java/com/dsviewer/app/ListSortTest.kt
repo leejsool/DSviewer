@@ -32,6 +32,34 @@ class ListSortTest {
     private fun sorted(rows: List<Item>, key: SortKey, desc: Boolean) =
         ListSort.sort(rows, key, desc, collator, fields).map { it.title }
 
+    // ================= 직접 정한 순서 =================
+
+    private fun manual(rows: List<Item>, order: List<String>) =
+        ListSort.sortManual(rows, order, { it.title }, fields).map { it.title }
+
+    @Test fun manualOrderFollowsSavedListAndKeepsFoldersFirst() {
+        val rows = listOf(Item("a.pdf"), Item("b.pdf"), Item("보관", folder = true), Item("c.pdf"))
+        assertEquals(listOf("보관", "c.pdf", "a.pdf", "b.pdf"), manual(rows, listOf("c.pdf", "a.pdf", "b.pdf")))
+    }
+
+    @Test fun manualOrderPutsUnknownRowsLastInTheirOwnOrder() {
+        val rows = listOf(Item("new1.pdf"), Item("a.pdf"), Item("new2.pdf"), Item("b.pdf"))
+        assertEquals(listOf("b.pdf", "a.pdf", "new1.pdf", "new2.pdf"), manual(rows, listOf("b.pdf", "a.pdf")))
+    }
+
+    @Test fun manualOrderWithNothingSavedKeepsTheGivenOrder() {
+        val rows = listOf(Item("z.pdf"), Item("보관", folder = true), Item("a.pdf"))
+        assertEquals(listOf("보관", "z.pdf", "a.pdf"), manual(rows, emptyList()))
+    }
+
+    @Test fun mergeOrderReplacesShownRowsAndKeepsTheOthers() {
+        val saved = listOf("a", "b", "c", "d")
+        // 폴더 안에서 c, a만 보이다가 a, c로 바꿨다: b·d(다른 곳 것)는 그대로
+        assertEquals(listOf("b", "d", "a", "c"), ListSort.mergeOrder(saved, listOf("a", "c")))
+        assertEquals(listOf("x", "y"), ListSort.mergeOrder(emptyList(), listOf("x", "y")))
+        assertEquals(listOf("a"), ListSort.mergeOrder(listOf("a", "a"), listOf("a", "a")))
+    }
+
     // ================= 정렬 =================
 
     @Test fun sortByNameAscendingAndDescending() {

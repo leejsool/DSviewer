@@ -31,7 +31,8 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.appcompat.widget.SearchView
+import androidx.core.widget.doAfterTextChanged
+import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.core.view.MenuCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -113,7 +114,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var filterButton: MaterialButton
     private lateinit var sortButton: MaterialButton
     private lateinit var viewButton: MaterialButton
-    private lateinit var searchItem: MenuItem
+    private lateinit var searchRow: View
+    private lateinit var searchField: EditText
+    private lateinit var searchClear: View
     private lateinit var selectBar: View
     private lateinit var selectCount: TextView
     private lateinit var selectAll: MaterialButton
@@ -162,7 +165,7 @@ class MainActivity : AppCompatActivity() {
         override fun handleOnBackPressed() {
             when {
                 selecting -> endSelection()
-                searchItem.isActionViewExpanded -> searchItem.collapseActionView()
+                query.isNotEmpty() -> searchField.setText("")
                 else -> goUp()
             }
         }
@@ -187,6 +190,9 @@ class MainActivity : AppCompatActivity() {
         progress = findViewById(R.id.progress)
         permCard = findViewById(R.id.permCard)
         pathBar = findViewById(R.id.pathBar)
+        searchRow = findViewById(R.id.searchRow)
+        searchField = findViewById(R.id.searchField)
+        searchClear = findViewById(R.id.searchClear)
         pathScroll = findViewById(R.id.pathScroll)
         pathText = findViewById(R.id.pathText)
         upButton = findViewById(R.id.upButton)
@@ -220,6 +226,8 @@ class MainActivity : AppCompatActivity() {
         }
         findViewById<View>(R.id.permButton).setOnClickListener { askAccess() }
         setupMenu()
+        setupSearch()
+        reorder.attachToRecyclerView(list)
 
         favDir = prefs.getString("favDir", null)
         dir = prefs.getString("dir", null)?.let(::File)?.takeIf { it.isDirectory }
@@ -279,30 +287,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupMenu() {
         toolbar.inflateMenu(R.menu.main)
-        searchItem = toolbar.menu.findItem(R.id.action_search)
-        (searchItem.actionView as SearchView).apply {
-            queryHint = "파일 이름"
-            setOnQueryTextListener(object : SearchView.OnQueryTextListener {
-                override fun onQueryTextSubmit(q: String) = true
-                override fun onQueryTextChange(q: String): Boolean {
-                    this@MainActivity.query = q
-                    applyFilter()
-                    return true
-                }
-            })
-        }
-        searchItem.setOnActionExpandListener(object : MenuItem.OnActionExpandListener {
-            override fun onMenuItemActionExpand(item: MenuItem): Boolean {
-                backCallback.isEnabled = true
-                return true
-            }
-            override fun onMenuItemActionCollapse(item: MenuItem): Boolean {
-                query = ""
-                applyFilter()
-                list.post { updateBack() }
-                return true
-            }
-        })
         toolbar.setOnMenuItemClickListener { item ->
             when (item.itemId) {
                 R.id.action_new_note -> { newNote(); true }
@@ -317,6 +301,24 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** 목록 위 이름 찾기 칸: 쓰는 대로 지금 탭의 목록을 거르고, 엔터를 누르면 키보드를 접는다 */
+    private fun setupSearch() {
+        searchField.doAfterTextChanged { text ->
+            query = text?.toString().orEmpty()
+            searchClear.isVisible = query.isNotEmpty()
+            applyFilter()
+            updateBack()
+        }
+        searchField.setOnEditorActionListener { v, action, _ ->
+            if (action == EditorInfo.IME_ACTION_SEARCH) {
+                v.clearFocus()
+                getSystemService(android.view.inputmethod.InputMethodManager::class.java)?.hideSoftInputFromWindow(v.windowToken, 0)
+                true
+            } else false
+        }
+        searchClear.setOnClickListener { searchField.setText("") }
+    }
+
     // ================= 목록 =================
 
     private fun refresh() {
@@ -324,6 +326,7 @@ class MainActivity : AppCompatActivity() {
         val needAccess = (tab == Tab.ALL || tab == Tab.FOLDER) && !DocFiles.hasAccess(this)
         permCard.isVisible = needAccess
         pathBar.isVisible = !needAccess && !selecting
+        searchRow.isVisible = !needAccess && !selecting
         toolbar.menu.findItem(R.id.action_lock_password)?.isVisible = Locks.hasPassword(this)
         upButton.isVisible = tab == Tab.FOLDER || tab == Tab.FAVORITE
         newFolderButton.isVisible = tab == Tab.FAVORITE
@@ -401,7 +404,7 @@ class MainActivity : AppCompatActivity() {
     private fun show(all: List<Row>, emptyMsg: String) {
         val groups = shownGroups()
         val rows = all.filter { it.kind != Kind.DOC || DocGroup.of(DocType.ofName(it.title))?.let { g -> g in groups } ?: true }
-        this.rows = sortRows(rows)
+        this.rows = if (manualOn()) ListSort.sortManual(sortRows(rows), FavOrder.load(this), { it.key }, rowFields) else sortRows(rows)
         if (selecting) selected.retainAll(this.rows.mapNotNull { it.key }.toSet())
         this.emptyMsg = if (rows.none { !it.isFolder } && all.any { !it.isFolder })
             "고른 형식(${groups.joinToString("·") { it.label }})의 문서가 없습니다.\n깔때기 단추에서 볼 형식을 고르세요."
@@ -464,7 +467,8 @@ class MainActivity : AppCompatActivity() {
         }
         val modified = file?.lastModified() ?: 0L
         val shownTime = if (key == SortKey.MODIFIED && file != null) modified else item.time
-        val sub = listOfNotNull(date(shownTime), file?.parentFile?.let(::shortPath)).joinToString(" · ")
+        val resume = if (item.lastPage > 0) "${item.lastPage + 1}쪽에서 이어 보기" else null
+        val sub = listOfNotNull(date(shownTime), resume, file?.parentFile?.let(::shortPath)).joinToString(" · ")
         return Row(
             item.name, sub, Kind.DOC, {
                 unlockThen(item.uri) {
@@ -529,11 +533,25 @@ class MainActivity : AppCompatActivity() {
     private fun sortDesc(): Boolean = prefs.getBoolean("sortDesc_${tab.name}", sortKey().descFirst)
 
     private fun setSort(key: SortKey, desc: Boolean) {
-        prefs.edit().putString("sort_${tab.name}", key.name).putBoolean("sortDesc_${tab.name}", desc).apply()
+        prefs.edit().putString("sort_${tab.name}", key.name).putBoolean("sortDesc_${tab.name}", desc).putBoolean("favManual", false).apply()
         refresh()
     }
 
+    /** 즐겨찾기를 내가 끌어서 정한 순서로 보는 중인가 */
+    private fun manualOn() = tab == Tab.FAVORITE && prefs.getBoolean("favManual", false)
+
+    private fun setManual() {
+        prefs.edit().putBoolean("favManual", true).apply()
+        refresh()
+        android.widget.Toast.makeText(this, "문서·폴더 옆 손잡이를 끌어서 순서를 바꾸세요.", android.widget.Toast.LENGTH_SHORT).show()
+    }
+
     private fun updateSortButton() {
+        if (manualOn()) {
+            sortButton.text = MANUAL_LABEL
+            sortButton.contentDescription = "정렬: $MANUAL_LABEL"
+            return
+        }
         val key = sortKey()
         val desc = sortDesc()
         sortButton.text = "${key.label} ${if (desc) "↓" else "↑"}"
@@ -546,19 +564,28 @@ class MainActivity : AppCompatActivity() {
         val desc = sortDesc()
         val pm = PopupMenu(this, sortButton)
         val m = pm.menu
-        keys.forEachIndexed { i, k -> m.add(1, i, i, k.label).isChecked = k == key }
+        val manual = manualOn()
+        keys.forEachIndexed { i, k -> m.add(1, i, i, k.label).isChecked = k == key && !manual }
         m.setGroupCheckable(1, true, true)
         val (asc, dsc) = key.dirLabels
         // 이 기준에서 먼저 고르는 쪽을 위에
         val dirs = if (key.descFirst) listOf(true to dsc, false to asc) else listOf(false to asc, true to dsc)
-        dirs.forEachIndexed { i, (d, label) -> m.add(2, 100 + i, 100 + i, label).isChecked = d == desc }
+        // 직접 정한 순서로 볼 때는 오름·내림이 뜻이 없다
+        if (!manual) dirs.forEachIndexed { i, (d, label) -> m.add(2, 100 + i, 100 + i, label).isChecked = d == desc }
         m.setGroupCheckable(2, true, true)
+        // 즐겨찾기: 위 기준 대신 내가 끌어서 정한 순서
+        if (tab == Tab.FAVORITE) m.add(3, MANUAL_ID, MANUAL_ID, "$MANUAL_LABEL (끌어서 바꾸기)").isChecked = manual
+        m.setGroupCheckable(3, true, true)
         MenuCompat.setGroupDividerEnabled(m, true)
         pm.setOnMenuItemClickListener { item ->
-            if (item.groupId == 1) {
-                val k = keys[item.itemId]
-                setSort(k, if (k == key) desc else k.descFirst)
-            } else setSort(key, dirs[item.itemId - 100].first)
+            when {
+                item.itemId == MANUAL_ID -> setManual()
+                item.groupId == 1 -> {
+                    val k = keys[item.itemId]
+                    setSort(k, if (k == key && !manual) desc else k.descFirst)
+                }
+                else -> setSort(key, dirs[item.itemId - 100].first)
+            }
             true
         }
         pm.show()
@@ -730,7 +757,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateBack() {
-        backCallback.isEnabled = selecting || searchItem.isActionViewExpanded ||
+        backCallback.isEnabled = selecting || query.isNotEmpty() ||
             (tab == Tab.FOLDER && !permCard.isVisible && canGoUp()) ||
             (tab == Tab.FAVORITE && favDir != null)
     }
@@ -1182,11 +1209,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun startSelection(r: Row) {
         val key = r.key ?: return
-        if (searchItem.isActionViewExpanded) searchItem.actionView?.clearFocus()
+        searchField.clearFocus()
         selected += key
         if (!selecting) {
             selecting = true
             pathBar.isVisible = false
+            searchRow.isVisible = false
             selectBar.isVisible = true
             actionBar.isVisible = true
             adapter.notifyDataSetChanged()
@@ -1202,6 +1230,7 @@ class MainActivity : AppCompatActivity() {
         selectBar.isVisible = false
         actionBar.isVisible = false
         pathBar.isVisible = !permCard.isVisible
+        searchRow.isVisible = !permCard.isVisible
         adapter.notifyDataSetChanged()
         updateBack()
     }
@@ -1568,6 +1597,36 @@ class MainActivity : AppCompatActivity() {
         override fun onRequestDisallowInterceptTouchEvent(disallowIntercept: Boolean) {}
     }
 
+    // ================= 직접 정한 순서 (즐겨찾기) =================
+
+    /** 손잡이를 끌어서 문서·폴더의 자리를 바꾼다. 폴더끼리, 문서끼리만 바꿀 수 있다 (폴더는 늘 문서 앞) */
+    private val reorder = ItemTouchHelper(object : ItemTouchHelper.SimpleCallback(
+        ItemTouchHelper.UP or ItemTouchHelper.DOWN or ItemTouchHelper.LEFT or ItemTouchHelper.RIGHT, 0,
+    ) {
+        override fun isLongPressDragEnabled() = false
+        override fun onMove(rv: RecyclerView, from: RecyclerView.ViewHolder, to: RecyclerView.ViewHolder): Boolean {
+            val a = from.bindingAdapterPosition
+            val b = to.bindingAdapterPosition
+            return a != RecyclerView.NO_POSITION && b != RecyclerView.NO_POSITION && adapter.move(a, b)
+        }
+        override fun onSwiped(holder: RecyclerView.ViewHolder, direction: Int) {}
+        override fun clearView(rv: RecyclerView, holder: RecyclerView.ViewHolder) {
+            super.clearView(rv, holder)
+            saveManualOrder()
+        }
+    })
+
+    /** 끌어서 바꾼 차례를 적어 둔다 (찾는 글로 걸러 보는 중에는 끌 수 없으므로 목록 전체의 차례) */
+    private fun saveManualOrder() {
+        if (!manualOn() || query.isNotBlank()) return
+        val shown = adapter.items.mapNotNull { it.key }
+        rows = adapter.items
+        FavOrder.save(this, ListSort.mergeOrder(FavOrder.load(this), shown))
+    }
+
+    /** 손잡이를 보일 때: 직접 정한 순서로 보는 중이고, 고르는 중이나 찾는 중이 아닐 때 */
+    private fun canReorder() = manualOn() && !selecting && query.isBlank()
+
     // ================= 목록 어댑터 =================
 
     private inner class RowAdapter : RecyclerView.Adapter<RowHolder>() {
@@ -1578,6 +1637,14 @@ class MainActivity : AppCompatActivity() {
         fun submit(list: List<Row>) {
             items = list
             notifyDataSetChanged()
+        }
+
+        /** [from]번째 줄을 [to]번째로 옮긴다 (폴더와 문서는 서로 넘나들 수 없다) */
+        fun move(from: Int, to: Int): Boolean {
+            if (from !in items.indices || to !in items.indices || items[from].isFolder != items[to].isFolder) return false
+            items = items.toMutableList().also { it.add(to, it.removeAt(from)) }
+            notifyItemMoved(from, to)
+            return true
         }
 
         override fun getItemCount() = items.size
@@ -1600,11 +1667,17 @@ class MainActivity : AppCompatActivity() {
         private val badge: TextView = v.findViewById(R.id.badge)
         private val star: ImageView = v.findViewById(R.id.star)
         private val check: ImageView = v.findViewById(R.id.check)
+        private val drag: ImageView = v.findViewById(R.id.drag)
         private var job: Job? = null
         private var source: Thumbs.Source? = null
 
         init {
             if (isGrid) thumb.ratio = 1.25f
+            // 손잡이에 손가락을 대면 바로 끌기 시작 (꾹 누를 필요 없이)
+            drag.setOnTouchListener { _, e ->
+                if (e.actionMasked == MotionEvent.ACTION_DOWN) reorder.startDrag(this)
+                false
+            }
         }
 
         fun bind(r: Row) {
@@ -1651,6 +1724,7 @@ class MainActivity : AppCompatActivity() {
         fun bindSelection(r: Row) {
             val on = r.key != null && r.key in selected
             check.isVisible = selecting && r.selectable
+            drag.isVisible = r.selectable && canReorder()
             check.setImageResource(if (on) R.drawable.ic_check_circle else R.drawable.ic_circle_outline)
             itemView.isActivated = selecting && on
             // 선택 중에는 별을 눌러도 바뀌지 않게
@@ -1701,6 +1775,8 @@ class MainActivity : AppCompatActivity() {
         /** 뷰어의 ＋ 버튼으로 띄웠을 때: 고른 문서를 새 탭으로 열고, 뒤로 가면 뷰어로 돌아간다 */
         const val EXTRA_PICK = "pick"
         private val FOLDER_COLOR = Color.parseColor("#E8A317")
+        private const val MANUAL_LABEL = "직접 정한 순서"
+        private const val MANUAL_ID = 200
         /** 선택 표시만 다시 그리라는 알림 */
         private val SELECTION = Any()
     }

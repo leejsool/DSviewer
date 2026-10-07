@@ -13,7 +13,7 @@
     <com.dsviewer.app.TabActionRow
         android:id="@+id/tabRow"
         android:layout_width="match_parent"
-        android:layout_height="44dp"
+        android:layout_height="48dp"
         android:gravity="center_vertical"
         android:orientation="horizontal">
 
@@ -76,6 +76,14 @@
             android:contentDescription="오답"
             android:src="@drawable/ic_wrong_note"
             android:tooltipText="오답 (담기 · 목록 · 복습 · 문제지 · 통계)" />
+
+        <!-- 보기 ▾: 양쪽 보기 · 분할 보기 · 페이지 관리 · 쪽 한눈에 보기 · 읽기 모드 · 전체 화면을 한 메뉴로 (아래 단추들은 처음엔 숨겨 둔다. 옵션 ▸ 상단 툴바에서 다시 꺼낼 수 있다) -->
+        <ImageButton
+            android:id="@+id/actionView"
+            style="@style/TabBarAction"
+            android:contentDescription="보기"
+            android:src="@drawable/ic_view_menu"
+            android:tooltipText="보기 (양쪽 보기 · 분할 보기 · 페이지 관리 · 한눈에 보기 · 읽기 모드 · 전체 화면)" />
 
         <!-- 보기: 양쪽 보기 · 분할 보기 · 페이지 관리 · 쪽 한눈에 보기 · 읽기 모드 · 전체 화면 (켜진 것은 바탕에 동그라미) -->
         <ImageButton

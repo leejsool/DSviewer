@@ -46,6 +46,20 @@
             android:src="@drawable/ic_circle_outline"
             android:visibility="gone" />
 
+        <!-- 직접 정한 순서로 볼 때(즐겨찾기) 끌어서 자리를 바꾸는 손잡이 -->
+        <ImageView
+            android:id="@+id/drag"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:layout_gravity="bottom|end"
+            android:layout_margin="4dp"
+            android:background="@drawable/bg_pill"
+            android:contentDescription="끌어서 순서 바꾸기"
+            android:padding="10dp"
+            android:src="@drawable/ic_drag_handle"
+            android:tint="@android:color/white"
+            android:visibility="gone" />
+
         <ImageButton
             android:id="@+id/star"
             android:layout_width="40dp"

@@ -31,6 +31,56 @@
         android:background="?attr/colorSurface"
         android:orientation="vertical">
 
+    <!-- 이름 찾기 칸: 늘 보인다 (선택 모드·권한 안내 중에는 숨김). 쓰는 대로 지금 탭의 목록이 걸러진다 -->
+    <LinearLayout
+        android:id="@+id/searchRow"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingHorizontal="12dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="4dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:background="@drawable/bg_search"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_marginStart="14dp"
+                android:importantForAccessibility="no"
+                android:src="@drawable/ic_search" />
+
+            <EditText
+                android:id="@+id/searchField"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_marginStart="10dp"
+                android:layout_weight="1"
+                android:background="@null"
+                android:contentDescription="파일 이름으로 찾기"
+                android:hint="파일 이름으로 찾기"
+                android:imeOptions="actionSearch"
+                android:importantForAutofill="no"
+                android:inputType="text"
+                android:maxLines="1"
+                android:textAppearance="?attr/textAppearanceBodyLarge" />
+
+            <ImageButton
+                android:id="@+id/searchClear"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="찾는 글 지우기"
+                android:padding="12dp"
+                android:src="@drawable/ic_close"
+                android:visibility="gone" />
+        </LinearLayout>
+    </LinearLayout>
+
     <!-- 목록 줄: (폴더·즐겨찾기 탭) 위로 가기와 현재 위치, 새 폴더, 정렬, 목록/큰 아이콘 -->
     <LinearLayout
         android:id="@+id/pathBar"

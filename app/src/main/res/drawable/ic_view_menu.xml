@@ -1,0 +1,7 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24"
+    android:tint="?attr/colorControlNormal">
+    <!-- 보기 메뉴: 바깥 네모를 세로·가로 선으로 나눈 화면 배치 (양쪽 보기·분할 보기·페이지 관리 등이 여기 모여 있다) -->
+    <path android:strokeColor="@android:color/white" android:strokeWidth="1.8" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M3.5,5h17v14h-17z M10,5v14 M10,12h10.5" />
+</vector>

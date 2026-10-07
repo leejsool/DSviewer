@@ -76,6 +76,27 @@ internal object ListSort {
         return sortedFolders + docs.sortedWith(ordered(key))
     }
 
+    /**
+     * '직접 정한 순서': 폴더는 문서 앞에, 각각 [order]에 적힌 차례대로. 적혀 있지 않은 줄(새로 즐겨찾기한 문서 등)은 뒤로 가고
+     * 그들끼리는 들어온 차례([rows]의 차례)를 지킨다. [key]는 줄의 열쇠 (없으면 적혀 있지 않은 것으로 친다)
+     */
+    fun <T> sortManual(rows: List<T>, order: List<String>, key: (T) -> String?, f: Fields<T>): List<T> {
+        val index = HashMap<String, Int>()
+        order.forEachIndexed { i, k -> index.putIfAbsent(k, i) }
+        val byOrder = compareBy<T> { r -> key(r)?.let { index[it] } ?: Int.MAX_VALUE }
+        val (folders, docs) = rows.partition { f.isFolder(it) }
+        return folders.sortedWith(byOrder) + docs.sortedWith(byOrder)
+    }
+
+    /**
+     * 끌어서 바꾼 뒤 보이는 줄들의 차례 [shown]을 전체 순서 [saved]에 합친다.
+     * 보이지 않는 줄(다른 폴더 것)의 차례는 그대로 두고, 보이는 줄들은 새 차례로 뒤에 모은다
+     */
+    fun mergeOrder(saved: List<String>, shown: List<String>): List<String> {
+        val now = shown.toSet()
+        return saved.filter { it !in now } + shown.distinct()
+    }
+
     /** 이름에 [query](앞뒤 공백 뺀)가 들어 있는 줄만. 비어 있으면 전부. 대소문자는 가리지 않는다 */
     fun <T> filterByTitle(rows: List<T>, query: String, f: Fields<T>): List<T> {
         val q = query.trim()

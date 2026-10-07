@@ -89,7 +89,11 @@ internal class ToolbarController(
     // ================= 올가미 선택 막대 =================
 
     fun setupSelectionTools() {
-        findViewById<View>(R.id.selectionDelete).setOnClickListener { docView.deleteSelection() }
+        findViewById<View>(R.id.selectionDelete).setOnClickListener {
+            val n = selectionCount
+            docView.deleteSelection()
+            if (n > 0) undoNotice("${n}개를 지웠습니다.")
+        }
         findViewById<View>(R.id.selectionFlipH).setOnClickListener { docView.flipSelection(horizontal = true) }
         findViewById<View>(R.id.selectionFlipV).setOnClickListener { docView.flipSelection(horizontal = false) }
         findViewById<View>(R.id.selectionCopy).setOnClickListener {
@@ -653,6 +657,16 @@ internal class ToolbarController(
 
     private fun toast(msg: String) = Toast.makeText(activity, msg, Toast.LENGTH_SHORT).show()
 
+    /** 지금 올가미로 고른 획·그림 수 (삭제 막대에 쓰는 값) */
+    private var selectionCount = 0
+
+    /** 되돌릴 수 있는 일을 알리고, 몇 초 안에는 '실행 취소'로 바로 되돌리게 한다 */
+    private fun undoNotice(msg: String) = Notice.show(activity, msg) {
+        textEditor.commit()
+        docView.clearSelection()
+        ink()?.undo()
+    }
+
     /** 테이프 붙이기 (펜 / 사각). 테이프 지우개는 끈다 */
     private fun setTapeMode(rect: Boolean) {
         docView.tapeRect = rect
@@ -726,7 +740,7 @@ internal class ToolbarController(
         val page = docView.currentPage()
         if (page < 0) return
         val n = docView.clearPageTapes()
-        toast(if (n == 0) "${page + 1}쪽에는 지울 테이프가 없습니다." else "테이프 ${n}개를 지웠습니다. 실행 취소로 되돌릴 수 있습니다.")
+        if (n == 0) toast("${page + 1}쪽에는 지울 테이프가 없습니다.") else undoNotice("테이프 ${n}개를 지웠습니다.")
     }
 
     /** 테이프 무늬 고르기: 다섯 가지가 펼쳐진다 */
@@ -1071,6 +1085,7 @@ internal class ToolbarController(
             selectionBar.visibility = View.GONE
             return
         }
+        selectionCount = count
         selectionBar.findViewById<TextView>(R.id.selectionCount).text = "${count}개 선택"
         // 그림만 골랐으면 색 버튼을 뺀다 (그림에는 색을 입힐 수 없음)
         selectionBar.findViewById<View>(R.id.selectionColor).visibility =

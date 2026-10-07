@@ -30,6 +30,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.IntentCompat
 import androidx.core.view.WindowCompat
+import androidx.core.view.doOnLayout
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.button.MaterialButton
@@ -74,6 +75,8 @@ class ViewerActivity : AppCompatActivity() {
     private lateinit var pagePanel: PagePanel
     private lateinit var pagesButton: ImageButton
     private lateinit var twoPageButton: ImageButton
+    /** 보기 ▾ 메뉴 단추 (양쪽 보기·분할 보기·페이지 관리·쪽 한눈에 보기·읽기 모드·전체 화면) */
+    private lateinit var viewMenuButton: ImageButton
     private lateinit var readModeButton: ImageButton
     private lateinit var fullscreenButton: ImageButton
     private lateinit var exitFullscreenButton: View
@@ -358,6 +361,7 @@ class ViewerActivity : AppCompatActivity() {
         super.onStop()
         // 시스템이 뒤로 간 앱을 끌 수 있으니, 저장하지 않은 필기는 지금 자동 저장본에 적어 둔다
         autoSaver.flush()
+        docs.forEach { rememberPage(it) }
     }
 
     /** 뷰어가 이미 떠 있을 때 탐색기에서 문서를 고르면 새 탭으로 연다 */
@@ -520,7 +524,10 @@ class ViewerActivity : AppCompatActivity() {
         textEditor.commit()
         overview.hide()
         docView.searchHits = emptyMap()
-        current?.let { it.viewState = docView.viewState() }
+        current?.let {
+            rememberPage(it)
+            it.viewState = docView.viewState()
+        }
         current = t
         focused.tab = t
         val d = t.pdf
@@ -588,6 +595,7 @@ class ViewerActivity : AppCompatActivity() {
         docs.filter { it.review?.source === t }.forEach { removeTab(it) }
         val index = docs.indexOf(t)
         if (index < 0) return
+        rememberPage(t)
         val wasCurrent = current === t
         val shownPanes = panesOf(t)
         val pane = shownPanes.firstOrNull { it === focused } ?: shownPanes.firstOrNull()
@@ -770,6 +778,7 @@ class ViewerActivity : AppCompatActivity() {
         t.ink = inkDoc
         updateTabTitle(t)  // 복구한 필기면 디스켓 표시
         for (p in panesOf(t)) p.view.setDocument(d, inkDoc, sharedState(p, t))
+        resumeLastPage(t, d.pageCount)
         if (current === t) {
             syncPagePanel()
             progress.visibility = View.GONE
@@ -779,6 +788,22 @@ class ViewerActivity : AppCompatActivity() {
             t.startReviewOnLoad = false
             if (current === t) docView.post { wrong.reviewDue() }
         }
+    }
+
+    /** 보던 쪽을 최근 목록에 적어 둔다 (다음에 열면 그 쪽에서 이어 본다). 복습 문서·아직 안 열린 문서·떠 있지 않은 탭은 건너뛴다 */
+    private fun rememberPage(t: DocTab) {
+        if (t.review != null || t.pdf == null) return
+        val page = paneOf(t)?.view?.currentPage() ?: return
+        if (page >= 0) Recents.setLastPage(this, t.uri.toString(), page)
+    }
+
+    /** 지난번에 보던 쪽에서 이어 본다 (이 탭을 이미 보던 자리가 있으면 그대로). 알림의 '처음부터'로 첫 쪽으로 돌아갈 수 있다 */
+    private fun resumeLastPage(t: DocTab, pageCount: Int) {
+        if (t.viewState != null || t.review != null) return
+        val page = Recents.get(this, t.uri.toString())?.lastPage ?: return
+        if (page <= 0 || page >= pageCount) return
+        for (p in panesOf(t)) p.view.doOnLayout { p.view.scrollToPage(page) }
+        if (current === t) Notice.show(this, "${page + 1}쪽에서 이어서 봅니다.", "처음부터") { paneOf(t)?.view?.scrollToPage(0) }
     }
 
     private fun fail(t: DocTab, msg: String) {
@@ -795,6 +820,14 @@ class ViewerActivity : AppCompatActivity() {
     // 탭 줄 오른쪽의 실행 취소 · 다시 실행 · 저장 · ⋮ 버튼
 
     private fun setupActions() {
+        // 보기 메뉴가 생기기 전에 고른 상단 툴바 설정은 보기 단추들을 메뉴로 옮긴다 (처음 값은 hiddenActions()가 알려 준다)
+        if (!prefs.getBoolean("viewMenu", false)) {
+            val edit = prefs.edit().putBoolean("viewMenu", true)
+            if (prefs.contains("hiddenActions")) edit.putString("hiddenActions", (hiddenActions() + VIEW_ACTION_KEYS).joinToString(","))
+            edit.apply()
+        }
+        viewMenuButton = findViewById(R.id.actionView)
+        viewMenuButton.setOnClickListener { showViewMenu(it) }
         // 쪽을 넣고 빼는 중에는 기다린다 (PDF를 다 만든 뒤에야 기록이 생기므로)
         undoButton.setOnClickListener { if (current?.pagesBusy == false) { textEditor.commit(); docView.clearSelection(); ink?.undo() } }
         redoButton.setOnClickListener { if (current?.pagesBusy == false) { textEditor.commit(); docView.clearSelection(); ink?.redo() } }
@@ -851,6 +884,8 @@ class ViewerActivity : AppCompatActivity() {
         twoPageButton.setActive(docView.twoPage)
         splitButton.setActive(split)
         readModeButton.setActive(readMode)
+        // 보기 메뉴 단추는 분할·한눈에 보기·읽기 모드처럼 잠깐 켜 두는 보기가 켜져 있을 때만 바탕에 동그라미
+        viewMenuButton.setActive(split || overview.isShowing || readMode)
         // 쓸 수 있으면 책에 펜, 읽기면 책에 눈, 필기를 숨긴 읽기면 책에 줄 그은 눈
         readModeButton.setImageResource(
             when (viewMode) {
@@ -859,14 +894,52 @@ class ViewerActivity : AppCompatActivity() {
                 ViewMode.READ_HIDDEN -> R.drawable.ic_read_hidden
             }
         )
-        val label = when (viewMode) {
+        readModeButton.contentDescription = readModeLabel
+        readModeButton.tooltipText = readModeLabel
+        review.sync()
+    }
+
+    /** 읽기 모드 단추가 다음에 하는 일 (누를 때마다 쓰기 → 읽기 → 필기 숨김 → 쓰기) */
+    private val readModeLabel: String
+        get() = when (viewMode) {
             ViewMode.WRITE -> "읽기 모드 (필기 보임)"
             ViewMode.READ -> "필기 숨기기"
             ViewMode.READ_HIDDEN -> "읽기 모드 끝내기"
         }
-        readModeButton.contentDescription = label
-        readModeButton.tooltipText = label
-        review.sync()
+
+    /** 보기 ▾: 화면을 어떻게 보여 줄지 고르는 메뉴. 켜져 있는 것은 이름 뒤에 ✓ */
+    private fun showViewMenu(anchor: View) {
+        val popup = PopupMenu(this, anchor)
+        fun add(id: Int, label: String, icon: Int, on: Boolean = false, enabled: Boolean = true) {
+            popup.menu.add(0, id, id, if (on) "$label  ✓" else label).setIcon(icon).isEnabled = enabled
+        }
+        add(1, "양쪽 보기", R.drawable.ic_two_page, docView.twoPage)
+        add(2, "분할 보기", R.drawable.ic_split_view, split)
+        add(3, "페이지 관리", R.drawable.ic_page_panel, pagePanel.isShowing)
+        add(4, "쪽 한눈에 보기", R.drawable.ic_grid_view, overview.isShowing, ink != null)
+        add(
+            5, readModeLabel,
+            when (viewMode) {
+                ViewMode.WRITE -> R.drawable.ic_write_mode
+                ViewMode.READ -> R.drawable.ic_read_mode
+                ViewMode.READ_HIDDEN -> R.drawable.ic_read_hidden
+            },
+            readMode,
+        )
+        add(6, "전체 화면", R.drawable.ic_fullscreen)
+        popup.setForceShowIcon(true)
+        popup.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                1 -> twoPageButton.performClick()
+                2 -> onSplitClicked(anchor)
+                3 -> pagesButton.performClick()
+                4 -> toggleOverview()
+                5 -> setViewMode(viewMode.next)
+                6 -> setFullscreen(true)
+            }
+            true
+        }
+        popup.show()
     }
 
     /** 켜진 보기 단추는 바탕에 옅은 동그라미 */
@@ -1166,7 +1239,7 @@ class ViewerActivity : AppCompatActivity() {
     private fun pastePage(t: DocTab, at: Int) {
         val clip = pageClip ?: return
         val inkDoc = t.ink ?: return
-        val done = { toast("${at + 1}쪽에 붙여넣었습니다.") }
+        val done = { undoNotice("${at + 1}쪽에 붙여넣었습니다.") }
         editPages(t, { src, out -> PdfPages.insertPdf(src, out, at, clip.pdf) }, done) { pages ->
             // 여러 번 붙여도 서로 따로 고칠 수 있게 붙일 때마다 사본
             val list = clip.strokes.mapTo(ArrayList()) { it.copy() }
@@ -1181,7 +1254,7 @@ class ViewerActivity : AppCompatActivity() {
         val t = current ?: return false
         if (t.pagesBusy || t.ink == null || t.sourcePdf == null) return false
         val viewing = docView.currentPage()
-        val done = { toast("쪽 순서를 바꿨습니다. 실행 취소로 되돌릴 수 있습니다.") }
+        val done = { undoNotice("쪽 순서를 바꿨습니다.") }
         editPages(t, { src, out -> PdfPages.reorder(src, out, order) }, done) { pages ->
             val old = pages.toList()
             pages.clear()
@@ -1202,7 +1275,7 @@ class ViewerActivity : AppCompatActivity() {
         val go = {
             val gone = list.toSet()
             val keep = (0 until d.pageCount).filter { it !in gone }
-            val done = { toast("${list.size}쪽을 지웠습니다. 실행 취소로 되돌릴 수 있습니다.") }
+            val done = { undoNotice("${list.size}쪽을 지웠습니다.") }
             editPages(t, { src, out -> PdfPages.reorder(src, out, keep) }, done) { pages ->
                 val old = pages.toList()
                 pages.clear()
@@ -2376,7 +2449,7 @@ class ViewerActivity : AppCompatActivity() {
     }
 
     /** 분할 보기 단추: 켜져 있으면 끝내고(고른 칸의 문서만 남긴다), 아니면 둘째 칸에 띄울 문서를 고른다 */
-    private fun onSplitClicked() {
+    private fun onSplitClicked(anchor: View = splitButton) {
         if (split) {
             endSplit(keep = focused)
             return
@@ -2384,7 +2457,7 @@ class ViewerActivity : AppCompatActivity() {
         val t = current ?: return
         val others = docs.filter { it !== t }
         // 지금 문서를 그대로 한 번 더(같은 필기를 두 군데에서 보고 쓴다), 이미 열려 있는 다른 문서, 새로 열 문서
-        val popup = PopupMenu(this, splitButton)
+        val popup = PopupMenu(this, anchor)
         if (t.pdf != null && t.ink != null) popup.menu.add(0, SPLIT_SAME, 0, "지금 문서를 둘로 나눠 보기")
         others.forEachIndexed { i, d -> popup.menu.add(0, i, i + 1, d.name) }
         if (docs.size < MAX_TABS) popup.menu.add(0, SPLIT_OTHER, others.size + 1, "다른 문서 나눠 보기…")
@@ -2504,6 +2577,7 @@ class ViewerActivity : AppCompatActivity() {
             TopAction("save", "저장", { saveButton }, R.drawable.ic_save),
             TopAction("insert", "삽입", { insertButton }, R.drawable.ic_insert),
             TopAction("wrong", "오답", { wrongButton }, R.drawable.ic_wrong_note),
+            TopAction("view", "보기 (메뉴)", { viewMenuButton }, R.drawable.ic_view_menu),
             TopAction("twoPage", "양쪽 보기", { twoPageButton }, R.drawable.ic_two_page),
             TopAction("split", "분할 보기", { splitButton }, R.drawable.ic_split_view),
             TopAction("pages", "페이지 관리", { pagesButton }, R.drawable.ic_page_panel),
@@ -2529,8 +2603,9 @@ class ViewerActivity : AppCompatActivity() {
         box.requestLayout()
     }
 
+    /** 숨긴 상단 단추들. 처음엔 보기 단추들이 보기 ▾ 메뉴 안으로 들어가 있다 */
     private fun hiddenActions(): Set<String> =
-        prefs.getString("hiddenActions", null)?.split(',')?.filter { it.isNotEmpty() }?.toSet() ?: emptySet()
+        prefs.getString("hiddenActions", null)?.split(',')?.filter { it.isNotEmpty() }?.toSet() ?: VIEW_ACTION_KEYS
 
     /** 숨긴 상단 단추를 감춘다. 읽기 모드 중에는 끝낼 길이 필요해서 읽기 모드 단추는 늘 보인다 */
     private fun applyActionVisibility() {
@@ -2547,13 +2622,13 @@ class ViewerActivity : AppCompatActivity() {
         val buttons = topActions.map { it.button() } + findViewById<View>(R.id.actionMore)
         for (b in buttons) {
             val lp = b.layoutParams
-            lp.width = px(30f * s)
-            lp.height = px(38f * s)
+            lp.width = px(44f * s)
+            lp.height = px(44f * s)
             b.layoutParams = lp
-            b.setPadding(px(5f * s), px(9f * s), px(5f * s), px(9f * s))
+            b.setPadding(px(12f * s), px(12f * s), px(12f * s), px(12f * s))
         }
         findViewById<View>(R.id.tabRow).let { row ->
-            row.layoutParams = row.layoutParams.also { it.height = px(maxOf(44f, 38f * s + 6f)) }
+            row.layoutParams = row.layoutParams.also { it.height = px(maxOf(48f, 44f * s + 4f)) }
         }
     }
 
@@ -2704,6 +2779,9 @@ class ViewerActivity : AppCompatActivity() {
 
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
 
+    /** 되돌릴 수 있는 일을 알리고, 6초 안에는 '실행 취소'로 바로 되돌리게 한다 (위 실행 취소 단추와 같은 일) */
+    private fun undoNotice(msg: String) = Notice.show(this, msg) { undoButton.performClick() }
+
     companion object {
         /** 넘기지 않은 채 이만큼(ms) 지나면 쪽 번호가 흐려지며 사라진다 */
         private const val PAGE_LABEL_SHOW_MS = 2500L
@@ -2722,6 +2800,8 @@ class ViewerActivity : AppCompatActivity() {
         /** true면 찍은 화면에서 네모로 부분을 골라 그 부분만 넣는다 */
         const val EXTRA_CAPTURE_REGION = "captureRegion"
         private const val MAX_TABS = 6
+        /** 보기 ▾ 메뉴로 모은 상단 단추들의 이름표 ([TopAction.key]) */
+        private val VIEW_ACTION_KEYS = setOf("twoPage", "split", "pages", "overview", "readMode", "fullscreen")
         /** 분할 보기 단추 메뉴: 지금 문서를 그대로 / 다른 문서 열기 (그 밖의 번호는 열려 있는 다른 문서의 순서) */
         private const val SPLIT_SAME = 1000
         private const val SPLIT_OTHER = 1001

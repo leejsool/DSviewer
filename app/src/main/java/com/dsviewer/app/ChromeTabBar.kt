@@ -45,7 +45,7 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
     private val compactBelowDp = 600
     private var compact = isCompactScreen()
     private val minTabPx get() = px(if (compact) compactMinTabWidthDp else minTabWidthDp)
-    private val addButtonSpace get() = if (showAddButton) px(40f) else 0
+    private val addButtonSpace get() = if (showAddButton) px(46f) else 0
 
     private val density = resources.displayMetrics.density
     private fun px(dp: Float) = (dp * density).toInt()
@@ -79,7 +79,7 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
         addButton.setBackgroundResource(attrRes(android.R.attr.selectableItemBackgroundBorderless))
         addButton.setOnClickListener { listener?.onAddTab() }
         addButton.visibility = View.GONE
-        addView(addButton, LayoutParams(px(38f), px(38f)).apply {
+        addView(addButton, LayoutParams(px(44f), px(44f)).apply {
             gravity = Gravity.CENTER_VERTICAL
             marginStart = px(2f)
         })
@@ -250,10 +250,10 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
             }
             title.setTextSize(TypedValue.COMPLEX_UNIT_SP, if (c) 12f else 13f)
             if (closable) {
-                val pad = px(if (c) 4f else 5f)
+                val pad = px(if (c) 7f else 9f)
                 close.setPadding(pad, pad, pad, pad)
                 (close.layoutParams as LayoutParams).apply {
-                    width = px(if (c) 22f else 26f); height = width
+                    width = px(if (c) 28f else 34f); height = width
                     marginStart = px(if (c) 1f else 2f)
                 }
             }

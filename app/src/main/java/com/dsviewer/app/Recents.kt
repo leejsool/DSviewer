@@ -20,6 +20,8 @@ object Recents {
         val thumbPage: Int = 0,
         /** 불러온 그림·손으로 그린 썸네일 (앱 저장소 thumbs 폴더의 파일 이름). 있으면 쪽보다 먼저 */
         val thumbFile: String? = null,
+        /** 마지막으로 보던 쪽 (0부터). 0이면 처음부터. 다시 열면 이 쪽에서 이어 본다 */
+        val lastPage: Int = 0,
     )
 
     private const val PREFS = "recents"
@@ -35,6 +37,7 @@ object Recents {
                 Item(
                     o.getString("uri"), o.getString("name"), o.getLong("time"), o.optBoolean("star"),
                     o.optString("folder").ifEmpty { null }, o.optInt("thumbPage"), o.optString("thumbFile").ifEmpty { null },
+                    o.optInt("lastPage"),
                 )
             }
         }.getOrDefault(emptyList())
@@ -54,6 +57,12 @@ object Recents {
     fun setStar(ctx: Context, uri: String, star: Boolean) {
         if (!star) get(ctx, uri)?.thumbFile?.let { Thumbs.deleteCustom(ctx, it) }
         update(ctx, uri) { if (star) it.copy(star = true) else it.copy(star = false, folder = null, thumbPage = 0, thumbFile = null) }
+    }
+
+    /** 문서를 닫거나 떠날 때 보던 [page]쪽(0부터)을 적어 둔다. 최근 목록에 없는 문서면 아무것도 하지 않는다 */
+    fun setLastPage(ctx: Context, uri: String, page: Int) {
+        if (get(ctx, uri)?.lastPage == page) return
+        update(ctx, uri) { it.copy(lastPage = page.coerceAtLeast(0)) }
     }
 
     fun setFolder(ctx: Context, uri: String, folder: String?) = update(ctx, uri) { it.copy(folder = folder) }
@@ -94,9 +103,34 @@ object Recents {
             val o = JSONObject().put("uri", it.uri).put("name", it.name).put("time", it.time).put("star", it.star)
             it.folder?.let { f -> o.put("folder", f) }
             if (it.thumbPage != 0) o.put("thumbPage", it.thumbPage)
+            if (it.lastPage != 0) o.put("lastPage", it.lastPage)
             it.thumbFile?.let { f -> o.put("thumbFile", f) }
             arr.put(o)
         }
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, arr.toString()).apply()
+    }
+}
+
+/**
+ * 즐겨찾기를 '직접 정한 순서'로 볼 때의 순서: 문서의 uri와 폴더의 "vf:<id>" 열쇠를 위에서부터 늘어놓은 하나의 목록.
+ * 폴더 안팎은 따로 보이므로 서로의 차례에는 영향이 없다 ([ListSort.mergeOrder])
+ */
+object FavOrder {
+    private const val PREFS = "recents"
+    private const val KEY = "favOrder"
+    private const val MAX = 1000
+
+    fun load(ctx: Context): List<String> {
+        val raw = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null) ?: return emptyList()
+        return runCatching {
+            val arr = JSONArray(raw)
+            (0 until arr.length()).map { arr.getString(it) }
+        }.getOrDefault(emptyList())
+    }
+
+    fun save(ctx: Context, keys: List<String>) {
+        val arr = JSONArray()
+        keys.takeLast(MAX).forEach { arr.put(it) }
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, arr.toString()).apply()
     }
 }

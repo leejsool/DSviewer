@@ -11,6 +11,17 @@
     android:paddingHorizontal="12dp"
     android:paddingVertical="6dp">
 
+    <!-- 직접 정한 순서로 볼 때(즐겨찾기) 끌어서 자리를 바꾸는 손잡이 -->
+    <ImageView
+        android:id="@+id/drag"
+        android:layout_width="40dp"
+        android:layout_height="48dp"
+        android:layout_marginStart="-8dp"
+        android:contentDescription="끌어서 순서 바꾸기"
+        android:padding="8dp"
+        android:src="@drawable/ic_drag_handle"
+        android:visibility="gone" />
+
     <!-- 선택 모드의 체크 -->
     <ImageView
         android:id="@+id/check"
