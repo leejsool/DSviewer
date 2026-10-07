@@ -869,7 +869,8 @@ class DocumentView @JvmOverloads constructor(
             // 그림을 먼저, 채우기를 그 위에, 나머지 필기는 맨 위에 (배지·포스트잇은 바깥 여백까지 그려야 해서 따로)
             if (!hideInk) for (layer in 0..2) for (st in inkDoc.pages[i]) {
                 if (inkLayer(st) != layer || st === hiddenStroke || (dragging && st in selSet) || st.isMarginItem()) continue
-                drawStroke(canvas, st)
+                // 대칭 미리 보기: 확정하면 없어질 원본은 아주 흐리게만 (남는 모양과 헷갈리지 않게)
+                drawStroke(canvas, st, if (symmetry.hides(st)) FADED_ALPHA else 1f)
             }
             fillCtl.drawPending(canvas, i)
             textMarks.draw(canvas, i)
@@ -2851,6 +2852,8 @@ class DocumentView @JvmOverloads constructor(
 
     companion object {
         private const val TAG = "DocumentView"
+        /** 대칭 미리 보기에서 없어질 원본의 진하기 */
+        private const val FADED_ALPHA = 0.12f
         private const val MIN_ZOOM = 0.1f
         private const val MAX_ZOOM = 6f
         /** 가로 넘김에서 이 배율 이하(확대 안 한 상태)면 손을 뗄 때 한 쪽에 맞춘다 */

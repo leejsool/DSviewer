@@ -60,6 +60,11 @@ internal class SymmetryController(private val view: View, private val host: Host
     private val axis = FloatArray(4)
     var result: SymResult = SymResult.EMPTY
         private set
+    /** 확정하면 없어질 원본 획들 (미리 보기에서는 아주 흐리게만 그려서, 확정한 뒤의 화면이 거의 그대로 보이게) */
+    private var hidden: Set<Stroke> = emptySet()
+
+    /** 미리 보는 동안 [st]를 아주 흐리게 그려야 하는가 (확정하면 사라지거나 점선 사본으로 바뀔 원본) */
+    fun hides(st: Stroke): Boolean = active && hidden.isNotEmpty() && st in hidden
 
     private enum class Drag { NONE, A, B, BODY }
     private var drag = Drag.NONE
@@ -159,19 +164,21 @@ internal class SymmetryController(private val view: View, private val host: Host
         drag = Drag.NONE
         src = emptyList()
         result = SymResult.EMPTY
+        hidden = emptySet()
         page = -1
     }
 
     private fun rebuild() {
         val keep = SymmetryOps.keepSide(src, axis[0], axis[1], axis[2], axis[3]) * (if (flipped) -1 else 1)
         result = SymmetryOps.build(src, mode, orig, resultDashed, keep, axis[0], axis[1], axis[2], axis[3])
+        hidden = result.removed.toHashSet()
     }
 
     /** 접는 선과 손잡이, 그리고 흐린 미리 보기를 [pageIndex]쪽에 그린다 (쪽 좌표 캔버스) */
     fun draw(c: Canvas, pageIndex: Int) {
         if (!active || page != pageIndex) return
         val s = host.scale
-        // 결과 미리 보기: 흐리게
+        // 확정한 뒤의 모습 미리 보기 (남기는 점선 원본과 결과를 흐리게; 없어질 원본은 [hides]로 아주 흐리게 그려졌다)
         for (st in result.added) host.drawStroke(c, st, PREVIEW_ALPHA)
         val dx = axis[2] - axis[0]
         val dy = axis[3] - axis[1]
@@ -286,7 +293,7 @@ internal class SymmetryController(private val view: View, private val host: Host
     companion object {
         private const val ACCENT = 0xFF2979FF.toInt()
         /** 흐리게 보이는 미리 보기의 진하기 */
-        private const val PREVIEW_ALPHA = 0.45f
+        private const val PREVIEW_ALPHA = 0.55f
         /** 복사·이동의 처음 접는 선이 도형 오른쪽 끝에서 떨어지는 거리 (pt) */
         private const val SIDE_GAP = 24f
         /** 끝 동그라미의 그림 반지름과 손가락이 닿는 반지름 (dp) */
