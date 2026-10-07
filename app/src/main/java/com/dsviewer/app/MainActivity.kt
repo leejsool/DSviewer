@@ -31,7 +31,7 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.widget.doAfterTextChanged
+import androidx.appcompat.widget.SearchView
 import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.core.view.MenuCompat
 import androidx.core.view.ViewCompat
@@ -114,9 +114,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var filterButton: MaterialButton
     private lateinit var sortButton: MaterialButton
     private lateinit var viewButton: MaterialButton
-    private lateinit var searchRow: View
-    private lateinit var searchField: EditText
-    private lateinit var searchClear: View
+    private lateinit var searchItem: MenuItem
     private lateinit var selectBar: View
     private lateinit var selectCount: TextView
     private lateinit var selectAll: MaterialButton
@@ -165,7 +163,7 @@ class MainActivity : AppCompatActivity() {
         override fun handleOnBackPressed() {
             when {
                 selecting -> endSelection()
-                query.isNotEmpty() -> searchField.setText("")
+                searchItem.isActionViewExpanded -> searchItem.collapseActionView()
                 else -> goUp()
             }
         }
@@ -190,9 +188,6 @@ class MainActivity : AppCompatActivity() {
         progress = findViewById(R.id.progress)
         permCard = findViewById(R.id.permCard)
         pathBar = findViewById(R.id.pathBar)
-        searchRow = findViewById(R.id.searchRow)
-        searchField = findViewById(R.id.searchField)
-        searchClear = findViewById(R.id.searchClear)
         pathScroll = findViewById(R.id.pathScroll)
         pathText = findViewById(R.id.pathText)
         upButton = findViewById(R.id.upButton)
@@ -226,7 +221,6 @@ class MainActivity : AppCompatActivity() {
         }
         findViewById<View>(R.id.permButton).setOnClickListener { askAccess() }
         setupMenu()
-        setupSearch()
         reorder.attachToRecyclerView(list)
 
         favDir = prefs.getString("favDir", null)
@@ -287,6 +281,30 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupMenu() {
         toolbar.inflateMenu(R.menu.main)
+        searchItem = toolbar.menu.findItem(R.id.action_search)
+        (searchItem.actionView as SearchView).apply {
+            queryHint = "파일 이름"
+            setOnQueryTextListener(object : SearchView.OnQueryTextListener {
+                override fun onQueryTextSubmit(q: String) = true
+                override fun onQueryTextChange(q: String): Boolean {
+                    this@MainActivity.query = q
+                    applyFilter()
+                    return true
+                }
+            })
+        }
+        searchItem.setOnActionExpandListener(object : MenuItem.OnActionExpandListener {
+            override fun onMenuItemActionExpand(item: MenuItem): Boolean {
+                backCallback.isEnabled = true
+                return true
+            }
+            override fun onMenuItemActionCollapse(item: MenuItem): Boolean {
+                query = ""
+                applyFilter()
+                list.post { updateBack() }
+                return true
+            }
+        })
         toolbar.setOnMenuItemClickListener { item ->
             when (item.itemId) {
                 R.id.action_new_note -> { newNote(); true }
@@ -301,24 +319,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** 목록 위 이름 찾기 칸: 쓰는 대로 지금 탭의 목록을 거르고, 엔터를 누르면 키보드를 접는다 */
-    private fun setupSearch() {
-        searchField.doAfterTextChanged { text ->
-            query = text?.toString().orEmpty()
-            searchClear.isVisible = query.isNotEmpty()
-            applyFilter()
-            updateBack()
-        }
-        searchField.setOnEditorActionListener { v, action, _ ->
-            if (action == EditorInfo.IME_ACTION_SEARCH) {
-                v.clearFocus()
-                getSystemService(android.view.inputmethod.InputMethodManager::class.java)?.hideSoftInputFromWindow(v.windowToken, 0)
-                true
-            } else false
-        }
-        searchClear.setOnClickListener { searchField.setText("") }
-    }
-
     // ================= 목록 =================
 
     private fun refresh() {
@@ -326,7 +326,6 @@ class MainActivity : AppCompatActivity() {
         val needAccess = (tab == Tab.ALL || tab == Tab.FOLDER) && !DocFiles.hasAccess(this)
         permCard.isVisible = needAccess
         pathBar.isVisible = !needAccess && !selecting
-        searchRow.isVisible = !needAccess && !selecting
         toolbar.menu.findItem(R.id.action_lock_password)?.isVisible = Locks.hasPassword(this)
         upButton.isVisible = tab == Tab.FOLDER || tab == Tab.FAVORITE
         newFolderButton.isVisible = tab == Tab.FAVORITE
@@ -757,7 +756,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateBack() {
-        backCallback.isEnabled = selecting || query.isNotEmpty() ||
+        backCallback.isEnabled = selecting || searchItem.isActionViewExpanded ||
             (tab == Tab.FOLDER && !permCard.isVisible && canGoUp()) ||
             (tab == Tab.FAVORITE && favDir != null)
     }
@@ -1209,12 +1208,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun startSelection(r: Row) {
         val key = r.key ?: return
-        searchField.clearFocus()
+        if (searchItem.isActionViewExpanded) searchItem.actionView?.clearFocus()
         selected += key
         if (!selecting) {
             selecting = true
             pathBar.isVisible = false
-            searchRow.isVisible = false
             selectBar.isVisible = true
             actionBar.isVisible = true
             adapter.notifyDataSetChanged()
@@ -1230,7 +1228,6 @@ class MainActivity : AppCompatActivity() {
         selectBar.isVisible = false
         actionBar.isVisible = false
         pathBar.isVisible = !permCard.isVisible
-        searchRow.isVisible = !permCard.isVisible
         adapter.notifyDataSetChanged()
         updateBack()
     }
