@@ -35,10 +35,10 @@ import java.util.Locale
  */
 internal object FeedbackConfig {
     /** 설문 주소 https://docs.google.com/forms/d/e/<여기>/viewform 의 가운데 부분 */
-    const val FORM_ID = ""
-    const val ENTRY_KIND = "entry.0"
-    const val ENTRY_MESSAGE = "entry.0"
-    const val ENTRY_INFO = "entry.0"
+    const val FORM_ID = "1FAIpQLSceBoA64HoDRu2KKIMgtNwVYtiR6v5lipfARIyLK8IUSP3h2A"
+    const val ENTRY_KIND = "entry.1321113674"
+    const val ENTRY_MESSAGE = "entry.236700100"
+    const val ENTRY_INFO = "entry.2103110134"
 
     val ready get() = FORM_ID.isNotBlank()
 }
