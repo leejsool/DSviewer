@@ -313,11 +313,11 @@ class ViewerActivity : AppCompatActivity() {
                 shot.onPickEnded()
             }
 
-            override fun onAxisDrawn() = tools.onAxisDrawn()
+            override fun onSymmetryChanged() = tools.onSymmetryChanged()
 
-            override fun onAxisPickEnded() = tools.onAxisPickEnded()
+            override fun onSymmetryEnded() = tools.onSymmetryEnded()
 
-            override fun onAxisApplied(message: String, undoable: Boolean) = tools.onAxisApplied(message, undoable)
+            override fun onSymmetryApplied(message: String, undoable: Boolean) = tools.onSymmetryApplied(message, undoable)
 
             override fun onFillFailed() {
                 Toast.makeText(

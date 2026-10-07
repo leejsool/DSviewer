@@ -342,6 +342,102 @@
             android:layout_gravity="top"
             android:orientation="vertical" />
 
+        <!-- 올가미 ▸ 대칭: 접는 선을 옮기는 동안 위쪽에 뜨는 막대 (방식 · 원본 · 결과 모양 · 확정). ToolbarController가 맞춘다 -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/symmetryBar"
+            style="?attr/materialCardViewElevatedStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top|center_horizontal"
+            android:layout_marginHorizontal="8dp"
+            android:layout_marginTop="8dp"
+            android:visibility="gone"
+            app:cardCornerRadius="24dp"
+            app:cardElevation="8dp">
+
+            <HorizontalScrollView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="52dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="8dp">
+
+                    <com.google.android.material.button.MaterialButtonToggleGroup
+                        android:id="@+id/symMode"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        app:selectionRequired="true"
+                        app:singleSelection="true">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/symCopy"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="복사" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/symMove"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="이동" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/symFold"
+                            style="?attr/materialButtonOutlinedStyle"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="접기" />
+                    </com.google.android.material.button.MaterialButtonToggleGroup>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/symOrig"
+                        style="?attr/materialButtonTonalStyle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:text="원본: 점선" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/symDashed"
+                        style="?attr/materialButtonTonalStyle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="6dp"
+                        android:text="결과: 실선" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/symFlip"
+                        style="?attr/materialButtonTonalStyle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="6dp"
+                        android:text="접는 쪽 바꾸기" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/symCancel"
+                        style="?attr/borderlessButtonStyle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:text="취소" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/symConfirm"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="2dp"
+                        android:text="확정" />
+                </LinearLayout>
+            </HorizontalScrollView>
+        </com.google.android.material.card.MaterialCardView>
+
         <!-- 올가미로 고른 부분 위에 뜨는 막대 (위치는 ViewerActivity에서) -->
         <com.google.android.material.card.MaterialCardView
             android:id="@+id/selectionBar"

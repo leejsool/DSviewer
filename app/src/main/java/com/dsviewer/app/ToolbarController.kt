@@ -18,6 +18,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.PopupMenu
 import com.google.android.material.snackbar.Snackbar
 import com.google.android.material.button.MaterialButton
+import com.google.android.material.button.MaterialButtonToggleGroup
 import com.google.android.material.color.MaterialColors
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import kotlin.math.abs
@@ -98,7 +99,8 @@ internal class ToolbarController(
         }
         findViewById<View>(R.id.selectionFlipH).setOnClickListener { docView.flipSelection(horizontal = true) }
         findViewById<View>(R.id.selectionFlipV).setOnClickListener { docView.flipSelection(horizontal = false) }
-        findViewById<View>(R.id.selectionSymmetry).setOnClickListener { showSymmetryMenu(it) }
+        findViewById<View>(R.id.selectionSymmetry).setOnClickListener { startSymmetry() }
+        setupSymmetryBar()
         findViewById<View>(R.id.selectionCopy).setOnClickListener {
             docView.copySelection()
             pasteButton.visibility = View.VISIBLE
@@ -1089,60 +1091,91 @@ internal class ToolbarController(
     }
 
     // ================= 선대칭 (올가미 ▸ 대칭) =================
+    // 접는 선을 옮기며 결과를 미리 보는 일은 DocumentView의 symmetry(SymmetryController)가 하고,
+    // 여기는 위쪽에 뜨는 '대칭 막대'(방식·원본·결과 모양·확정)를 맞춘다.
 
-    /** '축을 그어 주세요 / 남길 쪽을 눌러 주세요' 안내 (끝나거나 취소하면 닫는다) */
-    private var axisHint: Snackbar? = null
+    private val symmetryBar: View = findViewById(R.id.symmetryBar)
+    private val symMode: MaterialButtonToggleGroup = findViewById(R.id.symMode)
+    private val symOrig: MaterialButton = findViewById(R.id.symOrig)
+    private val symDashed: MaterialButton = findViewById(R.id.symDashed)
+    private val symFlip: View = findViewById(R.id.symFlip)
+    private val symConfirm: View = findViewById(R.id.symConfirm)
+    /** 막대를 맞추느라 방식 단추를 대신 눌러 줄 때는 다시 반응하지 않게 */
+    private var symRefreshing = false
 
-    private fun showSymmetryMenu(anchor: View) {
-        val popup = PopupMenu(activity, anchor)
-        popup.menu.add(0, 1, 0, "선대칭 복사")
-        popup.menu.add(0, 2, 1, "선대칭 복사 (점선)")
-        popup.menu.add(0, 3, 2, "접기 (한쪽을 반대쪽으로)")
-        popup.setOnMenuItemClickListener { item ->
-            startAxisPick(
-                when (item.itemId) {
-                    1 -> DocumentView.AxisMode.COPY
-                    2 -> DocumentView.AxisMode.COPY_DASHED
-                    else -> DocumentView.AxisMode.FOLD
-                }
-            )
-            true
+    private fun setupSymmetryBar() {
+        symMode.addOnButtonCheckedListener { _, id, checked ->
+            if (!checked || symRefreshing) return@addOnButtonCheckedListener
+            val m = when (id) {
+                R.id.symMove -> SymMode.MOVE
+                R.id.symFold -> SymMode.FOLD
+                else -> SymMode.COPY
+            }
+            prefs.edit().putInt("symMode", m.ordinal).apply()
+            docView.symmetry.setMode(m)
+            refreshSymmetryBar()
         }
-        popup.show()
+        // 원본: 없음 → 점선 → 실선 → 없음
+        symOrig.setOnClickListener {
+            val next = OrigStyle.entries[(docView.symmetry.orig.ordinal + 1) % OrigStyle.entries.size]
+            prefs.edit().putInt("symOrig", next.ordinal).apply()
+            docView.symmetry.setOrig(next)
+            refreshSymmetryBar()
+        }
+        symDashed.setOnClickListener {
+            val on = !docView.symmetry.resultDashed
+            prefs.edit().putBoolean("symDashed", on).apply()
+            docView.symmetry.setResultDashed(on)
+            refreshSymmetryBar()
+        }
+        symFlip.setOnClickListener { docView.symmetry.flipKeep() }
+        findViewById<View>(R.id.symCancel).setOnClickListener { docView.symmetry.cancel() }
+        symConfirm.setOnClickListener { docView.symmetry.confirm() }
     }
 
-    /** 대칭축 긋기를 시작하고 안내를 띄운다 */
-    private fun startAxisPick(mode: DocumentView.AxisMode) {
+    /** 올가미로 고른 것의 대칭 편집을 시작하고 대칭 막대를 띄운다 */
+    private fun startSymmetry() {
         textEditor.commit()
-        if (!docView.startAxisPick(mode)) return
+        val mode = SymMode.entries.getOrElse(prefs.getInt("symMode", 0)) { SymMode.COPY }
+        val orig = OrigStyle.entries.getOrElse(prefs.getInt("symOrig", OrigStyle.DASHED.ordinal)) { OrigStyle.DASHED }
+        if (!docView.startSymmetry(mode, orig, prefs.getBoolean("symDashed", false))) return
         selectionBar.visibility = View.GONE
-        axisHint?.dismiss()
-        axisHint = Snackbar.make(docFrame, "대칭축을 끌어서 그어 주세요. (가로·세로·45°는 저절로 맞춰져요 · 두 손가락: 이동·확대)", Snackbar.LENGTH_INDEFINITE)
-            .setAction("취소") { docView.cancelAxisPick() }
-            .addCallback(object : Snackbar.Callback() {
-                override fun onDismissed(bar: Snackbar?, event: Int) {
-                    // 새 안내로 바뀌며 닫힌 옛 안내는 새로 시작한 고르기를 건드리지 않는다
-                    if (axisHint !== bar) return
-                    axisHint = null
-                    docView.cancelAxisPick()
-                }
-            })
-            .also { it.show() }
+        symmetryBar.visibility = View.VISIBLE
+        refreshSymmetryBar()
+        toast("파란 선을 끌어 옮기고, 양 끝 동그라미로 각도를 바꾸세요. 확정하기 전에 결과가 흐리게 보여요.")
     }
 
-    /** 접기: 축을 다 그었으니 남길 쪽을 누르라고 안내를 바꾼다 */
-    fun onAxisDrawn() {
-        axisHint?.setText("남길 쪽을 눌러 주세요. 반대쪽이 접혀 넘어옵니다.")
-    }
-
-    fun onAxisPickEnded() {
-        axisHint?.let {
-            axisHint = null
-            it.dismiss()
+    /** 대칭 막대를 지금 방식·옵션에 맞춘다: 복사에서는 원본 단추를, 접기에서만 '접는 쪽 바꾸기'를 보인다. 적용할 것이 없으면 확정을 막는다 */
+    private fun refreshSymmetryBar() {
+        val s = docView.symmetry
+        val id = when (s.mode) {
+            SymMode.COPY -> R.id.symCopy
+            SymMode.MOVE -> R.id.symMove
+            SymMode.FOLD -> R.id.symFold
         }
+        if (symMode.checkedButtonId != id) {
+            symRefreshing = true
+            symMode.check(id)
+            symRefreshing = false
+        }
+        symOrig.visibility = if (s.mode == SymMode.COPY) View.GONE else View.VISIBLE
+        symOrig.text = "원본: " + when (s.orig) {
+            OrigStyle.NONE -> "없음"
+            OrigStyle.DASHED -> "점선"
+            OrigStyle.SOLID -> "실선"
+        }
+        symDashed.text = if (s.resultDashed) "결과: 점선" else "결과: 실선"
+        symFlip.visibility = if (s.mode == SymMode.FOLD) View.VISIBLE else View.GONE
+        symConfirm.isEnabled = !s.result.isEmpty
     }
 
-    fun onAxisApplied(message: String, undoable: Boolean) {
+    fun onSymmetryChanged() = refreshSymmetryBar()
+
+    fun onSymmetryEnded() {
+        symmetryBar.visibility = View.GONE
+    }
+
+    fun onSymmetryApplied(message: String, undoable: Boolean) {
         if (undoable) undoNotice(message) else toast(message)
     }
 

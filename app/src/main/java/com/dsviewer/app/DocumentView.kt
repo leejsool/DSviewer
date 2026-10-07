@@ -99,12 +99,12 @@ class DocumentView @JvmOverloads constructor(
         fun onWrongPickEnded() {}
         /** 표를 골랐거나 풀었다, 고른 칸·표 편집 방식·표 모양이 바뀜: 표 편집 막대를 맞춘다 */
         fun onTableChanged() {}
-        /** 대칭축을 다 그었다 (접기: 이제 남길 쪽을 누를 차례) */
-        fun onAxisDrawn() {}
-        /** 대칭축 고르기가 끝남 (마쳤거나 취소). 안내를 닫을 때 */
-        fun onAxisPickEnded() {}
-        /** 대칭을 적용했다. [undoable]이면 실행 취소로 되돌릴 수 있다 (적용할 것이 없으면 false) */
-        fun onAxisApplied(message: String, undoable: Boolean) {}
+        /** 대칭 편집의 방식·옵션·결과 유무가 바뀜: 대칭 막대를 맞춘다 */
+        fun onSymmetryChanged() {}
+        /** 대칭 편집이 끝남 (확정했거나 취소). 대칭 막대를 닫을 때 */
+        fun onSymmetryEnded() {}
+        /** 대칭을 적용했다. [undoable]이면 실행 취소로 되돌릴 수 있다 */
+        fun onSymmetryApplied(message: String, undoable: Boolean) {}
     }
 
     var listener: Listener? = null
@@ -193,7 +193,7 @@ class DocumentView @JvmOverloads constructor(
                 cancelNotePlacement()
                 cancelWrongPick()
                 clearWrongRect()
-                cancelAxisPick()
+                symmetry.cancel()
                 ruler.hide()
             }
             // 마지막 쪽 아래 '빈 쪽 추가' 단추는 읽기 모드에서 숨긴다 (그만큼 스크롤 길이가 바뀐다)
@@ -874,7 +874,7 @@ class DocumentView @JvmOverloads constructor(
             fillCtl.drawPending(canvas, i)
             textMarks.draw(canvas, i)
             picker.draw(canvas, i)
-            axisPicker.draw(canvas, i)
+            symmetry.draw(canvas, i)
             if (dragging && !hideInk) {
                 // 옮기거나 크기를 바꾸는 중인 획은 손을 뗄 때까지 그림만 바꿔 그린다
                 canvas.save()
@@ -965,7 +965,7 @@ class DocumentView @JvmOverloads constructor(
 
     /** 메모를 누른 동작 (손가락·펜 모두). 오답 영역을 고르는 중이면 그 입력으로. 메모가 아닌 곳에서 시작했으면 false */
     private fun handleNoteTouch(ev: MotionEvent): Boolean =
-        if (hideInk) false else if (wrongPicking) picker.onTouch(ev) else if (axisPicking) axisPicker.onTouch(ev) else notes.onTouch(ev)
+        if (hideInk) false else if (wrongPicking) picker.onTouch(ev) else if (symmetry.active) symmetry.onTouch(ev) else notes.onTouch(ev)
 
     // ================= 자 · 눈금자 · 각도기 =================
     // 그리기·손가락으로 옮기기·가장자리 붙이기는 RulerController가 한다. 여기서는 쪽 배치를 읽게 해 주고 펜 입력에 이어 준다.
@@ -1042,23 +1042,17 @@ class DocumentView @JvmOverloads constructor(
     fun clearWrongRect() = picker.clear()
 
     // ================= 선대칭 (올가미 ▸ 대칭) =================
-    // 축을 긋는 일은 AxisPicker가 한다. 여기서는 고른 획에 복사·접기를 적용한다 (실행 취소 한 번에 되돌아간다).
+    // 접는 선을 끌어 옮기며 결과를 미리 보는 일은 SymmetryController가 하고, 결과를 만드는 계산은 SymmetryOps가 한다.
+    // 여기서는 확정한 결과를 쪽에 적용한다 (복사·이동·접기 모두 실행 취소 한 번에 되돌아간다).
 
-    /** 대칭 방식: 사본을 붙임 / 사본을 점선으로 / 축 한쪽을 반대쪽으로 접음 */
-    enum class AxisMode { COPY, COPY_DASHED, FOLD }
-
-    private var axisMode = AxisMode.COPY
-
-    private val axisPicker: AxisPicker = AxisPicker(this, object : AxisPicker.Host {
+    internal val symmetry: SymmetryController = SymmetryController(this, object : SymmetryController.Host {
         override val scale get() = this@DocumentView.scale
-        override val offsetX get() = offX
-        override val offsetY get() = offY
-        override val pageCount get() = sizes.size
         override fun pageWidth(page: Int) = sizes[page].width
         override fun pageHeight(page: Int) = sizes[page].height
-        override fun pageLeft(page: Int) = lefts[page]
-        override fun pageTop(page: Int) = tops[page]
-        override fun hitPage(sx: Float, sy: Float) = this@DocumentView.hitPage(sx, sy)
+        override fun screenX(page: Int, x: Float) = (lefts[page] + x) * this@DocumentView.scale - offX
+        override fun screenY(page: Int, y: Float) = (tops[page] + y) * this@DocumentView.scale - offY
+        override fun pageX(page: Int, sx: Float) = toPageX(page, sx)
+        override fun pageY(page: Int, sy: Float) = toPageY(page, sy)
         override fun stopFling() = scroller.forceFinished(true)
         override fun switchToPinch(ev: MotionEvent) {
             fingerActive = true
@@ -1070,69 +1064,54 @@ class DocumentView @JvmOverloads constructor(
             scaleDetector.onTouchEvent(ev)
             gestureDetector.onTouchEvent(ev)
         }
-        override fun onAxisDrawn() { listener?.onAxisDrawn() }
-        override fun onPickEnded() { listener?.onAxisPickEnded() }
-        override fun onPicked(page: Int, axis: FloatArray, keep: Int) = applyAxis(page, axis, keep)
+        override fun drawStroke(c: Canvas, st: Stroke, alpha: Float) = this@DocumentView.drawStroke(c, st, alpha)
+        override fun onStateChanged() { listener?.onSymmetryChanged() }
+        override fun onEnded() {
+            listener?.onSymmetryEnded()
+            // 편집 중에는 선택 상자를 그리지 않아 선택 막대 위치를 보고하지 않았다: 끝나면 다시 보고하게 한다
+            reportedSel = null
+            invalidate()
+        }
+        override fun onConfirm(page: Int, result: SymResult) = applySymmetry(page, result)
     })
 
-    /** 대칭축을 긋는 중 */
-    val axisPicking get() = axisPicker.picking
-
-    /** 고른 것의 대칭축 긋기를 시작한다 (끝나면 [Listener.onAxisPickEnded]). 고른 것이 없거나 읽기 모드면 false */
-    fun startAxisPick(mode: AxisMode): Boolean {
+    /**
+     * 고른 것의 대칭 편집을 시작한다 (접는 선은 고른 것 가운데의 세로선에서 시작). 끝나면 [Listener.onSymmetryEnded].
+     * 고른 것이 없거나 읽기 모드면 false. [mode]·[orig]·[dashed]는 지난번에 고른 값
+     */
+    fun startSymmetry(mode: SymMode, orig: OrigStyle, dashed: Boolean): Boolean {
         if (ink == null || readOnly || selection.isEmpty() || selPage < 0) return false
         notes.reset()
-        axisMode = mode
-        axisPicker.start(selPage, side = mode == AxisMode.FOLD)
+        symmetry.start(selPage, selection.toList(), RectF(selBounds), mode, orig, dashed)
         return true
     }
 
-    fun cancelAxisPick() = axisPicker.cancel()
-
-    /** 고른 획에 대칭을 적용한다: 복사는 반사한 사본을 붙이고, 접기는 [keep] 쪽을 남기고 반대쪽을 넘긴다 */
-    private fun applyAxis(page: Int, axis: FloatArray, keep: Int) {
+    /** 확정한 대칭 결과를 [page]쪽에 적용한다: 뺄 획과 넣을 획을 한 번의 실행 취소 단위로 기록하고 결과 도형을 고른다 */
+    private fun applySymmetry(page: Int, r: SymResult) {
         val inkDoc = ink ?: return
-        val src = selection.toList()
-        if (page != selPage || src.isEmpty()) return
-        val (ax, ay, bx, by) = axis
-        when (axisMode) {
-            AxisMode.COPY, AxisMode.COPY_DASHED -> {
-                val dashed = axisMode == AxisMode.COPY_DASHED
-                val copies = src.filter { it.note == null }.map { s ->
-                    val c = s.copy().apply { role = null; reflect(ax, ay, bx, by) }
-                    // 점선 사본은 사인펜 점선 획으로 (글·그림·테이프·채우기는 그대로)
-                    if (dashed && s.tool == Tool.PEN && !s.isBox && s.tape == null && s.fill == null)
-                        Stroke(Tool.PEN, s.color, s.width, true, PenStyle.FELT).also { n ->
-                            for (i in 0 until c.count) n.add(c.x(i), c.y(i), c.p(i))
-                        }
-                    else c
-                }
-                if (copies.isEmpty()) return
-                clearSelection()
-                inkDoc.addAll(page, copies)
-                select(page, copies)
-                invalidate()
-                listener?.onAxisApplied(if (dashed) "점선으로 선대칭 사본을 붙였습니다." else "선대칭 사본을 붙였습니다.", true)
-            }
-            AxisMode.FOLD -> {
-                val folded = src.mapNotNull { s ->
-                    if (s.isBox || s.note != null || s.tape != null || s.fill != null || s.image != null) return@mapNotNull null
-                    SymmetryMath.fold(s.data, s.count, ax, ay, bx, by, keep)?.let { s to it }
-                }
-                if (folded.isEmpty()) {
-                    listener?.onAxisApplied("접을 부분이 없습니다. 고른 것이 모두 남길 쪽에 있어요.", false)
-                    return
-                }
-                inkDoc.edit(folded.map { it.first }) { folded.forEach { (s, pts) -> s.setPoints(pts) } }
-                select(page, src)
-                invalidate()
-                listener?.onAxisApplied("축을 기준으로 접었습니다.", true)
-            }
-        }
+        if (r.isEmpty) return
+        val list = inkDoc.pages[page]
+        val gone = r.removed.toHashSet()
+        list.removeAll { it in gone }
+        list.addAll(r.added)
+        inkDoc.erased(r.removed.map { page to it }, r.added.map { page to it })
+        clearSelection()
+        select(page, r.selectAfter.ifEmpty { r.added })
+        invalidate()
+        listener?.onSymmetryApplied(
+            when (symmetry.mode) {
+                SymMode.COPY -> "선대칭 사본을 붙였습니다."
+                SymMode.MOVE -> "대칭이동했습니다."
+                SymMode.FOLD -> "접었습니다."
+            },
+            true,
+        )
     }
 
     /** 올가미 선과 선택 상자 (화면 좌표) */
     private fun drawSelection(canvas: Canvas) {
+        // 대칭 편집 중에는 접는 선과 미리 보기만 보이게 선택 상자·손잡이는 그리지 않는다
+        if (symmetry.active) return
         val s = scale
         if (lassoing && lassoCount > 1) {
             val ox = lefts[lassoPage] * s - offX
@@ -2758,6 +2737,8 @@ class DocumentView @JvmOverloads constructor(
     }
 
     fun clearSelection() {
+        // 대칭 편집 중에 고른 것이 사라지면(도구 바꾸기·문서 바꾸기 등) 편집도 거둔다
+        symmetry.cancel()
         if (selection.isEmpty() && !lassoing && !moving && !resizing && !rotating) return
         selection = emptyList()
         selSet = emptySet()
