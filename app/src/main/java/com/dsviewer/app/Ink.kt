@@ -466,6 +466,41 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
         version++
     }
 
+    /**
+     * 선대칭: 점을 축 (A=[ax],[ay] → B=[bx],[by])에 대해 반사한다. 글·그림·표 상자는 자리만 반사하고
+     * 글자·그림 자체는 뒤집지 않는다 ([mirror]와 같은 약속)
+     */
+    fun reflect(ax: Float, ay: Float, bx: Float, by: Float) {
+        if (isBox && count == 4) {
+            var cx = 0f
+            var cy = 0f
+            for (i in 0 until 4) { cx += data[i * 3]; cy += data[i * 3 + 1] }
+            cx /= 4
+            cy /= 4
+            val r = SymmetryMath.reflect(cx, cy, ax, ay, bx, by)
+            translate(r[0] - cx, r[1] - cy)
+            return
+        }
+        for (i in 0 until count) {
+            val r = SymmetryMath.reflect(data[i * 3], data[i * 3 + 1], ax, ay, bx, by)
+            data[i * 3] = r[0]
+            data[i * 3 + 1] = r[1]
+        }
+        for (i in holes.indices step 3) {
+            val r = SymmetryMath.reflect(holes[i], holes[i + 1], ax, ay, bx, by)
+            holes[i] = r[0]
+            holes[i + 1] = r[1]
+        }
+        version++
+    }
+
+    /** 점들을 통째로 바꾼다 (x, y, 필압 세 값씩). 접기에서 쓰고, 되돌리기는 [state]·[restore]로 */
+    fun setPoints(points: FloatArray) {
+        data = points.copyOf()
+        count = points.size / 3
+        version++
+    }
+
     fun recolor(c: Int) {
         color = c
         version++

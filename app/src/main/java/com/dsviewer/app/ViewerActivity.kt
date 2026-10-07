@@ -313,6 +313,12 @@ class ViewerActivity : AppCompatActivity() {
                 shot.onPickEnded()
             }
 
+            override fun onAxisDrawn() = tools.onAxisDrawn()
+
+            override fun onAxisPickEnded() = tools.onAxisPickEnded()
+
+            override fun onAxisApplied(message: String, undoable: Boolean) = tools.onAxisApplied(message, undoable)
+
             override fun onFillFailed() {
                 Toast.makeText(
                     this@ViewerActivity, "닫힌 영역을 찾지 못했어요. 도형 안을 누르거나, 선이 끊긴 곳을 이어 그려 주세요.",

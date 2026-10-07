@@ -1,0 +1,8 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24"
+    android:tint="?attr/colorControlNormal">
+    <!-- 대칭: 가운데 점선 축을 사이에 둔 마주 보는 두 삼각형 (오른쪽은 속을 옅게 채워 사본을 보여 준다) -->
+    <path android:strokeColor="@android:color/white" android:strokeWidth="1.8" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M12,2.5v3 M12,8.5v3 M12,14.5v3 M12,20.5v1 M9,7L3.5,19H9z M15,7L20.5,19H15z" />
+    <path android:fillColor="@android:color/white" android:fillAlpha="0.4" android:pathData="M15.6,8.4L19.6,18.1H15.6z" />
+</vector>

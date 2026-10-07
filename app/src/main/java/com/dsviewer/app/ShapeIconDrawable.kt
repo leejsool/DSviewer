@@ -35,7 +35,7 @@ class ShapeIconDrawable(
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
         this.color = this@ShapeIconDrawable.color
-        // 보조선(화살표·길이 표시)을 점선으로 고른 때
+        // 도형 몸통을 점선으로 고른 때
         if (dashed) pathEffect = DashPathEffect(floatArrayOf(2.4f, 2f), 0f)
     }
     /** 화살촉 (몸통이 점선이어도 실선) */
@@ -69,7 +69,7 @@ class ShapeIconDrawable(
     }
 
     /** 직각 표시 */
-    private val thin = Paint(line).apply { strokeWidth = 1f }
+    private val thin = Paint(line).apply { strokeWidth = 1f; pathEffect = null }
     private val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = this@ShapeIconDrawable.color }
 
     override fun draw(canvas: Canvas) {

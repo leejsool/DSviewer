@@ -15,6 +15,8 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.PopupMenu
+import com.google.android.material.snackbar.Snackbar
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.color.MaterialColors
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -96,6 +98,7 @@ internal class ToolbarController(
         }
         findViewById<View>(R.id.selectionFlipH).setOnClickListener { docView.flipSelection(horizontal = true) }
         findViewById<View>(R.id.selectionFlipV).setOnClickListener { docView.flipSelection(horizontal = false) }
+        findViewById<View>(R.id.selectionSymmetry).setOnClickListener { showSymmetryMenu(it) }
         findViewById<View>(R.id.selectionCopy).setOnClickListener {
             docView.copySelection()
             pasteButton.visibility = View.VISIBLE
@@ -1081,6 +1084,64 @@ internal class ToolbarController(
             .show()
     }
 
+    // ================= 선대칭 (올가미 ▸ 대칭) =================
+
+    /** '축을 그어 주세요 / 남길 쪽을 눌러 주세요' 안내 (끝나거나 취소하면 닫는다) */
+    private var axisHint: Snackbar? = null
+
+    private fun showSymmetryMenu(anchor: View) {
+        val popup = PopupMenu(activity, anchor)
+        popup.menu.add(0, 1, 0, "선대칭 복사")
+        popup.menu.add(0, 2, 1, "선대칭 복사 (점선)")
+        popup.menu.add(0, 3, 2, "접기 (한쪽을 반대쪽으로)")
+        popup.setOnMenuItemClickListener { item ->
+            startAxisPick(
+                when (item.itemId) {
+                    1 -> DocumentView.AxisMode.COPY
+                    2 -> DocumentView.AxisMode.COPY_DASHED
+                    else -> DocumentView.AxisMode.FOLD
+                }
+            )
+            true
+        }
+        popup.show()
+    }
+
+    /** 대칭축 긋기를 시작하고 안내를 띄운다 */
+    private fun startAxisPick(mode: DocumentView.AxisMode) {
+        textEditor.commit()
+        if (!docView.startAxisPick(mode)) return
+        selectionBar.visibility = View.GONE
+        axisHint?.dismiss()
+        axisHint = Snackbar.make(docFrame, "대칭축을 끌어서 그어 주세요. (가로·세로·45°는 저절로 맞춰져요 · 두 손가락: 이동·확대)", Snackbar.LENGTH_INDEFINITE)
+            .setAction("취소") { docView.cancelAxisPick() }
+            .addCallback(object : Snackbar.Callback() {
+                override fun onDismissed(bar: Snackbar?, event: Int) {
+                    // 새 안내로 바뀌며 닫힌 옛 안내는 새로 시작한 고르기를 건드리지 않는다
+                    if (axisHint !== bar) return
+                    axisHint = null
+                    docView.cancelAxisPick()
+                }
+            })
+            .also { it.show() }
+    }
+
+    /** 접기: 축을 다 그었으니 남길 쪽을 누르라고 안내를 바꾼다 */
+    fun onAxisDrawn() {
+        axisHint?.setText("남길 쪽을 눌러 주세요. 반대쪽이 접혀 넘어옵니다.")
+    }
+
+    fun onAxisPickEnded() {
+        axisHint?.let {
+            axisHint = null
+            it.dismiss()
+        }
+    }
+
+    fun onAxisApplied(message: String, undoable: Boolean) {
+        if (undoable) undoNotice(message) else toast(message)
+    }
+
     /** 선택 상자 바로 위(자리가 없으면 아래)에 '삭제' 막대를 띄운다 */
     fun placeSelectionBar(rect: RectF?, count: Int) {
         // 선택이 없거나 선택 상자가 화면 밖으로 스크롤되면 숨긴다
@@ -1379,6 +1440,11 @@ internal class ToolbarController(
     /** 도형 줄의 칸들 (도형 아이콘 + 이름). 툴바가 왼쪽·오른쪽이면 세로로 늘어선다 */
     private fun buildShapeBar() {
         shapeRow.removeAllViews()
+        // 맨 앞 칸: 실선 ↔ 점선 (모든 도형에 적용). 아이콘이 지금 고른 선 모양으로 바뀐다
+        val dashed = lineDashed(docView.shapeKind)
+        shapeRow.addView(optionItem(ShapeIconDrawable(activity, ShapeKind.LINE, dashed), if (dashed) "점선" else "실선", dashed) {
+            setShapeDashed(!dashed)
+        })
         for ((label, kind) in shapeOrder) {
             val family = shapeFamilies[kind]
             val cur = when {
@@ -1394,7 +1460,7 @@ internal class ToolbarController(
                 else -> label
             }
             val index = shapeRow.childCount
-            shapeRow.addView(optionItem(ShapeIconDrawable(activity, cur, kind.isGuideLine && lineDashed(kind),
+            shapeRow.addView(optionItem(ShapeIconDrawable(activity, cur, lineDashed(cur),
                 if (kind in GUIDE_KINDS) guideStyle(kind) else GuideStyle.DASHED), text, selected) { v ->
                 when {
                     // 보조선(화살표·길이 표시): 바로 고르고, 모양·실선/점선을 고르는 창
@@ -1425,13 +1491,15 @@ internal class ToolbarController(
         }
     }
 
-    /** 화살표·길이 표시의 몸통이 점선인지 (화살표 셋은 함께, 길이 표시는 따로 기억) */
-    private fun lineDashed(kind: ShapeKind): Boolean {
-        if (!kind.isGuideLine) return false
-        return prefs.getBoolean("dashed_${lineGroup(kind).name}", false)
-    }
+    /** 보정 펜 도형의 몸통이 점선인지 (모든 도형이 함께: 화살표·길이 표시·그래프·원·다각형) */
+    @Suppress("UNUSED_PARAMETER")
+    private fun lineDashed(kind: ShapeKind): Boolean = prefs.getBoolean("shapeDashed", false)
 
-    private fun lineGroup(kind: ShapeKind) = if (kind == ShapeKind.LENGTH_MARK) ShapeKind.LENGTH_MARK else ShapeKind.ARROW
+    private fun setShapeDashed(on: Boolean) {
+        prefs.edit().putBoolean("shapeDashed", on).apply()
+        docView.shapeDashed = on
+        buildShapeBar()
+    }
 
     /**
      * 화살표·길이 표시 칸의 펼침 창: (화살표면) 직선·곡선·돼지꼬리, 그리고 실선·점선.
@@ -1451,8 +1519,7 @@ internal class ToolbarController(
         showFlyout(anchor, items, separatorBefore = if (shapes.isNotEmpty()) setOf(shapes.size) else emptySet()) { i ->
             if (i < shapes.size) selectShapeKind(shapes[i])
             else {
-                prefs.edit().putBoolean("dashed_${lineGroup(cur).name}", i == shapes.size + 1).apply()
-                selectShapeKind(cur)
+                setShapeDashed(i == shapes.size + 1)
             }
         }
     }

@@ -56,10 +56,21 @@ class ShapeStrokesTest {
         assertEquals(PenStyle.BALL, solid[0].pen)
     }
 
-    @Test fun dashedChoiceDoesNotAffectOrdinaryShapes() {
-        // 선택한 점선은 화살표·길이 표시에만 쓰인다 (원 같은 도형 몸통은 실선)
+    @Test fun dashedChoiceAppliesToEveryShapeBody() {
+        // 고른 점선은 원·그래프 같은 도형 몸통에도 쓰이고(점선은 사인펜), 점선을 끄면 실선
         val out = ShapeStrokes.build(raw(0.5f), Fitted(listOf(line)), ShapeKind.CIRCLE, GuideStyle.NONE, true, PenStyle.BALL)
-        assertFalse(out[0].dashed)
+        assertTrue(out[0].dashed)
+        assertEquals(PenStyle.FELT, out[0].pen)
+        val solid = ShapeStrokes.build(raw(0.5f), Fitted(listOf(line)), ShapeKind.CIRCLE, GuideStyle.NONE, false, PenStyle.BALL)
+        assertFalse(solid[0].dashed)
+    }
+
+    @Test fun dashedBodyKeepsGuidesOnTheirOwnStyle() {
+        // 곡선은 점선이어도 점근선은 따로 고른 방식(여기서는 실선)대로
+        val fitted = Fitted(listOf(line), guides = listOf(axis))
+        val out = ShapeStrokes.build(raw(0.5f), fitted, ShapeKind.SINE, GuideStyle.SOLID, true, PenStyle.BALL)
+        assertTrue(out[0].dashed)
+        assertFalse(out[1].dashed)
     }
 
     @Test fun guidesAreAddedByTheGuideStyle() {
