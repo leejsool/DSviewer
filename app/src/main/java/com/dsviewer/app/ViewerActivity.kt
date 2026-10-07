@@ -2622,10 +2622,10 @@ class ViewerActivity : AppCompatActivity() {
         val buttons = topActions.map { it.button() } + findViewById<View>(R.id.actionMore)
         for (b in buttons) {
             val lp = b.layoutParams
-            lp.width = px(44f * s)
+            lp.width = px(36f * s)
             lp.height = px(44f * s)
             b.layoutParams = lp
-            b.setPadding(px(12f * s), px(12f * s), px(12f * s), px(12f * s))
+            b.setPadding(px(8f * s), px(12f * s), px(8f * s), px(12f * s))
         }
         findViewById<View>(R.id.tabRow).let { row ->
             row.layoutParams = row.layoutParams.also { it.height = px(maxOf(48f, 44f * s + 4f)) }
