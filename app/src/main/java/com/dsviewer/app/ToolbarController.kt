@@ -990,7 +990,10 @@ internal class ToolbarController(
 
     /** 아이콘 아래 이름이 붙은 칸 (옵션 줄, 무늬 고르기 창) */
     private fun optionItem(
-        icon: android.graphics.drawable.Drawable, label: String, selected: Boolean, onClick: (View) -> Unit,
+        icon: android.graphics.drawable.Drawable, label: String, selected: Boolean,
+        /** 폭이 좁은 칸 (아이콘이 세로로 선 실선·점선 칸) */
+        narrow: Boolean = false,
+        onClick: (View) -> Unit,
     ): View {
         val d = resources.displayMetrics.density
         // 세로 줄(툴바가 왼쪽·오른쪽)에서는 줄 폭이 넓어지지 않게 긴 이름을 두 줄로
@@ -998,8 +1001,9 @@ internal class ToolbarController(
         val item = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             gravity = android.view.Gravity.CENTER_HORIZONTAL
-            minimumWidth = (48 * d).toInt()
-            setPadding((6 * d).toInt(), (5 * d).toInt(), (6 * d).toInt(), (3 * d).toInt())
+            minimumWidth = if (narrow) 0 else (48 * d).toInt()
+            val sidePad = if (narrow) 4 else 6
+            setPadding((sidePad * d).toInt(), (5 * d).toInt(), (sidePad * d).toInt(), (3 * d).toInt())
             setBackgroundResource(R.drawable.bg_tool)
             isSelected = selected
             contentDescription = if (selected) "$label (선택됨)" else label
@@ -1010,7 +1014,7 @@ internal class ToolbarController(
         }
         item.addView(ImageView(activity).apply {
             setImageDrawable(icon)
-            layoutParams = LinearLayout.LayoutParams((26 * d).toInt(), (26 * d).toInt())
+            layoutParams = LinearLayout.LayoutParams(((if (narrow) 16 else 26) * d).toInt(), (26 * d).toInt())
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         })
         item.addView(TextView(activity).apply {
@@ -1442,9 +1446,10 @@ internal class ToolbarController(
         shapeRow.removeAllViews()
         // 맨 앞 칸: 실선 ↔ 점선 (모든 도형에 적용). 아이콘이 지금 고른 선 모양으로 바뀐다
         val dashed = lineDashed(docView.shapeKind)
-        shapeRow.addView(optionItem(ShapeIconDrawable(activity, ShapeKind.LINE, dashed), if (dashed) "점선" else "실선", dashed) {
+        shapeRow.addView(optionItem(LineStyleIcon(activity, dashed), if (dashed) "점선" else "실선", dashed, narrow = true) {
             setShapeDashed(!dashed)
         })
+        shapeRow.addView(optionSeparator())
         for ((label, kind) in shapeOrder) {
             val family = shapeFamilies[kind]
             val cur = when {
@@ -1475,7 +1480,7 @@ internal class ToolbarController(
                         // 칸을 새로 만들었으니 자리가 잡힌 뒤에 그 옆에 띄운다
                         shapeRow.post {
                             showFlyout(shapeRow.getChildAt(index) ?: v, family.map { k ->
-                                Triple(ShapeIconDrawable(activity, k), k.label, k == docView.shapeKind)
+                                Triple(ShapeIconDrawable(activity, k, lineDashed(k)), k.label, k == docView.shapeKind)
                             }) { i -> selectShapeKind(family[i]) }
                         }
                     }
