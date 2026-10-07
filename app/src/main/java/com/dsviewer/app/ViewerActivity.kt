@@ -1836,9 +1836,7 @@ class ViewerActivity : AppCompatActivity() {
                 progress.visibility = View.GONE
                 return@launch
             }
-            val done = {
-                Toast.makeText(this@ViewerActivity, "${strokes.size}쪽을 ${index + 1}쪽부터 넣었습니다.", Toast.LENGTH_SHORT).show()
-            }
+            val done = { undoNotice("${strokes.size}쪽을 ${index + 1}쪽부터 넣었습니다.") }
             val inkDoc = t.ink ?: return@launch
             editPages(t, { src, out -> PdfPages.insertPdf(src, out, index, file) }, done) { pages ->
                 val lists = strokes.map { it.toMutableList() }
@@ -2038,7 +2036,7 @@ class ViewerActivity : AppCompatActivity() {
                 }
                 if (current !== t) return@launch
                 editPages(t, { src, out -> PdfPages.insertPdf(src, out, index, imagePdf) },
-                    onDone = { toast("${what}을 ${index + 1}쪽으로 넣었습니다. 바로 필기할 수 있어요.") }) { pages ->
+                    onDone = { undoNotice("${what}을 ${index + 1}쪽으로 넣었습니다. 바로 필기할 수 있어요.") }) { pages ->
                     pages.add(index, mutableListOf())
                     index
                 }
@@ -2250,9 +2248,10 @@ class ViewerActivity : AppCompatActivity() {
     private fun deletePages(t: DocTab, from: Int, to: Int, cut: Boolean = false) {
         val done = {
             val what = if (from == to) "${from + 1}쪽을" else "${from + 1}~${to + 1}쪽을"
-            val msg = if (cut) "$what 잘라냈습니다. 페이지 관리 창의 ⋮ → 붙여넣기로 원하는 자리에 넣을 수 있습니다."
-                else "$what 지웠습니다. 실행 취소로 되돌릴 수 있습니다."
-            Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+            undoNotice(
+                if (cut) "$what 잘라냈습니다. 페이지 관리 창의 ⋮ → 붙여넣기로 원하는 자리에 넣을 수 있습니다."
+                else "$what 지웠습니다."
+            )
         }
         editPages(t, { src, out -> PdfPages.remove(src, out, from, to) }, done) { pages ->
             repeat(to - from + 1) { pages.removeAt(from) }

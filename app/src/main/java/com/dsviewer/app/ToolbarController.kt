@@ -1073,7 +1073,10 @@ internal class ToolbarController(
         MaterialAlertDialogBuilder(activity)
             .setTitle("${page + 1}쪽의 ${obj} 모두 지울까요?")
             .setMessage("실행 취소로 되돌릴 수 있습니다.")
-            .setPositiveButton("지우기") { _, _ -> docView.clearPage(hl) }
+            .setPositiveButton("지우기") { _, _ ->
+                docView.clearPage(hl)
+                undoNotice("${page + 1}쪽의 ${obj} 지웠습니다.")
+            }
             .setNegativeButton("취소", null)
             .show()
     }
