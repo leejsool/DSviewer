@@ -275,7 +275,8 @@ class ViewerActivity : AppCompatActivity() {
 
             override fun onReadTap(page: Int, x: Float, y: Float) = followLinkAt(page, x, y)
             override fun onWrongTap(page: Int, x: Float, y: Float) {
-                current?.ink?.wrongLinkAt(page, x, y)?.let { (p, yy) -> wrong.goToSpot(p, yy) }
+                // 손가락 여유만큼 상자 밖을 눌렀어도 이동한다
+                current?.ink?.wrongLinkAt(page, x, y, tol = 12f)?.let { (p, yy) -> wrong.goToSpot(p, yy) }
             }
 
             override fun onFingerTap(page: Int, x: Float, y: Float) {

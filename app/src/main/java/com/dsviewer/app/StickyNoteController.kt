@@ -45,6 +45,13 @@ internal class StickyNoteController(
         fun cancelZoomAnimation()
         /** 손가락이 메모에서 시작해 움직임: 제스처 감지기에 이벤트를 준다 */
         fun forwardToGestures(ev: MotionEvent)
+        /** 손가락으로도 필기하는 중인가 (손가락 필기 옵션) */
+        val fingerDrawing: Boolean
+        /**
+         * 오답 버튼에서 시작한 손가락이 끌려 움직임: 버튼을 누른 것이 아니라 선을 긋는 것이므로, 처음 누른 자리부터
+         * ([downX], [downY], [downTime]) 필기로 넘겨 이 움직임부터 이어 긋게 한다
+         */
+        fun startFingerPen(ev: MotionEvent, downX: Float, downY: Float, downTime: Long)
         fun drawStroke(c: Canvas, st: Stroke)
         fun onNotePlacementEnded()
         fun onNoteEdit(page: Int, st: Stroke)
@@ -88,7 +95,7 @@ internal class StickyNoteController(
     private val linkDot = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF78909C.toInt() }
     private val linkPath = Path()
 
-    private enum class Touch { NONE, ICON, HEADER, BUTTON, BODY, SWATCH, SCROLL, BADGE }
+    private enum class Touch { NONE, ICON, HEADER, BUTTON, BODY, SWATCH, SCROLL, BADGE, LINK }
 
     /** 배지를 누른 쪽 좌표 (톡 눌렀을 때 오답 쪽으로 가는 데 쓴다) */
     private var downPx = 0f
@@ -211,6 +218,23 @@ internal class StickyNoteController(
         return host.ink?.pages?.getOrNull(page)?.lastOrNull { st ->
             st.isWrongBadge() && wrongBounds(st).apply { inset(-slop, -slop) }.contains(x, y) &&
                 (isFinger || host.readOnly || x > pw)
+        }
+    }
+
+    /**
+     * 쪽 좌표 (x, y)의 오답 쪽 머리줄 '원문 보기 ›' 자리(머리줄 오른쪽 [WrongNote.LINK_W]). 손가락이거나 읽기 모드일 때만
+     * (펜은 그 위에도 쓸 수 있게). 여기를 손가락으로 톡 누르는 것은 점을 찍으려는 것이 아니라 이동하려는 것이다
+     */
+    private fun headerLinkAt(page: Int, x: Float, y: Float, ev: MotionEvent): Stroke? {
+        val isFinger = ev.getToolType(0) == MotionEvent.TOOL_TYPE_FINGER
+        if (!isFinger && !host.readOnly) return null
+        val slop = 4f * density / host.scale
+        if (page !in 0 until host.pageCount) return null
+        return host.ink?.pages?.getOrNull(page)?.lastOrNull { st ->
+            st.image != null && st.count >= 4 && st.role?.startsWith(WrongNote.ROLE_HEADER) == true &&
+                wrongBounds(st).let { b ->
+                    y >= b.top - slop && y <= b.bottom + slop && x <= b.right + slop && x >= b.right - WrongNote.LINK_W - slop
+                }
         }
     }
 
@@ -363,8 +387,17 @@ internal class StickyNoteController(
                 }
                 hit ?: return false
                 val st = noteAt(hit.first, hit.second, hit.third, 6f * density / host.scale) ?: run {
+                    // 오답 쪽 머리줄의 '원문 보기 ›': 손가락으로 톡 누르면 어떤 도구에서든 바로 원문 쪽으로
+                    val badge = badgeAt(hit.first, hit.second, hit.third, ev)
+                    if (badge == null) {
+                        val link = headerLinkAt(hit.first, hit.second, hit.third, ev) ?: return false
+                        begin(ev, link, hit.first, Touch.LINK)
+                        downPx = hit.second
+                        downPy = hit.third
+                        view.invalidate()
+                        return true
+                    }
                     // 오답 배지: 톡 누르면 오답 쪽으로, 꾹 누르면 끌어 옮긴다
-                    val badge = badgeAt(hit.first, hit.second, hit.third, ev) ?: return false
                     begin(ev, badge, hit.first, Touch.BADGE)
                     downPx = hit.second
                     downPy = hit.third
@@ -389,6 +422,17 @@ internal class StickyNoteController(
             MotionEvent.ACTION_MOVE -> {
                 track ?: return false
                 if (!moved && hypot(ev.x - downX, ev.y - downY) > touchSlop) {
+                    // 오답 버튼(배지·'원문 보기') 위에서 손가락으로 선을 그으면 이동하지 않고 그 자리부터 그대로 그어진다
+                    // (손가락 필기를 켜 두었을 때. 꺼 두었으면 아래처럼 문서 넘기기)
+                    if (!dragging && finger && (mode == Touch.BADGE || mode == Touch.LINK) && host.fingerDrawing && !host.readOnly) {
+                        val x0 = downX
+                        val y0 = downY
+                        view.removeCallbacks(longPress)
+                        resetTouch()
+                        host.startFingerPen(ev, x0, y0, ev.downTime)
+                        view.invalidate()
+                        return false
+                    }
                     moved = true
                     view.removeCallbacks(longPress)
                     when {
@@ -454,7 +498,7 @@ internal class StickyNoteController(
     /** 메모를 톡 누름. 읽기 모드에서는 펼치고 접기만 */
     private fun tapped(st: Stroke, page: Int) {
         val inkDoc = host.ink ?: return
-        if (mode == Touch.BADGE) {
+        if (mode == Touch.BADGE || mode == Touch.LINK) {
             host.onWrongTap(page, downPx, downPy)
             return
         }

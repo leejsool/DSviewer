@@ -944,6 +944,10 @@ class DocumentView @JvmOverloads constructor(
         override fun stopFling() = scroller.forceFinished(true)
         override fun cancelZoomAnimation() { zoomAnimator?.cancel() }
         override fun forwardToGestures(ev: MotionEvent) { gestureDetector.onTouchEvent(ev) }
+        override val fingerDrawing get() = this@DocumentView.fingerDrawing
+        override fun startFingerPen(ev: MotionEvent, downX: Float, downY: Float, downTime: Long) {
+            this@DocumentView.startFingerPenFrom(ev, downX, downY, downTime)
+        }
         override fun drawStroke(c: Canvas, st: Stroke) = this@DocumentView.drawStroke(c, st)
         override fun onNotePlacementEnded() { listener?.onNotePlacementEnded() }
         override fun onNoteEdit(page: Int, st: Stroke) { listener?.onNoteEdit(page, st) }
@@ -1855,6 +1859,24 @@ class DocumentView @JvmOverloads constructor(
         lastSx = cx
         lastSy = cy
         invalidate()
+    }
+
+    /**
+     * 손가락 필기를 [downX], [downY]에서 [downTime]에 시작한 것으로 친다 (손가락이 오답 버튼에서 시작해 끌려, 버튼 누름이 아니라
+     * 필기로 넘어올 때). 지금 이벤트 [ev]는 이어서 필기의 움직임으로 처리된다
+     */
+    private fun startFingerPenFrom(ev: MotionEvent, downX: Float, downY: Float, downTime: Long) {
+        if (fingerActive) cancelFingerGesture(ev)
+        fingersBlocked = false
+        penPointerId = ev.getPointerId(0)
+        penIsFinger = true
+        applyPenButton(false, downX, downY)
+        penErasing = PenInputRules.penErasing(
+            tool, tapeErasing, fillErasing, false, PenInputRules.eraserInput(false, false, penButtonAction),
+        )
+        penMaxMajor = ev.getTouchMajor(0)
+        curTilt = 0f
+        startPen(downX, downY, PenInputRules.pressure(false, 0f), downTime)
     }
 
     private fun cancelFingerGesture(ev: MotionEvent) {

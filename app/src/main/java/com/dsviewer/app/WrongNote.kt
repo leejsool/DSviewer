@@ -454,7 +454,7 @@ object WrongNote {
  * 오답노트 링크 (읽기 모드에서 누를 때): 원문 쪽의 '오답 #n' 배지 → 그 오답 쪽,
  * 오답 쪽 머리줄 오른쪽 → 원문 쪽. (이동할 쪽, 그 쪽 안 높이)
  */
-fun InkDocument.wrongLinkAt(page: Int, x: Float, y: Float): Pair<Int, Float>? {
+fun InkDocument.wrongLinkAt(page: Int, x: Float, y: Float, tol: Float = 2f): Pair<Int, Float>? {
     val list = pages.getOrNull(page) ?: return null
     for (st in list.asReversed()) {
         val role = st.role ?: continue
@@ -462,10 +462,10 @@ fun InkDocument.wrongLinkAt(page: Int, x: Float, y: Float): Pair<Int, Float>? {
         val n = role.substring(2).toIntOrNull() ?: continue
         val box = wrongBounds(st)
         val r = box.right
-        if (x < box.left - 2f || x > r + 2f || y < box.top - 2f || y > box.bottom + 2f) continue
+        if (x < box.left - tol || x > r + tol || y < box.top - tol || y > box.bottom + tol) continue
         val hit = allWrongs().firstOrNull { it.second.number == n } ?: continue
         if (role.startsWith(WrongNote.ROLE_BADGE)) return hit.first to WrongNote.slotTop(hit.second.slot)
-        if (role.startsWith(WrongNote.ROLE_HEADER) && x >= r - WrongNote.LINK_W) {
+        if (role.startsWith(WrongNote.ROLE_HEADER) && x >= r - WrongNote.LINK_W - tol) {
             val src = hit.second.srcList ?: return null
             val idx = pages.indexOfFirst { it === src }
             if (idx < 0) return null
