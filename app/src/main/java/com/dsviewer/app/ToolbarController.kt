@@ -1129,10 +1129,11 @@ internal class ToolbarController(
             docView.symmetry.setResultDashed(on)
             refreshSymmetryBar()
         }
+        // 축: 점선 → 실선 → 투명 → 점선
         symAxis.setOnClickListener {
-            val on = !docView.symmetry.drawAxis
-            prefs.edit().putBoolean("symAxis", on).apply()
-            docView.symmetry.setDrawAxis(on)
+            val next = AxisStyle.entries[(docView.symmetry.axisStyle.ordinal + 1) % AxisStyle.entries.size]
+            prefs.edit().putInt("symAxisStyle", next.ordinal).apply()
+            docView.symmetry.setAxisStyle(next)
             refreshSymmetryBar()
         }
         symFlip.setOnClickListener { docView.symmetry.flipKeep() }
@@ -1145,7 +1146,8 @@ internal class ToolbarController(
         textEditor.commit()
         val mode = SymMode.entries.getOrElse(prefs.getInt("symMode", 0)) { SymMode.COPY }
         val orig = OrigStyle.entries.getOrElse(prefs.getInt("symOrig", OrigStyle.DASHED.ordinal)) { OrigStyle.DASHED }
-        if (!docView.startSymmetry(mode, orig, prefs.getBoolean("symDashed", false), prefs.getBoolean("symAxis", false))) return
+        val axis = AxisStyle.entries.getOrElse(prefs.getInt("symAxisStyle", AxisStyle.NONE.ordinal)) { AxisStyle.NONE }
+        if (!docView.startSymmetry(mode, orig, prefs.getBoolean("symDashed", false), axis)) return
         selectionBar.visibility = View.GONE
         symmetryBar.visibility = View.VISIBLE
         refreshSymmetryBar()
@@ -1172,7 +1174,11 @@ internal class ToolbarController(
             OrigStyle.SOLID -> "실선"
         }
         symDashed.text = if (s.resultDashed) "결과: 점선" else "결과: 실선"
-        symAxis.text = if (s.drawAxis) "축: 그림" else "축: 안 그림"
+        symAxis.text = "축: " + when (s.axisStyle) {
+            AxisStyle.DASHED -> "점선"
+            AxisStyle.SOLID -> "실선"
+            AxisStyle.NONE -> "투명"
+        }
         symFlip.visibility = if (s.mode == SymMode.FOLD) View.VISIBLE else View.GONE
         symConfirm.isEnabled = !s.result.isEmpty
     }

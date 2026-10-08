@@ -51,8 +51,8 @@ internal class SymmetryController(private val view: View, private val host: Host
         private set
     var resultDashed = false
         private set
-    /** 확정할 때 대칭축도 문서에 점선으로 그릴지 */
-    var drawAxis = false
+    /** 확정할 때 대칭축을 문서에 어떻게 남길지 (점선·실선·투명) */
+    var axisStyle = AxisStyle.NONE
         private set
     /** 접을 때 남길 쪽을 자동(점이 많은 쪽)의 반대로 바꿨는지 */
     private var flipped = false
@@ -92,14 +92,14 @@ internal class SymmetryController(private val view: View, private val host: Host
      */
     fun start(
         onPage: Int, strokes: List<Stroke>, bounds: RectF, startMode: SymMode, startOrig: OrigStyle, startDashed: Boolean,
-        startAxis: Boolean,
+        startAxis: AxisStyle,
     ) {
         page = onPage
         src = strokes
         mode = startMode
         orig = startOrig
         resultDashed = startDashed
-        drawAxis = startAxis
+        axisStyle = startAxis
         flipped = false
         val half = maxOf(bounds.height() / 2f + 30f, 60f)
         val x = if (startMode == SymMode.FOLD) bounds.centerX() else (bounds.right + SIDE_GAP).coerceAtMost(host.pageWidth(onPage))
@@ -139,9 +139,9 @@ internal class SymmetryController(private val view: View, private val host: Host
         view.invalidate()
     }
 
-    fun setDrawAxis(on: Boolean) {
-        if (!active || drawAxis == on) return
-        drawAxis = on
+    fun setAxisStyle(style: AxisStyle) {
+        if (!active || axisStyle == style) return
+        axisStyle = style
         rebuild()
         host.onStateChanged()
         view.invalidate()
@@ -185,7 +185,7 @@ internal class SymmetryController(private val view: View, private val host: Host
 
     private fun rebuild() {
         val keep = SymmetryOps.keepSide(src, axis[0], axis[1], axis[2], axis[3]) * (if (flipped) -1 else 1)
-        result = SymmetryOps.build(src, mode, orig, resultDashed, keep, axis[0], axis[1], axis[2], axis[3], drawAxis)
+        result = SymmetryOps.build(src, mode, orig, resultDashed, keep, axis[0], axis[1], axis[2], axis[3], axisStyle)
         hidden = result.removed.toHashSet()
     }
 

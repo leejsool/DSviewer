@@ -124,7 +124,7 @@ class SymmetryOpsTest {
 
     @Test fun axisIsDrawnAsADashedLineUnderTheResultWhenAsked() {
         val s = stroke(2f, 5f, 4f, 20f)
-        val r = SymmetryOps.build(listOf(s), SymMode.COPY, OrigStyle.NONE, false, 1, 10f, 0f, 10f, 100f, drawAxis = true)
+        val r = SymmetryOps.build(listOf(s), SymMode.COPY, OrigStyle.NONE, false, 1, 10f, 0f, 10f, 100f, axis = AxisStyle.DASHED)
         assertEquals(2, r.added.size)
         // 맨 아래(먼저 그려지는 것)가 축: 점선 사인펜, 축과 같은 x=10의 세로 직선
         val axis = r.added[0]
@@ -141,7 +141,7 @@ class SymmetryOpsTest {
     @Test fun axisSpansTheFigureAndTheResultWithAMargin() {
         // 도형은 y=5~20, 결과도 같은 높이: 축은 그보다 양쪽으로 조금 더 뻗는다
         val s = stroke(2f, 5f, 4f, 20f)
-        val r = SymmetryOps.build(listOf(s), SymMode.COPY, OrigStyle.NONE, false, 1, 10f, 0f, 10f, 100f, drawAxis = true)
+        val r = SymmetryOps.build(listOf(s), SymMode.COPY, OrigStyle.NONE, false, 1, 10f, 0f, 10f, 100f, axis = AxisStyle.DASHED)
         val axis = r.added[0]
         val lo = minOf(axis.y(0), axis.y(1))
         val hi = maxOf(axis.y(0), axis.y(1))
@@ -155,7 +155,17 @@ class SymmetryOpsTest {
         // 접을 것이 없으면 축만 그리지 않는다
         val away = stroke(14f, 10f, 16f, 30f)
         val keepRight = SymmetryMath.sideSign(15f, 0f, 10f, 0f, 10f, 100f)
-        val r = SymmetryOps.build(listOf(away), SymMode.FOLD, OrigStyle.NONE, false, keepRight, 10f, 0f, 10f, 100f, drawAxis = true)
+        val r = SymmetryOps.build(listOf(away), SymMode.FOLD, OrigStyle.NONE, false, keepRight, 10f, 0f, 10f, 100f, axis = AxisStyle.DASHED)
         assertTrue(r.isEmpty)
+    }
+
+    @Test fun solidAxisIsASolidLineAndTransparentDrawsNothing() {
+        val s = stroke(2f, 5f, 4f, 20f)
+        val solid = SymmetryOps.build(listOf(s), SymMode.COPY, OrigStyle.NONE, false, 1, 10f, 0f, 10f, 100f, axis = AxisStyle.SOLID)
+        assertEquals(2, solid.added.size)
+        assertFalse(solid.added[0].dashed)
+        assertEquals(10f, solid.added[0].x(0), eps)
+        val clear = SymmetryOps.build(listOf(s), SymMode.COPY, OrigStyle.NONE, false, 1, 10f, 0f, 10f, 100f, axis = AxisStyle.NONE)
+        assertEquals(1, clear.added.size)
     }
 }
