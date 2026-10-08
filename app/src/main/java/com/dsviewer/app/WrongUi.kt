@@ -26,11 +26,13 @@ import com.google.android.material.chip.ChipGroup
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import kotlin.math.roundToInt
 
-/** 오답노트 창들: 담기(분류 입력) · 분류 고치기 · 오답 목록(기호·해시태그로 거르기) */
+/** 스크랩 창들: 스크랩하기(분류 입력·복습 여부) · 고치기 · 스크랩 목록(기호·해시태그로 거르기) */
 class WrongUi(private val a: AppCompatActivity, private val prefs: SharedPreferences) {
 
-    /** 담기 창에서 고른 것 */
-    class Choice(val symbol: Int, val tags: List<String>, val title: String, val half: Boolean, val paper: Paper)
+    /** 스크랩하기 창에서 고른 것 ([review]는 복습할 스크랩으로 정했는지) */
+    class Choice(
+        val symbol: Int, val tags: List<String>, val title: String, val half: Boolean, val paper: Paper, val review: Boolean,
+    )
 
     private fun dp(v: Int) = (v * a.resources.displayMetrics.density).roundToInt()
 
@@ -41,34 +43,56 @@ class WrongUi(private val a: AppCompatActivity, private val prefs: SharedPrefere
         setPadding(0, dp(14), 0, dp(4))
     }
 
-    /** 분류 입력 칸들: 기호 칩, 해시태그 글, (이미 쓴 태그 칩), 제목 */
-    private class Form(val root: LinearLayout, val symbol: () -> Int, val tags: () -> List<String>, val title: () -> String)
+    /** 분류 입력 칸들: 기호 칩, 해시태그 글, (이미 쓴 태그 칩), 제목, 복습 여부 */
+    private class Form(
+        val root: LinearLayout, val symbol: () -> Int, val tags: () -> List<String>, val title: () -> String,
+        val review: () -> Boolean,
+    )
 
-    private fun buildForm(symbol0: Int, tags0: List<String>, title0: String, allTags: List<String>): Form {
+    private fun buildForm(symbol0: Int, tags0: List<String>, title0: String, allTags: List<String>, review0: Boolean): Form {
         val root = LinearLayout(a).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(8), dp(20), dp(4))
         }
         var symbol = symbol0
 
+        // 복습 여부: 맨 위에 두어 스크랩하면서 바로 보이게 (기본은 복습 안 함)
+        val reviewBox = com.google.android.material.checkbox.MaterialCheckBox(a).apply {
+            text = "복습하기  (복습 목록에 넣기)"
+            textSize = 15f
+            isChecked = review0
+        }
+        root.addView(reviewBox)
+
         root.addView(label("① 기호  (다시 누르면 해제)"))
-        val group = ChipGroup(a).apply {
-            isSingleSelection = true
-            isSelectionRequired = false
-        }
-        for (s in WrongSymbol.ALL) {
-            val chip = Chip(a).apply {
-                text = WrongSymbol.label(s)
-                isCheckable = true
-                isChecked = s == symbol0
-                setTextColor(WrongSymbol.color(s))
+        // 기호는 두 줄로: 엑스·세모·네모 / 별 1~5개. 두 줄이 하나의 선택을 나눠 쓰므로 다른 칩은 직접 풀어 준다
+        val chips = HashMap<Int, Chip>()
+        var syncing = false
+        fun symbolRow(symbols: List<Int>): ChipGroup {
+            val g = ChipGroup(a)
+            for (s in symbols) {
+                val chip = Chip(a).apply {
+                    text = WrongSymbol.label(s)
+                    isCheckable = true
+                    isChecked = s == symbol0
+                    setTextColor(WrongSymbol.color(s))
+                }
+                chips[s] = chip
+                chip.setOnCheckedChangeListener { _, on ->
+                    if (syncing) return@setOnCheckedChangeListener
+                    if (on) {
+                        symbol = s
+                        syncing = true
+                        for ((k, other) in chips) if (k != s) other.isChecked = false
+                        syncing = false
+                    } else if (symbol == s) symbol = WrongSymbol.NONE
+                }
+                g.addView(chip)
             }
-            chip.setOnCheckedChangeListener { _, on ->
-                if (on) symbol = s else if (symbol == s) symbol = WrongSymbol.NONE
-            }
-            group.addView(chip)
+            return g
         }
-        root.addView(group)
+        root.addView(symbolRow(listOf(WrongSymbol.CROSS, WrongSymbol.TRIANGLE, WrongSymbol.SQUARE)))
+        root.addView(symbolRow(WrongSymbol.ALL.filter { it in 1..5 }))
 
         root.addView(label("② 해시태그  (띄어쓰기로 구분)"))
         val tagInput = EditText(a).apply {
@@ -106,7 +130,10 @@ class WrongUi(private val a: AppCompatActivity, private val prefs: SharedPrefere
         }
         root.addView(titleInput)
 
-        return Form(root, { symbol }, { WrongNote.parseTags(tagInput.text.toString()) }, { titleInput.text.toString().trim() })
+        return Form(
+            root, { symbol }, { WrongNote.parseTags(tagInput.text.toString()) }, { titleInput.text.toString().trim() },
+            { reviewBox.isChecked },
+        )
     }
 
     private fun radioRow(options: List<String>, checked: Int): RadioGroup = RadioGroup(a).apply {
@@ -126,12 +153,12 @@ class WrongUi(private val a: AppCompatActivity, private val prefs: SharedPrefere
         return 0
     }
 
-    /** 고른 영역을 오답노트에 담는 창. [onRetry]는 '다시 고르기', [onDismiss]는 어떻게 닫히든 마지막에 */
+    /** 고른 영역을 스크랩하는 창 (복습은 기본이 '안 함'). [onRetry]는 '다시 고르기', [onDismiss]는 어떻게 닫히든 마지막에 */
     fun showCapture(
         preview: Bitmap, allTags: List<String>,
         onOk: (Choice) -> Unit, onRetry: () -> Unit, onDismiss: () -> Unit,
     ) {
-        val form = buildForm(WrongSymbol.NONE, emptyList(), "", allTags)
+        val form = buildForm(WrongSymbol.NONE, emptyList(), "", allTags, review0 = false)
         val image = ImageView(a).apply {
             setImageBitmap(preview)
             adjustViewBounds = true
@@ -142,7 +169,7 @@ class WrongUi(private val a: AppCompatActivity, private val prefs: SharedPrefere
         }
         form.root.addView(image, 0, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
-        form.root.addView(label("오답 쪽 배치"))
+        form.root.addView(label("스크랩 쪽 배치"))
         val layout = radioRow(listOf("한 문제 한 쪽", "반 쪽 (한 쪽에 두 문제)"), if (prefs.getBoolean("wrongHalf", false)) 1 else 0)
         form.root.addView(layout)
         form.root.addView(label("풀이 칸 바탕  (새 쪽을 만들 때)"))
@@ -150,13 +177,13 @@ class WrongUi(private val a: AppCompatActivity, private val prefs: SharedPrefere
         form.root.addView(paper.view)
 
         MaterialAlertDialogBuilder(a)
-            .setTitle("오답노트에 담기")
+            .setTitle("스크랩하기")
             .setView(ScrollView(a).apply { addView(form.root) })
-            .setPositiveButton("담기") { _, _ ->
+            .setPositiveButton("스크랩") { _, _ ->
                 val half = layout.checkedIndex() == 1
                 val p = paper.selected
                 prefs.edit().putBoolean("wrongHalf", half).putString("wrongPaper", p.name).apply()
-                onOk(Choice(form.symbol(), form.tags(), form.title(), half, p))
+                onOk(Choice(form.symbol(), form.tags(), form.title(), half, p, form.review()))
             }
             .setNeutralButton("다시 고르기") { _, _ -> onRetry() }
             .setNegativeButton("취소", null)
@@ -164,13 +191,13 @@ class WrongUi(private val a: AppCompatActivity, private val prefs: SharedPrefere
             .show()
     }
 
-    /** 이미 담은 오답의 기호·해시태그·제목 고치기 */
-    fun showEdit(e: WrongEntry, allTags: List<String>, onOk: (symbol: Int, tags: List<String>, title: String) -> Unit) {
-        val form = buildForm(e.symbol, e.tags, e.title, allTags)
+    /** 이미 스크랩한 것의 기호·해시태그·제목·복습 여부 고치기 */
+    fun showEdit(e: WrongEntry, allTags: List<String>, onOk: (symbol: Int, tags: List<String>, title: String, review: Boolean) -> Unit) {
+        val form = buildForm(e.symbol, e.tags, e.title, allTags, e.review)
         MaterialAlertDialogBuilder(a)
-            .setTitle("#${e.number} 분류 고치기")
+            .setTitle("스크랩 #${e.number} 고치기")
             .setView(ScrollView(a).apply { addView(form.root) })
-            .setPositiveButton("저장") { _, _ -> onOk(form.symbol(), form.tags(), form.title()) }
+            .setPositiveButton("저장") { _, _ -> onOk(form.symbol(), form.tags(), form.title(), form.review()) }
             .setNegativeButton("취소", null)
             .show()
     }
@@ -193,8 +220,8 @@ class WrongUi(private val a: AppCompatActivity, private val prefs: SharedPrefere
     }
 
     /**
-     * 오답 목록. 기호·해시태그 칩과 검색 글로 거르고, 줄을 누르면 그 오답으로 간다.
-     * [provider]는 지금의 오답 전부 (쪽 번호, 항목), [onEdit]는 분류 고치기 ([done]을 부르면 목록을 새로 그린다)
+     * 스크랩 목록. 기호·해시태그 칩과 검색 글로 거르고, 줄을 누르면 그 스크랩으로 간다.
+     * [provider]는 지금의 스크랩 전부 (쪽 번호, 항목), [onEdit]는 고치기 ([done]을 부르면 목록을 새로 그린다)
      */
     fun showList(
         provider: () -> List<Pair<Int, WrongEntry>>,
@@ -282,7 +309,7 @@ class WrongUi(private val a: AppCompatActivity, private val prefs: SharedPrefere
                     (query.isEmpty() || e.title.contains(query, true) || e.tags.any { it.contains(query.trimStart('#'), true) })
             }
             lastShown = shown.map { it.second }
-            countText.text = if (all.isEmpty()) "아직 담은 오답이 없습니다. 오답 ▸ 오답 담기로 시작하세요." else "${shown.size}개 (전체 ${all.size}개)"
+            countText.text = if (all.isEmpty()) "아직 스크랩한 것이 없습니다. 스크랩 ▸ 스크랩하기로 시작하세요." else "${shown.size}개 (전체 ${all.size}개)"
             rows.removeAllViews()
             for ((page, e) in shown) rows.addView(row(page, e, go, goSource) { onEdit(e) { render() } })
         }
@@ -297,7 +324,7 @@ class WrongUi(private val a: AppCompatActivity, private val prefs: SharedPrefere
         render()
 
         dialog = MaterialAlertDialogBuilder(a)
-            .setTitle("오답노트")
+            .setTitle("스크랩")
             .setView(ScrollView(a).apply { addView(root) })
             .setPositiveButton("닫기", null)
             .setNeutralButton("복습") { _, _ -> onReview(lastShown) }
@@ -349,8 +376,8 @@ class WrongUi(private val a: AppCompatActivity, private val prefs: SharedPrefere
     }
 
     /**
-     * 오답 복습 통계: 요약, 복습 단계별 문제 수, 기호별·해시태그별 정답률 (약한 것부터).
-     * 해시태그 줄을 누르면 그 태그의 오답만 복습한다 ([onReviewTag])
+     * 스크랩 복습 통계 (복습으로 정한 것만): 요약, 복습 단계별 문제 수, 기호별·해시태그별 정답률 (약한 것부터).
+     * 해시태그 줄을 누르면 그 태그의 스크랩만 복습한다 ([onReviewTag])
      */
     internal fun showStats(entries: List<StatEntry>, onReviewTag: (String) -> Unit, onReviewDue: () -> Unit) {
         val s = ReviewStats.summary(entries, ReviewSchedule.today())
@@ -360,9 +387,9 @@ class WrongUi(private val a: AppCompatActivity, private val prefs: SharedPrefere
         }
         var dialog: androidx.appcompat.app.AlertDialog? = null
         if (entries.isEmpty()) {
-            root.addView(smallText("아직 담은 오답이 없습니다. 오답 ▸ 오답 담기로 시작하세요."))
+            root.addView(smallText("복습으로 정한 스크랩이 없습니다. 스크랩 목록의 '수정'에서 복습을 켤 수 있습니다."))
         } else {
-            root.addView(smallText("오답 ${s.total}개 · 복습한 것 ${s.reviewed}개" + (s.accuracy?.let { " · 최근 정답률 ${pct(it)}%" } ?: ""), bold = true).apply { textSize = 15f })
+            root.addView(smallText("복습 스크랩 ${s.total}개 · 복습한 것 ${s.reviewed}개" + (s.accuracy?.let { " · 최근 정답률 ${pct(it)}%" } ?: ""), bold = true).apply { textSize = 15f })
             root.addView(smallText("오늘 복습할 것 ${s.dueToday}개 · 내일 ${s.dueTomorrow}개 · 일주일 안에 ${s.dueWithinWeek}개").apply { setPadding(0, dp(4), 0, 0) })
 
             root.addView(label("복습 단계"))
@@ -393,7 +420,7 @@ class WrongUi(private val a: AppCompatActivity, private val prefs: SharedPrefere
             }
         }
         dialog = MaterialAlertDialogBuilder(a)
-            .setTitle("오답 통계")
+            .setTitle("스크랩 통계")
             .setView(ScrollView(a).apply { addView(root) })
             .setPositiveButton("닫기", null)
             .apply { if (s.dueToday > 0) setNeutralButton("오늘 복습 ${s.dueToday}개") { _, _ -> onReviewDue() } }
@@ -428,15 +455,21 @@ class WrongUi(private val a: AppCompatActivity, private val prefs: SharedPrefere
             textSize = 11f
             setTextColor(0xFF78909C.toInt())
         })
-        // 복습 상태: 오늘 복습할 차례면 주황 굵게
+        // 복습 상태: 복습으로 정하지 않았으면 '복습 안 함', 오늘 복습할 차례면 주황 굵게
         val today = ReviewSchedule.today()
         mid.addView(TextView(a).apply {
-            text = ReviewSchedule.label(e.stage, e.dueDay, today) +
-                (ReviewSchedule.accuracy(e.history)?.let { " · 정답률 ${(it * 100).roundToInt()}%" } ?: "")
-            textSize = 12f
-            val due = e.isDue(today)
-            setTextColor(if (due) 0xFFE65100.toInt() else 0xFF00796B.toInt())
-            if (due) setTypeface(typeface, Typeface.BOLD)
+            if (!e.review) {
+                text = "복습 안 함"
+                textSize = 12f
+                setTextColor(0xFF90A4AE.toInt())
+            } else {
+                text = ReviewSchedule.label(e.stage, e.dueDay, today) +
+                    (ReviewSchedule.accuracy(e.history)?.let { " · 정답률 ${(it * 100).roundToInt()}%" } ?: "")
+                textSize = 12f
+                val due = e.isDue(today)
+                setTextColor(if (due) 0xFFE65100.toInt() else 0xFF00796B.toInt())
+                if (due) setTypeface(typeface, Typeface.BOLD)
+            }
         })
         line.addView(mid, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         fun action(text: String, f: () -> Unit) = TextView(a).apply {
@@ -447,7 +480,7 @@ class WrongUi(private val a: AppCompatActivity, private val prefs: SharedPrefere
             setOnClickListener { f() }
         }
         if (e.srcList != null) line.addView(action("원문") { onSource(e) })
-        line.addView(action("분류") { onEdit() })
+        line.addView(action("수정") { onEdit() })
         return line
     }
 }

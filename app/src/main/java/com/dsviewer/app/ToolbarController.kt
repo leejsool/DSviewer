@@ -933,7 +933,7 @@ internal class ToolbarController(
                 item(R.drawable.ic_select_tap, "대상 선택", docView.lassoTap),
                 // 선택 방식이 아니라 한 번 하는 동작: 영역 스크린샷, 그리고 오답 ▸ 오답 담기와 같은 것
                 item(R.drawable.ic_screenshot, "영역 스크린샷", false),
-                item(R.drawable.ic_wrong_note, "오답 담기", false),
+                item(R.drawable.ic_wrong_note, "스크랩하기", false),
             ), separatorBefore = setOf(3)) { i ->
                 when (i) {
                     3 -> startShot()

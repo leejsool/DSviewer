@@ -47,7 +47,7 @@ internal class WrongController(
         if (current()?.pagesBusy == true) return
         if (!docView.startWrongPick()) return
         wrongHint?.dismiss()
-        wrongHint = Snackbar.make(activity.findViewById(R.id.docFrame), "오답으로 담을 문제 영역을 끌어서 고르세요. (두 손가락: 이동 · 확대)", Snackbar.LENGTH_INDEFINITE)
+        wrongHint = Snackbar.make(activity.findViewById(R.id.docFrame), "스크랩할 문제 영역을 끌어서 고르세요. (두 손가락: 이동 · 확대)", Snackbar.LENGTH_INDEFINITE)
             .setAction("취소") { docView.cancelWrongPick() }
             .addCallback(object : Snackbar.Callback() {
                 override fun onDismissed(bar: Snackbar?, event: Int) {
@@ -115,14 +115,14 @@ internal class WrongController(
             else -> 1
         }
         val number = inkDoc.nextWrongNumber()
-        val entry = WrongEntry(number, c.symbol, c.tags, c.title, WrongNote.today(), slot, srcList, RectF(rect))
+        val entry = WrongEntry(number, c.symbol, c.tags, c.title, WrongNote.today(), slot, srcList, RectF(rect), review = c.review)
         val taken = srcList.filter { it.isWrongBadge() }.map { wrongBounds(it) }
         val built = WrongNote.build(entry, capture, rect, d.sizes[srcPage].width, d.sizes[srcPage].height, taken)
         if (reuse) {
             val adds = listOfNotNull(last to built.header, last to built.body, built.badge?.let { srcPage to it })
             inkDoc.addWrongToPage(last, entry, adds)
             docView.scrollToPageY(last, WrongNote.slotTop(slot))
-            toast("오답 #$number 을(를) ${last + 1}쪽 아래 칸에 담았습니다.")
+            toast("스크랩 #$number 을(를) ${last + 1}쪽 아래 칸에 스크랩했습니다.")
             return
         }
         val index = d.pageCount
@@ -131,7 +131,7 @@ internal class WrongController(
                 val i = inkDoc.pages.indexOfFirst { it === srcList }
                 if (i >= 0) inkDoc.add(i, badge)
             }
-            toast("오답 #$number 을(를) ${index + 1}쪽에 담았습니다. 아래 빈 곳에 풀이를 써 보세요.")
+            toast("스크랩 #$number 을(를) ${index + 1}쪽에 스크랩했습니다. 아래 빈 곳에 풀이를 써 보세요.")
         }
         editPages(t, { src, out -> PdfPages.insert(src, out, index, c.paper, WrongNote.PAGE_W, WrongNote.PAGE_H) }, onDone) { pages ->
             val list = mutableListOf(built.header, built.body)
@@ -149,7 +149,7 @@ internal class WrongController(
         if (before != null) current()?.ink?.jumped(Spot(before.first, before.second), to)
     }
 
-    /** 오답노트 목록: 기호·해시태그로 거르고, 누르면 그 오답으로 간다 */
+    /** 스크랩 목록: 기호·해시태그로 거르고, 누르면 그 스크랩으로 간다 */
     fun showList() {
         val t = current() ?: return
         val inkDoc = t.ink ?: return
@@ -166,11 +166,11 @@ internal class WrongController(
         )
     }
 
-    /** 오답 통계: 요약·단계·기호·해시태그별 정답률. 태그 줄을 누르면 그 태그만 복습 */
+    /** 스크랩 통계 (복습으로 정한 것만): 요약·단계·기호·해시태그별 정답률. 태그 줄을 누르면 그 태그만 복습 */
     fun showStats() {
         val t = current() ?: return
         val inkDoc = t.ink ?: return
-        val all = inkDoc.allWrongs().map { it.second }
+        val all = inkDoc.allWrongs().map { it.second }.filter { it.review }
         wrongUi.showStats(
             all.map { StatEntry(it.symbol, it.tags, it.stage, it.dueDay, it.history) },
             onReviewTag = { tag ->
@@ -181,23 +181,24 @@ internal class WrongController(
         )
     }
 
-    /** 오늘 복습할 오답만 바로 복습한다 */
+    /** 오늘 복습할 스크랩만 바로 복습한다 */
     fun reviewDue() {
         val t = current() ?: return
         val inkDoc = t.ink ?: return
         if (t.review != null || t.pagesBusy) return
         val today = ReviewSchedule.today()
         val due = inkDoc.allWrongs().map { it.second }.filter { it.isDue(today) }
-        if (due.isEmpty()) toast("오늘 복습할 오답이 없습니다.") else startReview(t, due)
+        if (due.isEmpty()) toast("오늘 복습할 스크랩이 없습니다.") else startReview(t, due)
     }
 
     /** 복습 범위를 고른다: 오늘 복습할 것 / 지금 목록에 보이는 것 / 전체 ([shown]이 null이면 목록 없이 시작한 것) */
-    fun askReview(shown: List<WrongEntry>? = null) = askScope("오답 복습", shown, startReview)
+    fun askReview(shown: List<WrongEntry>? = null) = askScope("스크랩 복습", shown, onlyReview = true, startReview)
 
-    /** 문제지로 만들 범위를 고른다 */
-    fun askExport() = askScope("문제지로 만들 오답", null, exportSheet)
+    /** 문제지로 만들 범위를 고른다 (복습으로 정하지 않은 스크랩도 포함) */
+    fun askExport() = askScope("문제지로 만들 스크랩", null, onlyReview = false, exportSheet)
 
-    private fun askScope(title: String, shown: List<WrongEntry>?, action: (DocTab, List<WrongEntry>) -> Unit) {
+    /** [onlyReview]면 복습으로 정한 스크랩만 범위에 든다 (복습 목록) */
+    private fun askScope(title: String, shown0: List<WrongEntry>?, onlyReview: Boolean, action: (DocTab, List<WrongEntry>) -> Unit) {
         val t = current() ?: return
         val inkDoc = t.ink ?: return
         if (t.review != null) {
@@ -205,9 +206,14 @@ internal class WrongController(
             return
         }
         if (t.pagesBusy) return
-        val all = inkDoc.allWrongs().map { it.second }
+        val every = inkDoc.allWrongs().map { it.second }
+        val all = if (onlyReview) every.filter { it.review } else every
+        val shown = if (onlyReview) shown0?.filter { it.review } else shown0
         if (all.isEmpty()) {
-            toast("담은 오답이 없습니다. 오답 ▸ 오답 담기로 먼저 담아 주세요.")
+            toast(
+                if (every.isEmpty()) "스크랩한 것이 없습니다. 스크랩 ▸ 스크랩하기로 먼저 스크랩해 주세요."
+                else "복습으로 정한 스크랩이 없습니다. 스크랩 목록의 '수정'에서 복습을 켤 수 있습니다."
+            )
             return
         }
         val today = ReviewSchedule.today()
@@ -215,26 +221,29 @@ internal class WrongController(
         val choices = ArrayList<Pair<String, List<WrongEntry>>>()
         choices.add("오늘 복습할 것 (${due.size}개)" to due)
         if (shown != null && shown.size != all.size && shown.size != due.size) choices.add("지금 목록에 보이는 것 (${shown.size}개)" to shown)
-        choices.add("전체 (${all.size}개)" to all)
+        choices.add((if (onlyReview) "복습으로 정한 것 전체 (${all.size}개)" else "전체 (${all.size}개)") to all)
         MaterialAlertDialogBuilder(activity)
             .setTitle(title)
             .setItems(choices.map { it.first }.toTypedArray()) { _, i ->
                 val list = choices[i].second
-                if (list.isEmpty()) toast("해당하는 오답이 없습니다.") else action(t, list)
+                if (list.isEmpty()) toast("해당하는 스크랩이 없습니다.") else action(t, list)
             }
             .setNegativeButton("취소", null)
             .show()
     }
 
-    /** 담은 오답의 기호·해시태그·제목을 고치고 머리줄과 원문 쪽 배지를 다시 그린다 */
+    /** 스크랩한 것의 기호·해시태그·제목·복습 여부를 고치고 머리줄과 원문 쪽 배지를 다시 그린다 */
     private fun editWrong(t: DocTab, e: WrongEntry, done: () -> Unit) {
         val inkDoc = t.ink ?: return
-        wrongUi.showEdit(e, wrongTagsByUse(inkDoc)) { symbol, tags, title ->
+        wrongUi.showEdit(e, wrongTagsByUse(inkDoc)) { symbol, tags, title, review ->
             e.symbol = symbol
             e.tags = tags
             e.title = title
+            e.review = review
             inkDoc.rebuildWrongStrokes(e)
             inkDoc.wrongEdited()
+            // 복습 대상이 바뀌면 탐색기의 '오늘 복습' 색인도 바로 맞춘다
+            if (t.review == null) ReviewIndexStore.update(activity, t.uri.toString(), t.name, inkDoc.allWrongs().map { it.second })
             done()
         }
     }

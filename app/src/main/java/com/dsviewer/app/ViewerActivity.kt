@@ -1592,17 +1592,17 @@ class ViewerActivity : AppCompatActivity() {
         }
     }
 
-    /** 오답 메뉴: 담기 · 목록 · 복습 · 문제지 · 통계 (예전에는 삽입 메뉴 안에 있었다) */
+    /** 스크랩 메뉴: 스크랩하기 · 목록 · 복습 · 문제지 · 통계 (예전 이름은 오답) */
     private fun showWrongMenu(anchor: View) {
         val popup = PopupMenu(this, anchor)
         val noReview = ink != null && current?.review == null
-        popup.menu.add(0, 1, 0, "오답 담기 (영역 선택)").setIcon(R.drawable.ic_wrong_note)
+        popup.menu.add(0, 1, 0, "스크랩하기 (영역 선택)").setIcon(R.drawable.ic_wrong_note)
             .isEnabled = ink != null && !docView.readOnly
-        popup.menu.add(0, 2, 1, "오답노트 목록 · 분류").setIcon(R.drawable.ic_wrong_note)
+        popup.menu.add(0, 2, 1, "스크랩 목록 · 분류").setIcon(R.drawable.ic_wrong_note)
             .isEnabled = ink != null
-        popup.menu.add(0, 3, 2, "오답 복습 시작").setIcon(R.drawable.ic_wrong_note).isEnabled = noReview
-        popup.menu.add(0, 4, 3, "오답 문제지 PDF 만들기").setIcon(R.drawable.ic_wrong_note).isEnabled = noReview
-        popup.menu.add(0, 5, 4, "오답 통계").setIcon(R.drawable.ic_wrong_note).isEnabled = noReview
+        popup.menu.add(0, 3, 2, "스크랩 복습 시작").setIcon(R.drawable.ic_wrong_note).isEnabled = noReview
+        popup.menu.add(0, 4, 3, "스크랩 문제지 PDF 만들기").setIcon(R.drawable.ic_wrong_note).isEnabled = noReview
+        popup.menu.add(0, 5, 4, "스크랩 통계").setIcon(R.drawable.ic_wrong_note).isEnabled = noReview
         popup.setForceShowIcon(true)
         popup.setOnMenuItemClickListener { item ->
             when (item.itemId) {
@@ -2582,7 +2582,7 @@ class ViewerActivity : AppCompatActivity() {
             TopAction("redo", "다시 실행", { redoButton }, R.drawable.ic_redo),
             TopAction("save", "저장", { saveButton }, R.drawable.ic_save),
             TopAction("insert", "삽입", { insertButton }, R.drawable.ic_insert),
-            TopAction("wrong", "오답", { wrongButton }, R.drawable.ic_wrong_note),
+            TopAction("wrong", "스크랩", { wrongButton }, R.drawable.ic_wrong_note),
             TopAction("view", "보기 (메뉴)", { viewMenuButton }, R.drawable.ic_view_menu),
             TopAction("twoPage", "양쪽 보기", { twoPageButton }, R.drawable.ic_two_page),
             TopAction("split", "분할 보기", { splitButton }, R.drawable.ic_split_view),

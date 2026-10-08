@@ -66,7 +66,8 @@ internal object ReviewIndexStore {
 
     /** [uri] 문서의 오답 일정을 새로 요약해 둔다 (오답이 없으면 색인에서 뺀다) */
     fun update(ctx: Context, uri: String, name: String, entries: List<WrongEntry>) {
-        val stats = entries.map { StatEntry(it.symbol, it.tags, it.stage, it.dueDay, it.history) }
+        // 복습으로 정한 스크랩만 복습 일정에 센다
+        val stats = entries.filter { it.review }.map { StatEntry(it.symbol, it.tags, it.stage, it.dueDay, it.history) }
         save(ctx, ReviewIndex.upsert(load(ctx), uri, ReviewIndex.summarize(uri, name, stats)))
     }
 

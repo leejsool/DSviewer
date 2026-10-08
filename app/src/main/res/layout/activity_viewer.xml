@@ -73,9 +73,9 @@
         <ImageButton
             android:id="@+id/actionWrong"
             style="@style/TabBarAction"
-            android:contentDescription="오답"
+            android:contentDescription="스크랩"
             android:src="@drawable/ic_wrong_note"
-            android:tooltipText="오답 (담기 · 목록 · 복습 · 문제지 · 통계)" />
+            android:tooltipText="스크랩 (스크랩하기 · 목록 · 복습 · 문제지 · 통계)" />
 
         <!-- 보기 ▾: 양쪽 보기 · 분할 보기 · 페이지 관리 · 쪽 한눈에 보기 · 읽기 모드 · 전체 화면을 한 메뉴로 (아래 단추들은 처음엔 숨겨 둔다. 옵션 ▸ 상단 툴바에서 다시 꺼낼 수 있다) -->
         <ImageButton

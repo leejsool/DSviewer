@@ -206,7 +206,7 @@ object PdfInk {
         }
         if (items.isNotEmpty()) {
             val top = PDOutlineItem()
-            top.title = "오답노트 (${items.size})"
+            top.title = "스크랩 (${items.size})"
             top.cosObject.setBoolean(WRONG_OUTLINE, true)
             root.addLast(top)
             val groups = items.groupBy { it.entry.symbol }.toSortedMap(compareBy { WrongSymbol.order(it) })

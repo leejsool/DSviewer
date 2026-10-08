@@ -84,7 +84,7 @@ object TableInsertDialog {
         fun stepper(name: String, get: () -> Int, set: (Int) -> Unit, max: Int): Pair<View, TextView> {
             val line = LinearLayout(activity).apply {
                 orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
+                gravity = Gravity.CENTER
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             }
             line.addView(TextView(activity).apply {
@@ -172,7 +172,7 @@ object TableInsertDialog {
         fun sizeField(hint: String, initial: Float, onChange: (Float) -> Unit): Pair<LinearLayout, EditText> {
             val box = LinearLayout(activity).apply {
                 orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
+                gravity = Gravity.CENTER
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             }
             box.addView(TextView(activity).apply { text = hint; textSize = 14f })
@@ -246,6 +246,9 @@ object TableInsertDialog {
         private val edgeOn = Paint(edgeOff).apply { color = fill.color }
         private val rect = RectF()
 
+        /** 격자를 뷰 가운데에 놓기 위해 왼쪽을 비우는 폭 (넓은 화면에서 칸 크기를 제한했을 때) */
+        private fun leftPad(): Float = ((width - (cell * maxCols + gap * (maxCols - 1))) / 2f).coerceAtLeast(0f)
+
         fun set(r: Int, c: Int) {
             rows = r
             cols = c
@@ -260,6 +263,7 @@ object TableInsertDialog {
         }
 
         override fun onDraw(canvas: Canvas) {
+            canvas.translate(leftPad(), 0f)
             for (r in 0 until maxRows) for (c in 0 until maxCols) {
                 rect.set(c * (cell + gap), r * (cell + gap), c * (cell + gap) + cell, r * (cell + gap) + cell)
                 val on = r < rows && c < cols
@@ -274,7 +278,7 @@ object TableInsertDialog {
         override fun onTouchEvent(e: MotionEvent): Boolean {
             if (e.actionMasked == MotionEvent.ACTION_DOWN) parent?.requestDisallowInterceptTouchEvent(true)
             if (e.actionMasked == MotionEvent.ACTION_DOWN || e.actionMasked == MotionEvent.ACTION_MOVE) {
-                val c = ((e.x / (cell + gap)).toInt() + 1).coerceIn(1, maxCols)
+                val c = (((e.x - leftPad()) / (cell + gap)).toInt() + 1).coerceIn(1, maxCols)
                 val r = ((e.y / (cell + gap)).toInt() + 1).coerceIn(1, maxRows)
                 if (r != rows || c != cols) onPick?.invoke(r, c)
             }

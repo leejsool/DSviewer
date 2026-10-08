@@ -173,7 +173,7 @@ internal class ReviewController(
             try {
                 val out = withContext(Dispatchers.IO) {
                     val dir = reviewDir(source)
-                    val name = ReviewFiles.unique(ReviewFiles.fileName(source.name, System.currentTimeMillis(), label = "오답문제지")) { File(dir, it).exists() }
+                    val name = ReviewFiles.unique(ReviewFiles.fileName(source.name, System.currentTimeMillis(), label = "스크랩문제지")) { File(dir, it).exists() }
                     val target = File(dir, name)
                     val blank = FileUtil.tempFile(activity, "sheet", "pdf")
                     try {
@@ -187,7 +187,7 @@ internal class ReviewController(
                 }
                 MaterialAlertDialogBuilder(activity)
                     .setTitle("문제지를 만들었습니다")
-                    .setMessage("오답 ${problems.size}문제 · ${out.parentFile?.name}/${out.name}\n인쇄하거나 다른 앱으로 보낼 수 있습니다.")
+                    .setMessage("스크랩 ${problems.size}문제 · ${out.parentFile?.name}/${out.name}\n인쇄하거나 다른 앱으로 보낼 수 있습니다.")
                     .setPositiveButton("열기") { _, _ -> openFile(out) }
                     .setNeutralButton("공유 · 인쇄") { _, _ -> share(out) }
                     .setNegativeButton("닫기", null)
@@ -234,7 +234,7 @@ internal class ReviewController(
                     }
                 }
                 openReviewTab(session, out)
-                if (skipped > 0) toast("문제 그림을 지운 오답 ${skipped}개는 뺐습니다.")
+                if (skipped > 0) toast("문제 그림을 지운 스크랩 ${skipped}개는 뺐습니다.")
             } catch (e: Exception) {
                 toast("복습 문서를 만들지 못했습니다.")
             } finally {
@@ -411,7 +411,7 @@ internal class ReviewController(
         }
         val saved = if (wrote) "\n쓴 풀이는 '${s.saveFile.parentFile?.name}' 폴더에 자동 저장됩니다." else ""
         val msg = if (s.results.isEmpty()) "채점한 문제가 없습니다.$saved"
-        else "채점한 ${s.results.size}개를 오답노트에 반영합니다. (${summary(s)})$saved"
+        else "채점한 ${s.results.size}개를 스크랩에 반영합니다. (${summary(s)})$saved"
         MaterialAlertDialogBuilder(activity)
             .setTitle("복습을 끝낼까요?")
             .setMessage(msg)

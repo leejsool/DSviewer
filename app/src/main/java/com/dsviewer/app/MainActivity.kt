@@ -888,15 +888,15 @@ class MainActivity : AppCompatActivity() {
     private fun showReviewDialog() {
         val due = dueDocs()
         if (due.isEmpty()) {
-            android.widget.Toast.makeText(this, "오늘 복습할 오답이 없습니다.", android.widget.Toast.LENGTH_SHORT).show()
+            android.widget.Toast.makeText(this, "오늘 복습할 스크랩이 없습니다.", android.widget.Toast.LENGTH_SHORT).show()
             return
         }
         val items = due.map { (item, n) ->
             val name = if (Locks.isLocked(this, item.uri)) "잠긴 문서" else item.name
-            "$name\n오답 ${n}개"
+            "$name\n스크랩 ${n}개"
         }.toTypedArray()
         MaterialAlertDialogBuilder(this)
-            .setTitle("오늘 복습할 오답 ${due.sumOf { it.second }}개")
+            .setTitle("오늘 복습할 스크랩 ${due.sumOf { it.second }}개")
             .setItems(items) { _, i ->
                 val uri = due[i].first.uri
                 unlockThen(uri) { openViewer(Uri.parse(uri), startReview = true) }

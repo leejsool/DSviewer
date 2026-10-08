@@ -21,7 +21,7 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /**
- * 오답노트: 문제 영역을 (PDF 내용 + 필기 그대로) 그림으로 담아 문서 맨 뒤의 오답 쪽에 모은다.
+ * 스크랩(예전 이름 오답노트): 문제 영역을 (PDF 내용 + 필기 그대로) 그림으로 담아 문서 맨 뒤의 스크랩 쪽에 모은다.
  * 첫째 분류는 기호([WrongSymbol]), 둘째 분류는 해시태그. 한 문제가 한 쪽을 쓰거나(칸 0),
  * 반 쪽씩 둘이 쪽을 나눠 쓴다(칸 1 = 위, 칸 2 = 아래).
  */
@@ -138,9 +138,11 @@ class WrongEntry(
     var lastDay: Long = 0L,
     var dueDay: Long = 0L,
     var history: String = "",
+    /** 복습할 스크랩으로 정했는가. 새 스크랩은 기본이 '복습 안 함'이고, 옛 파일에서 읽은 것은 모두 복습 대상 */
+    var review: Boolean = true,
 ) {
-    /** 오늘 복습할 차례인가 */
-    fun isDue(today: Long) = ReviewSchedule.isDue(stage, dueDay, today)
+    /** 오늘 복습할 차례인가 (복습으로 정하지 않은 스크랩은 복습 목록에 올라오지 않는다) */
+    fun isDue(today: Long) = review && ReviewSchedule.isDue(stage, dueDay, today)
 
     /** 채점 결과를 기록하고 다음 복습일을 정한다 */
     internal fun grade(result: ReviewResult, today: Long) {
@@ -168,7 +170,7 @@ object WrongNote {
     private const val MIN_BODY_W = 160f
     /** 머리줄 오른쪽 '원문 보기' 누름 칸 너비 (pt) */
     const val LINK_W = 150f
-    const val BADGE_W = 62f
+    const val BADGE_W = 72f
     const val BADGE_H = 16f
     /** 배지와 쪽 오른쪽 끝 사이 (pt) */
     private const val BADGE_GAP = 8f
@@ -219,7 +221,9 @@ object WrongNote {
         listOf(
             e.number.toString(), e.symbol.toString(), e.slot.toString(), e.date, srcPage(e).toString(), r,
             enc(e.title), e.tags.joinToString(",") { enc(it) },
-        ).plus(ReviewSchedule.encodeFields(ReviewSchedule.Fields(e.stage, e.lastDay, e.dueDay, e.history))).joinToString("|")
+        ).plus(ReviewSchedule.encodeFields(ReviewSchedule.Fields(e.stage, e.lastDay, e.dueDay, e.history)))
+            // 복습 칸들 뒤: 복습으로 정했는지 (1/0). 옛 파일에는 없어서 읽을 때 '복습함'으로 본다
+            .plus(if (e.review) "1" else "0").joinToString("|")
     }
 
     /** (항목, 원문 쪽 번호) 목록. 알아볼 수 없는 항목은 버린다 */
@@ -233,7 +237,7 @@ object WrongNote {
             val r = ReviewSchedule.decodeFields(f.drop(8))
             WrongEntry(
                 f[0].toInt(), f[1].toInt(), tags, dec(f[6]), f[3], f[2].toInt().coerceIn(0, 2), null, rect,
-                r.stage, r.lastDay, r.dueDay, r.history,
+                r.stage, r.lastDay, r.dueDay, r.history, review = f.getOrNull(12) != "0",
             ) to f[4].toInt()
         } catch (e: Exception) {
             null
@@ -382,7 +386,7 @@ object WrongNote {
         val head = "#${e.number}" + if (e.title.isNotBlank()) "  ${e.title.trim()}" else ""
         c.drawText(fit(head, t, leftW), x, 16f, t)
         // 둘째 줄 오른쪽: 복습 상태(복습한 적이 있으면)와 날짜. 해시태그는 그 왼쪽까지만
-        val review = ReviewSchedule.headerText(e.stage, e.dueDay, e.history)
+        val review = if (e.review) ReviewSchedule.headerText(e.stage, e.dueDay, e.history) else null
         val metaPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 9.5f }
         val dateW = metaPaint.measureText(e.date)
         metaPaint.typeface = Typeface.DEFAULT_BOLD
@@ -413,7 +417,7 @@ object WrongNote {
         return InkImage(bmp, null)
     }
 
-    /** 원문 쪽에 붙이는 작은 배지 '(기호) 오답 #번호' */
+    /** 원문 쪽에 붙이는 작은 배지 '(기호) 스크랩 #번호' */
     private fun badgeImage(e: WrongEntry): InkImage {
         val ppp = 6f
         val bmp = Bitmap.createBitmap((BADGE_W * ppp).roundToInt(), (BADGE_H * ppp).roundToInt(), Bitmap.Config.ARGB_8888)
@@ -432,7 +436,7 @@ object WrongNote {
         // 별이 여럿이어도 배지에서는 별 하나로 줄여 그린다
         if (e.symbol != WrongSymbol.NONE) x += WrongSymbol.draw(c, if (e.symbol in 1..5) 1 else e.symbol, x, BADGE_H / 2f, 8f, paint) + 3f
         val t = Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Typeface.DEFAULT_BOLD; textSize = 9f; color = 0xFF263238.toInt() }
-        c.drawText("오답 #${e.number}", x, BADGE_H / 2f + 3.2f, t)
+        c.drawText("스크랩 #${e.number}", x, BADGE_H / 2f + 3.2f, t)
         return InkImage(bmp, null)
     }
 
