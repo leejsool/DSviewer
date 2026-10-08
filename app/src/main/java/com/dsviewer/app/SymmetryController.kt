@@ -51,6 +51,9 @@ internal class SymmetryController(private val view: View, private val host: Host
         private set
     var resultDashed = false
         private set
+    /** 확정할 때 대칭축도 문서에 점선으로 그릴지 */
+    var drawAxis = false
+        private set
     /** 접을 때 남길 쪽을 자동(점이 많은 쪽)의 반대로 바꿨는지 */
     private var flipped = false
 
@@ -87,12 +90,16 @@ internal class SymmetryController(private val view: View, private val host: Host
      * 접기면 한가운데(바로 접힌 모습이 보이게), 복사·이동이면 도형 오른쪽 옆(사본이 겹치지 않고 바로 보이게).
      * [startMode]·[startOrig]·[startDashed]는 지난번에 고른 값
      */
-    fun start(onPage: Int, strokes: List<Stroke>, bounds: RectF, startMode: SymMode, startOrig: OrigStyle, startDashed: Boolean) {
+    fun start(
+        onPage: Int, strokes: List<Stroke>, bounds: RectF, startMode: SymMode, startOrig: OrigStyle, startDashed: Boolean,
+        startAxis: Boolean,
+    ) {
         page = onPage
         src = strokes
         mode = startMode
         orig = startOrig
         resultDashed = startDashed
+        drawAxis = startAxis
         flipped = false
         val half = maxOf(bounds.height() / 2f + 30f, 60f)
         val x = if (startMode == SymMode.FOLD) bounds.centerX() else (bounds.right + SIDE_GAP).coerceAtMost(host.pageWidth(onPage))
@@ -127,6 +134,14 @@ internal class SymmetryController(private val view: View, private val host: Host
     fun setResultDashed(on: Boolean) {
         if (!active || resultDashed == on) return
         resultDashed = on
+        rebuild()
+        host.onStateChanged()
+        view.invalidate()
+    }
+
+    fun setDrawAxis(on: Boolean) {
+        if (!active || drawAxis == on) return
+        drawAxis = on
         rebuild()
         host.onStateChanged()
         view.invalidate()
@@ -170,7 +185,7 @@ internal class SymmetryController(private val view: View, private val host: Host
 
     private fun rebuild() {
         val keep = SymmetryOps.keepSide(src, axis[0], axis[1], axis[2], axis[3]) * (if (flipped) -1 else 1)
-        result = SymmetryOps.build(src, mode, orig, resultDashed, keep, axis[0], axis[1], axis[2], axis[3])
+        result = SymmetryOps.build(src, mode, orig, resultDashed, keep, axis[0], axis[1], axis[2], axis[3], drawAxis)
         hidden = result.removed.toHashSet()
     }
 

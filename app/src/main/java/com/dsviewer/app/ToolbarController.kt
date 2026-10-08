@@ -1098,6 +1098,7 @@ internal class ToolbarController(
     private val symMode: MaterialButtonToggleGroup = findViewById(R.id.symMode)
     private val symOrig: MaterialButton = findViewById(R.id.symOrig)
     private val symDashed: MaterialButton = findViewById(R.id.symDashed)
+    private val symAxis: MaterialButton = findViewById(R.id.symAxis)
     private val symFlip: View = findViewById(R.id.symFlip)
     private val symConfirm: View = findViewById(R.id.symConfirm)
     /** 막대를 맞추느라 방식 단추를 대신 눌러 줄 때는 다시 반응하지 않게 */
@@ -1128,6 +1129,12 @@ internal class ToolbarController(
             docView.symmetry.setResultDashed(on)
             refreshSymmetryBar()
         }
+        symAxis.setOnClickListener {
+            val on = !docView.symmetry.drawAxis
+            prefs.edit().putBoolean("symAxis", on).apply()
+            docView.symmetry.setDrawAxis(on)
+            refreshSymmetryBar()
+        }
         symFlip.setOnClickListener { docView.symmetry.flipKeep() }
         findViewById<View>(R.id.symCancel).setOnClickListener { docView.symmetry.cancel() }
         symConfirm.setOnClickListener { docView.symmetry.confirm() }
@@ -1138,7 +1145,7 @@ internal class ToolbarController(
         textEditor.commit()
         val mode = SymMode.entries.getOrElse(prefs.getInt("symMode", 0)) { SymMode.COPY }
         val orig = OrigStyle.entries.getOrElse(prefs.getInt("symOrig", OrigStyle.DASHED.ordinal)) { OrigStyle.DASHED }
-        if (!docView.startSymmetry(mode, orig, prefs.getBoolean("symDashed", false))) return
+        if (!docView.startSymmetry(mode, orig, prefs.getBoolean("symDashed", false), prefs.getBoolean("symAxis", false))) return
         selectionBar.visibility = View.GONE
         symmetryBar.visibility = View.VISIBLE
         refreshSymmetryBar()
@@ -1165,6 +1172,7 @@ internal class ToolbarController(
             OrigStyle.SOLID -> "실선"
         }
         symDashed.text = if (s.resultDashed) "결과: 점선" else "결과: 실선"
+        symAxis.text = if (s.drawAxis) "축: 그림" else "축: 안 그림"
         symFlip.visibility = if (s.mode == SymMode.FOLD) View.VISIBLE else View.GONE
         symConfirm.isEnabled = !s.result.isEmpty
     }

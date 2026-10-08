@@ -413,6 +413,14 @@
                         android:text="결과: 실선" />
 
                     <com.google.android.material.button.MaterialButton
+                        android:id="@+id/symAxis"
+                        style="?attr/materialButtonTonalStyle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="6dp"
+                        android:text="축: 안 그림" />
+
+                    <com.google.android.material.button.MaterialButton
                         android:id="@+id/symFlip"
                         style="?attr/materialButtonTonalStyle"
                         android:layout_width="wrap_content"

@@ -1078,12 +1078,12 @@ class DocumentView @JvmOverloads constructor(
 
     /**
      * 고른 것의 대칭 편집을 시작한다 (접는 선은 고른 것 가운데의 세로선에서 시작). 끝나면 [Listener.onSymmetryEnded].
-     * 고른 것이 없거나 읽기 모드면 false. [mode]·[orig]·[dashed]는 지난번에 고른 값
+     * 고른 것이 없거나 읽기 모드면 false. [mode]·[orig]·[dashed]·[drawAxis]는 지난번에 고른 값
      */
-    fun startSymmetry(mode: SymMode, orig: OrigStyle, dashed: Boolean): Boolean {
+    fun startSymmetry(mode: SymMode, orig: OrigStyle, dashed: Boolean, drawAxis: Boolean): Boolean {
         if (ink == null || readOnly || selection.isEmpty() || selPage < 0) return false
         notes.reset()
-        symmetry.start(selPage, selection.toList(), RectF(selBounds), mode, orig, dashed)
+        symmetry.start(selPage, selection.toList(), RectF(selBounds), mode, orig, dashed, drawAxis)
         return true
     }
 

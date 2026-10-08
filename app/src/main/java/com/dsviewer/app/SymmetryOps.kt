@@ -56,13 +56,54 @@ internal object SymmetryOps {
         return if (pos >= neg) 1 else -1
     }
 
+    /** 축을 문서에 그릴 때 도형 양 끝에서 더 뻗는 길이 (pt)와 가장 짧은 길이 */
+    private const val AXIS_MARGIN = 24f
+    private const val AXIS_MIN = 40f
+
+    /**
+     * 문서에 그려 둘 대칭축: 고른 도형과 결과를 모두 지나는 길이로 양쪽에 조금씩 더 뻗은 점선 직선 (사인펜).
+     * 색·굵기는 고른 획을 따른다. 그릴 점이 없으면 null
+     */
+    private fun axisStroke(src: List<Stroke>, added: List<Stroke>, ax: Float, ay: Float, bx: Float, by: Float): Stroke? {
+        val len = kotlin.math.hypot((bx - ax).toDouble(), (by - ay).toDouble()).toFloat()
+        if (len == 0f) return null
+        val ux = (bx - ax) / len
+        val uy = (by - ay) / len
+        var lo = Float.MAX_VALUE
+        var hi = -Float.MAX_VALUE
+        fun scan(s: Stroke) {
+            for (i in 0 until s.count) {
+                val t = (s.x(i) - ax) * ux + (s.y(i) - ay) * uy
+                if (t < lo) lo = t
+                if (t > hi) hi = t
+            }
+        }
+        src.filter { it.note == null }.forEach(::scan)
+        added.forEach(::scan)
+        if (lo > hi) return null
+        lo -= AXIS_MARGIN
+        hi += AXIS_MARGIN
+        if (hi - lo < AXIS_MIN) {
+            val mid = (lo + hi) / 2
+            lo = mid - AXIS_MIN / 2
+            hi = mid + AXIS_MIN / 2
+        }
+        val base = src.firstOrNull { it.tool == Tool.PEN && !it.isBox } ?: src.firstOrNull() ?: return null
+        val p = if (base.count > 0) base.p(0) else 0.5f
+        return Stroke(Tool.PEN, base.color, base.width, true, PenStyle.FELT).apply {
+            add(ax + ux * lo, ay + uy * lo, p)
+            add(ax + ux * hi, ay + uy * hi, p)
+        }
+    }
+
     /**
      * 결과를 만든다. [keep]은 접을 때 남길 쪽 (+1·-1).
-     * 복사는 사본만 더하고, 이동·접기는 원본을 [orig]대로 처리한다. 결과 획은 [dashed]면 점선
+     * 복사는 사본만 더하고, 이동·접기는 원본을 [orig]대로 처리한다. 결과 획은 [dashed]면 점선.
+     * [drawAxis]면 대칭축도 점선 직선으로 함께 그린다 (적용할 결과가 있을 때만; 결과 도형 아래에 깔린다)
      */
     fun build(
         src: List<Stroke>, mode: SymMode, orig: OrigStyle, dashed: Boolean, keep: Int,
-        ax: Float, ay: Float, bx: Float, by: Float,
+        ax: Float, ay: Float, bx: Float, by: Float, drawAxis: Boolean = false,
     ): SymResult {
         val removed = ArrayList<Stroke>()
         val added = ArrayList<Stroke>()
@@ -94,6 +135,7 @@ internal object SymmetryOps {
                 place(s, s.copy().apply { role = null; setPoints(pts) })
             }
         }
+        if (drawAxis && added.isNotEmpty()) axisStroke(src, added, ax, ay, bx, by)?.let { added.add(0, it) }
         return SymResult(removed, added, after)
     }
 }

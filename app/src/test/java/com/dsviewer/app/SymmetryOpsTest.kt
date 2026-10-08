@@ -121,4 +121,41 @@ class SymmetryOpsTest {
         val mostlyLeft = stroke(2f, 0f, 4f, 10f, 6f, 20f, 16f, 30f)
         assertEquals(-right, SymmetryOps.keepSide(listOf(mostlyLeft), 10f, 0f, 10f, 100f))
     }
+
+    @Test fun axisIsDrawnAsADashedLineUnderTheResultWhenAsked() {
+        val s = stroke(2f, 5f, 4f, 20f)
+        val r = SymmetryOps.build(listOf(s), SymMode.COPY, OrigStyle.NONE, false, 1, 10f, 0f, 10f, 100f, drawAxis = true)
+        assertEquals(2, r.added.size)
+        // 맨 아래(먼저 그려지는 것)가 축: 점선 사인펜, 축과 같은 x=10의 세로 직선
+        val axis = r.added[0]
+        assertTrue(axis.dashed)
+        assertEquals(PenStyle.FELT, axis.pen)
+        assertEquals(2, axis.count)
+        assertEquals(10f, axis.x(0), eps)
+        assertEquals(10f, axis.x(1), eps)
+        // 선택은 결과 도형만 (축은 넣지 않는다)
+        assertEquals(1, r.selectAfter.size)
+        assertFalse(r.selectAfter[0].dashed)
+    }
+
+    @Test fun axisSpansTheFigureAndTheResultWithAMargin() {
+        // 도형은 y=5~20, 결과도 같은 높이: 축은 그보다 양쪽으로 조금 더 뻗는다
+        val s = stroke(2f, 5f, 4f, 20f)
+        val r = SymmetryOps.build(listOf(s), SymMode.COPY, OrigStyle.NONE, false, 1, 10f, 0f, 10f, 100f, drawAxis = true)
+        val axis = r.added[0]
+        val lo = minOf(axis.y(0), axis.y(1))
+        val hi = maxOf(axis.y(0), axis.y(1))
+        assertTrue(lo < 5f)
+        assertTrue(hi > 20f)
+    }
+
+    @Test fun noAxisIsDrawnByDefaultOrWhenThereIsNothingToApply() {
+        val s = stroke(2f, 5f, 4f, 20f)
+        assertEquals(1, SymmetryOps.build(listOf(s), SymMode.COPY, OrigStyle.NONE, false, 1, 10f, 0f, 10f, 100f).added.size)
+        // 접을 것이 없으면 축만 그리지 않는다
+        val away = stroke(14f, 10f, 16f, 30f)
+        val keepRight = SymmetryMath.sideSign(15f, 0f, 10f, 0f, 10f, 100f)
+        val r = SymmetryOps.build(listOf(away), SymMode.FOLD, OrigStyle.NONE, false, keepRight, 10f, 0f, 10f, 100f, drawAxis = true)
+        assertTrue(r.isEmpty)
+    }
 }
