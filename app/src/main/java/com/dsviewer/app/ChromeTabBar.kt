@@ -5,15 +5,20 @@ import android.content.res.ColorStateList
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.drawable.GradientDrawable
+import android.os.Handler
+import android.os.Looper
 import android.util.AttributeSet
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.HorizontalScrollView
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.PopupWindow
 import android.widget.TextView
 import androidx.core.graphics.ColorUtils
 import com.google.android.material.color.MaterialColors
@@ -26,6 +31,7 @@ import kotlin.math.min
  * 막대 바탕은 한 단계 어두운 색이어야 한다 (레이아웃에서 부모 배경으로 준다).
  * 탭이 많으면 탭 너비가 줄어들고, 최소 너비보다 좁아지면 옆으로 밀린다. ＋ 버튼은 늘 탭 바로 오른쪽.
  * 폭이 좁은 화면(휴대폰 세로 등)에서는 탭을 작게 그리고, 고른 탭에만 × 단추를 둔다 (크롬처럼).
+ * 이름이 잘린 탭은 풀네임을 말풍선으로 본다: 이미 고른 탭을 한 번 더 누르거나, 펜·마우스를 탭 위에 잠시 둔다.
  */
 class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? = null) : LinearLayout(ctx, attrs) {
 
@@ -115,6 +121,7 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
 
     fun removeTab(i: Int) {
         if (i !in tabs.indices) return
+        dismissTip()
         row.removeView(tabs.removeAt(i))
         if (selectedIndex == i) selectedIndex = -1 else if (selectedIndex > i) selectedIndex--
         refreshStates()
@@ -131,6 +138,7 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
     fun select(i: Int, notify: Boolean = false) {
         if (i !in tabs.indices) return
         val changed = i != selectedIndex
+        if (changed) dismissTip()
         selectedIndex = i
         refreshStates()
         post { scrollToSelected(smooth = true) }
@@ -142,6 +150,49 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
         val t = tabs.getOrNull(selectedIndex) ?: return
         val x = t.left - (scroll.width - t.width) / 2
         if (smooth) scroll.smoothScrollTo(x, 0) else scroll.scrollTo(x, 0)
+    }
+
+    // ----- 탭 이름 말풍선 -----
+
+    private val tipHandler = Handler(Looper.getMainLooper())
+    private var tip: PopupWindow? = null
+    private val hideTip = Runnable { dismissTip() }
+
+    /** [tab] 아래에 풀네임을 띄운다. [hideAfterMs]가 0이면 [dismissTip]을 부를 때까지 둔다 */
+    private fun showTip(tab: TabView, hideAfterMs: Long) {
+        dismissTip()
+        if (!tab.isAttachedToWindow) return
+        val maxW = resources.displayMetrics.widthPixels - px(24f)
+        val text = TextView(context).apply {
+            this.text = tab.fullTitle
+            setTextColor(0xFFFFFFFF.toInt())
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            maxWidth = maxW
+            setPadding(px(12f), px(8f), px(12f), px(8f))
+            background = GradientDrawable().apply {
+                setColor(0xE6303030.toInt())
+                cornerRadius = px(8f).toFloat()
+            }
+        }
+        // 손·펜이 닿아도 아래 화면이 그대로 받게 (말풍선은 보기만)
+        tip = PopupWindow(text, ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            isFocusable = false
+            isTouchable = false
+            elevation = px(4f).toFloat()
+            showAsDropDown(tab, tab.width / 8, px(2f))
+        }
+        if (hideAfterMs > 0) tipHandler.postDelayed(hideTip, hideAfterMs)
+    }
+
+    private fun dismissTip() {
+        tipHandler.removeCallbacks(hideTip)
+        tip?.dismiss()
+        tip = null
+    }
+
+    override fun onDetachedFromWindow() {
+        dismissTip()
+        super.onDetachedFromWindow()
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
@@ -211,6 +262,12 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
         private val shape = Path()
         private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
         private val line = Paint().apply { strokeWidth = density }
+        private val showTipLater = Runnable { if (isAttachedToWindow && isTitleCut()) showTip(this, 0) }
+
+        val fullTitle: CharSequence get() = title.text
+
+        /** 이름이 잘려서 ...으로 줄었는지 */
+        private fun isTitleCut() = title.layout?.let { it.lineCount > 0 && it.getEllipsisCount(0) > 0 } == true
 
         init {
             orientation = HORIZONTAL
@@ -234,7 +291,22 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
                 addView(close, LayoutParams(px(26f), px(26f)))
             }
             applyCompact(false)
-            setOnClickListener { select(tabs.indexOf(this), notify = true) }
+            setOnClickListener {
+                val i = tabs.indexOf(this)
+                // 이미 고른 탭을 한 번 더 누르면 풀네임
+                if (i == selectedIndex) showTip(this, 3000) else select(i, notify = true)
+            }
+            // 펜·마우스를 탭 위에 잠시 두면 (이름이 잘렸을 때만) 풀네임
+            setOnHoverListener { _, e ->
+                when (e.actionMasked) {
+                    MotionEvent.ACTION_HOVER_ENTER -> tipHandler.postDelayed(showTipLater, 500)
+                    MotionEvent.ACTION_HOVER_EXIT -> {
+                        tipHandler.removeCallbacks(showTipLater)
+                        if (tip != null) dismissTip()
+                    }
+                }
+                false
+            }
         }
 
         /** 작은 탭: 여백·아이콘·글자·× 단추를 줄인다 */
