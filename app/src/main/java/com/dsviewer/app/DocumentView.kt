@@ -1081,7 +1081,7 @@ class DocumentView @JvmOverloads constructor(
     })
 
     /**
-     * 고른 것의 대칭 편집을 시작한다 (접는 선은 고른 것 가운데의 세로선에서 시작). 끝나면 [Listener.onSymmetryEnded].
+     * 고른 것의 대칭 편집을 시작한다 (접는 선은 가로선에서 시작: 접기면 고른 것 가운데, 복사·이동이면 바로 아래). 끝나면 [Listener.onSymmetryEnded].
      * 고른 것이 없거나 읽기 모드면 false. [mode]·[orig]·[dashed]·[axis]는 지난번에 고른 값
      */
     fun startSymmetry(mode: SymMode, orig: OrigStyle, dashed: Boolean, axis: AxisStyle): Boolean {

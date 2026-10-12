@@ -86,8 +86,9 @@ internal class SymmetryController(private val view: View, private val host: Host
     }
 
     /**
-     * [onPage]쪽에서 [strokes]의 대칭 편집을 시작한다. 접는 선은 세로선으로 [bounds](쪽 좌표)에서 시작한다:
-     * 접기면 한가운데(바로 접힌 모습이 보이게), 복사·이동이면 도형 오른쪽 옆(사본이 겹치지 않고 바로 보이게).
+     * [onPage]쪽에서 [strokes]의 대칭 편집을 시작한다. 접는 선은 가로선(x축 대칭)으로 [bounds](쪽 좌표)에서 시작한다:
+     * 접기면 한가운데(바로 접힌 모습이 보이게), 복사·이동이면 도형 바로 아래(사본이 겹치지 않고 바로 보이게).
+     * 세로선(y축 대칭)이 필요하면 끝 동그라미를 끌어 돌린다.
      * [startMode]·[startOrig]·[startDashed]는 지난번에 고른 값
      */
     fun start(
@@ -101,12 +102,12 @@ internal class SymmetryController(private val view: View, private val host: Host
         resultDashed = startDashed
         axisStyle = startAxis
         flipped = false
-        val half = maxOf(bounds.height() / 2f + 30f, 60f)
-        val x = if (startMode == SymMode.FOLD) bounds.centerX() else (bounds.right + SIDE_GAP).coerceAtMost(host.pageWidth(onPage))
-        axis[0] = x
-        axis[1] = bounds.centerY() - half
-        axis[2] = x
-        axis[3] = bounds.centerY() + half
+        val half = maxOf(bounds.width() / 2f + 30f, 60f)
+        val y = if (startMode == SymMode.FOLD) bounds.centerY() else (bounds.bottom + SIDE_GAP).coerceAtMost(host.pageHeight(onPage))
+        axis[0] = bounds.centerX() - half
+        axis[1] = y
+        axis[2] = bounds.centerX() + half
+        axis[3] = y
         drag = Drag.NONE
         active = true
         rebuild()
