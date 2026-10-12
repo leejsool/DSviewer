@@ -1100,6 +1100,8 @@ internal class ToolbarController(
     private val symDashed: MaterialButton = findViewById(R.id.symDashed)
     private val symAxis: MaterialButton = findViewById(R.id.symAxis)
     private val symFlip: View = findViewById(R.id.symFlip)
+    private val symOrigCol: View = findViewById(R.id.symOrigCol)
+    private val symFlipCol: View = findViewById(R.id.symFlipCol)
     private val symConfirm: View = findViewById(R.id.symConfirm)
     /** 막대를 맞추느라 방식 단추를 대신 눌러 줄 때는 다시 반응하지 않게 */
     private var symRefreshing = false
@@ -1167,19 +1169,19 @@ internal class ToolbarController(
             symMode.check(id)
             symRefreshing = false
         }
-        symOrig.visibility = if (s.mode == SymMode.COPY) View.GONE else View.VISIBLE
-        symOrig.text = "원본: " + when (s.orig) {
+        symOrigCol.visibility = if (s.mode == SymMode.COPY) View.GONE else View.VISIBLE
+        symOrig.text = when (s.orig) {
             OrigStyle.NONE -> "없음"
             OrigStyle.DASHED -> "점선"
             OrigStyle.SOLID -> "실선"
         }
-        symDashed.text = if (s.resultDashed) "결과: 점선" else "결과: 실선"
-        symAxis.text = "축: " + when (s.axisStyle) {
+        symDashed.text = if (s.resultDashed) "점선" else "실선"
+        symAxis.text = when (s.axisStyle) {
             AxisStyle.DASHED -> "점선"
             AxisStyle.SOLID -> "실선"
             AxisStyle.NONE -> "투명"
         }
-        symFlip.visibility = if (s.mode == SymMode.FOLD) View.VISIBLE else View.GONE
+        symFlipCol.visibility = if (s.mode == SymMode.FOLD) View.VISIBLE else View.GONE
         symConfirm.isEnabled = !s.result.isEmpty
     }
 

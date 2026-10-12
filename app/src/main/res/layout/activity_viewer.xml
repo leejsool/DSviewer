@@ -360,12 +360,14 @@
                 android:layout_height="wrap_content"
                 android:scrollbars="none">
 
+                <!-- 폰에서도 한눈에 보이게: 왼쪽 방식 버튼(작고 촘촘히) · 가운데 표(위 줄 이름 / 아래 줄 지금 값) · 오른쪽 취소·확정 -->
                 <LinearLayout
                     android:layout_width="wrap_content"
-                    android:layout_height="52dp"
+                    android:layout_height="wrap_content"
                     android:gravity="center_vertical"
                     android:orientation="horizontal"
-                    android:paddingHorizontal="8dp">
+                    android:paddingHorizontal="8dp"
+                    android:paddingVertical="6dp">
 
                     <com.google.android.material.button.MaterialButtonToggleGroup
                         android:id="@+id/symMode"
@@ -376,72 +378,128 @@
 
                         <com.google.android.material.button.MaterialButton
                             android:id="@+id/symCopy"
-                            style="?attr/materialButtonOutlinedStyle"
+                            style="@style/SymSmallButton.Outlined"
                             android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
+                            android:layout_height="36dp"
                             android:text="복사" />
 
                         <com.google.android.material.button.MaterialButton
                             android:id="@+id/symMove"
-                            style="?attr/materialButtonOutlinedStyle"
+                            style="@style/SymSmallButton.Outlined"
                             android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
+                            android:layout_height="36dp"
                             android:text="이동" />
 
                         <com.google.android.material.button.MaterialButton
                             android:id="@+id/symFold"
-                            style="?attr/materialButtonOutlinedStyle"
+                            style="@style/SymSmallButton.Outlined"
                             android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
+                            android:layout_height="36dp"
                             android:text="접기" />
                     </com.google.android.material.button.MaterialButtonToggleGroup>
 
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/symOrig"
-                        style="?attr/materialButtonTonalStyle"
+                    <!-- 표: 칸마다 위에 이름, 아래에 지금 값 (누르면 돌아가며 바뀜) -->
+                    <LinearLayout
+                        android:id="@+id/symOrigCol"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginStart="8dp"
-                        android:text="원본: 점선" />
+                        android:layout_marginStart="10dp"
+                        android:gravity="center_horizontal"
+                        android:orientation="vertical">
 
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/symDashed"
-                        style="?attr/materialButtonTonalStyle"
+                        <TextView
+                            style="@style/SymCaption"
+                            android:text="원본" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/symOrig"
+                            style="@style/SymSmallButton.Tonal"
+                            android:layout_width="wrap_content"
+                            android:layout_height="32dp"
+                            android:text="점선" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="4dp"
+                        android:gravity="center_horizontal"
+                        android:orientation="vertical">
+
+                        <TextView
+                            style="@style/SymCaption"
+                            android:text="결과" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/symDashed"
+                            style="@style/SymSmallButton.Tonal"
+                            android:layout_width="wrap_content"
+                            android:layout_height="32dp"
+                            android:text="실선" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="4dp"
+                        android:gravity="center_horizontal"
+                        android:orientation="vertical">
+
+                        <TextView
+                            style="@style/SymCaption"
+                            android:text="축" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/symAxis"
+                            style="@style/SymSmallButton.Tonal"
+                            android:layout_width="wrap_content"
+                            android:layout_height="32dp"
+                            android:text="투명" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:id="@+id/symFlipCol"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="4dp"
+                        android:gravity="center_horizontal"
+                        android:orientation="vertical">
+
+                        <TextView
+                            style="@style/SymCaption"
+                            android:text="접는 쪽" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/symFlip"
+                            style="@style/SymSmallButton.Tonal"
+                            android:layout_width="wrap_content"
+                            android:layout_height="32dp"
+                            android:text="반대" />
+                    </LinearLayout>
+
+                    <!-- 오른쪽: 확정(위) · 취소(아래) 두 줄 -->
+                    <LinearLayout
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginStart="6dp"
-                        android:text="결과: 실선" />
+                        android:gravity="center_horizontal"
+                        android:orientation="vertical">
 
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/symAxis"
-                        style="?attr/materialButtonTonalStyle"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="6dp"
-                        android:text="축: 투명" />
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/symConfirm"
+                            style="@style/SymSmallButton.Filled"
+                            android:layout_width="wrap_content"
+                            android:layout_height="30dp"
+                            android:text="확정" />
 
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/symFlip"
-                        style="?attr/materialButtonTonalStyle"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="6dp"
-                        android:text="접는 쪽 바꾸기" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/symCancel"
-                        style="?attr/borderlessButtonStyle"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="8dp"
-                        android:text="취소" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/symConfirm"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="2dp"
-                        android:text="확정" />
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/symCancel"
+                            style="@style/SymSmallButton.Text"
+                            android:layout_width="wrap_content"
+                            android:layout_height="30dp"
+                            android:layout_marginTop="2dp"
+                            android:text="취소" />
+                    </LinearLayout>
                 </LinearLayout>
             </HorizontalScrollView>
         </com.google.android.material.card.MaterialCardView>
