@@ -425,6 +425,10 @@ class ViewerActivity : AppCompatActivity() {
                 docs.getOrNull(index)?.let(::closeTab)
             }
             override fun onAddTab() = pickAnotherDocument()
+            override fun onTabMoved(from: Int, to: Int) {
+                if (from !in docs.indices || to !in docs.indices) return
+                docs.add(to, docs.removeAt(from))
+            }
         }
     }
 

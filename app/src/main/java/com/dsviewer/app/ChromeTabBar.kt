@@ -31,6 +31,7 @@ import kotlin.math.min
  * 막대 바탕은 한 단계 어두운 색이어야 한다 (레이아웃에서 부모 배경으로 준다).
  * 탭이 많으면 탭 너비가 줄어들고, 최소 너비보다 좁아지면 옆으로 밀린다. ＋ 버튼은 늘 탭 바로 오른쪽.
  * 폭이 좁은 화면(휴대폰 세로 등)에서는 탭을 작게 그리고, 고른 탭에만 × 단추를 둔다 (크롬처럼).
+ * 탭을 길게 눌렀다가 그대로 옆으로 끌면 순서를 바꾼다.
  * 이름이 잘린 탭은 풀네임을 말풍선으로 본다: 이미 고른 탭을 한 번 더 누르거나, 펜·마우스를 탭 위에 잠시 둔다.
  */
 class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? = null) : LinearLayout(ctx, attrs) {
@@ -39,6 +40,8 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
         fun onTabSelected(index: Int) {}
         fun onTabClose(index: Int) {}
         fun onAddTab() {}
+        /** 탭을 끌어 [from]번에서 [to]번 자리로 옮겼다 (끌기를 놓았을 때 한 번) */
+        fun onTabMoved(from: Int, to: Int) {}
     }
 
     var listener: Listener? = null
@@ -150,6 +153,103 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
         val t = tabs.getOrNull(selectedIndex) ?: return
         val x = t.left - (scroll.width - t.width) / 2
         if (smooth) scroll.smoothScrollTo(x, 0) else scroll.scrollTo(x, 0)
+    }
+
+    // ----- 탭 끌어 순서 바꾸기 -----
+
+    private var dragTab: TabView? = null
+    private var dragFrom = -1
+    private var dragTo = -1
+    /** 탭을 잡은 자리: 탭 왼쪽 끝에서 손가락까지의 거리 */
+    private var dragGrab = 0f
+    private var dragRawX = 0f
+    private val edgeScroll = object : Runnable {
+        override fun run() {
+            val t = dragTab ?: return
+            val loc = IntArray(2)
+            scroll.getLocationOnScreen(loc)
+            val edge = px(36f)
+            val step = px(10f)
+            val dx = when {
+                dragRawX < loc[0] + edge -> -step
+                dragRawX > loc[0] + scroll.width - edge -> step
+                else -> 0
+            }
+            if (dx != 0) {
+                scroll.scrollBy(dx, 0)
+                moveDrag(t)
+            }
+            postOnAnimation(this)
+        }
+    }
+
+    private fun startDrag(t: TabView, rawX: Float) {
+        if (tabs.size < 2) return
+        dragTab = t
+        dragFrom = tabs.indexOf(t)
+        dragTo = dragFrom
+        dragRawX = rawX
+        val loc = IntArray(2)
+        row.getLocationOnScreen(loc)
+        dragGrab = rawX - loc[0] - t.left
+        scroll.requestDisallowInterceptTouchEvent(true)
+        parent?.requestDisallowInterceptTouchEvent(true)
+        dismissTip()
+        t.animate().scaleX(1.04f).scaleY(1.04f).setDuration(100).start()
+        t.translationZ = px(6f).toFloat()
+        postOnAnimation(edgeScroll)
+    }
+
+    /**
+     * 손가락 자리에 맞춰 끌고 있는 탭을 움직인다. 이웃 탭은 비켜 주기만 하고(translationX),
+     * 실제 순서는 놓을 때 바꾼다 (끄는 도중에 뷰를 빼고 넣으면 터치가 끊기므로)
+     */
+    private fun moveDrag(t: TabView) {
+        val tw = t.width.takeIf { it > 0 } ?: return
+        val loc = IntArray(2)
+        row.getLocationOnScreen(loc)
+        val desiredLeft = (dragRawX - loc[0] - dragGrab).coerceIn(0f, (tw * (tabs.size - 1)).toFloat())
+        dragTo = ((desiredLeft + tw / 2f) / tw).toInt().coerceIn(0, tabs.lastIndex)
+        t.translationX = desiredLeft - dragFrom * tw
+        tabs.forEachIndexed { k, o ->
+            if (o === t) return@forEachIndexed
+            val want = when {
+                k in (dragFrom + 1)..dragTo -> -tw.toFloat()
+                k in dragTo until dragFrom -> tw.toFloat()
+                else -> 0f
+            }
+            // 목표가 바뀔 때만 애니메이션을 시작한다 (손가락이 움직일 때마다 다시 시작하면 뚝뚝 끊긴다)
+            if (o.slideTarget != want) {
+                o.slideTarget = want
+                o.animate().translationX(want).setDuration(160).setInterpolator(android.view.animation.DecelerateInterpolator()).start()
+            }
+        }
+    }
+
+    private fun endDrag(cancel: Boolean) {
+        val t = dragTab ?: return
+        dragTab = null
+        removeCallbacks(edgeScroll)
+        t.isPressed = false
+        val to = if (cancel) dragFrom else dragTo
+        val tw = t.width
+        // 이웃 탭들은 이미 비켜 있으므로, 순서를 확정하며 위치 이동을 걷고, 끌던 탭은 놓인 자리로 미끄러져 들어간다
+        val startX = t.translationX - (to - dragFrom) * tw
+        tabs.forEach { it.animate().cancel(); it.translationX = 0f; it.slideTarget = 0f }
+        if (to != dragFrom) {
+            val selTab = tabs.getOrNull(selectedIndex)
+            tabs.removeAt(dragFrom)
+            tabs.add(to, t)
+            row.removeView(t)
+            row.addView(t, to)
+            selectedIndex = tabs.indexOf(selTab)
+            refreshStates()
+            listener?.onTabMoved(dragFrom, to)
+        }
+        t.scaleX = 1.04f
+        t.scaleY = 1.04f
+        t.translationX = startX
+        t.animate().translationX(0f).scaleX(1f).scaleY(1f).setDuration(120).withEndAction { t.translationZ = 0f }.start()
     }
 
     // ----- 탭 이름 말풍선 -----
@@ -265,6 +365,25 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
         private val showTipLater = Runnable { if (isAttachedToWindow && isTitleCut()) showTip(this, 0) }
 
         val fullTitle: CharSequence get() = title.text
+        /** 끄는 동안 이 탭이 비켜 가려는 자리(translationX 목표) */
+        var slideTarget = 0f
+        private var lastRawX = 0f
+
+        override fun onTouchEvent(e: MotionEvent): Boolean {
+            lastRawX = e.rawX
+            if (dragTab === this) {
+                when (e.actionMasked) {
+                    MotionEvent.ACTION_MOVE -> {
+                        dragRawX = e.rawX
+                        moveDrag(this)
+                    }
+                    MotionEvent.ACTION_UP -> endDrag(cancel = false)
+                    MotionEvent.ACTION_CANCEL -> endDrag(cancel = true)
+                }
+                return true
+            }
+            return super.onTouchEvent(e)
+        }
 
         /** 이름이 잘려서 ...으로 줄었는지 */
         private fun isTitleCut() = title.layout?.let { it.lineCount > 0 && it.getEllipsisCount(0) > 0 } == true
@@ -295,6 +414,12 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
                 val i = tabs.indexOf(this)
                 // 이미 고른 탭을 한 번 더 누르면 풀네임
                 if (i == selectedIndex) showTip(this, 3000) else select(i, notify = true)
+            }
+            // 길게 누르면 끌어서 순서를 바꾼다
+            setOnLongClickListener {
+                tipHandler.removeCallbacks(showTipLater)
+                startDrag(this, lastRawX)
+                dragTab != null
             }
             // 펜·마우스를 탭 위에 잠시 두면 (이름이 잘렸을 때만) 풀네임
             setOnHoverListener { _, e ->

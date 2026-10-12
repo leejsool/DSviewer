@@ -866,6 +866,15 @@ class MainActivity : AppCompatActivity() {
     private fun setPickMode(on: Boolean) {
         pickMode = on
         toolbar.subtitle = if (on) "새 탭에 열 문서를 고르세요" else null
+        // 고르는 중에는 왼쪽 ✕로 취소하고 열려 있던 탭으로 돌아간다 (이 화면에서 기존 탭을 보려면 취소해야 하므로)
+        if (on) {
+            toolbar.setNavigationIcon(R.drawable.ic_close)
+            toolbar.navigationContentDescription = "취소하고 열린 문서로 돌아가기"
+            toolbar.setNavigationOnClickListener { backToViewer() }
+        } else {
+            toolbar.navigationIcon = null
+            toolbar.setNavigationOnClickListener(null)
+        }
     }
 
     // ================= 오늘 복습 =================
