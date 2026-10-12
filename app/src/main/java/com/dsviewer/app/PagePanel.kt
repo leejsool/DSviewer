@@ -199,6 +199,15 @@ class PagePanel(
     private val cache = object : LruCache<PageKey, Bitmap>((Runtime.getRuntime().maxMemory() / 12).toInt()) {
         override fun sizeOf(key: PageKey, value: Bitmap) = value.byteCount
     }
+    /**
+     * 필기가 있는 쪽의 미리보기: 흰 바탕 + PDF 쪽 그림 + 필기를 칸 크기로 한 장에 합쳐 둔 것.
+     * 필기를 매번 획마다 다시 그리면 획이 많은 쪽 몇 개만 보여도 필기할 때마다 화면이 끊기므로,
+     * 그 쪽의 필기([inkSignature])나 칸 크기·쪽 그림이 바뀔 때만 새로 합친다
+     */
+    private class InkThumb(val bmp: Bitmap, val signature: Long, val base: Bitmap?)
+    private val inkThumbs = object : LruCache<PageKey, InkThumb>((Runtime.getRuntime().maxMemory() / 24).toInt()) {
+        override fun sizeOf(key: PageKey, value: InkThumb) = value.bmp.byteCount
+    }
     private val jobs = HashMap<Int, Job>()
     private val inkPaint = inkPaint()
     private val refreshInk = Runnable { forEachHolder { it.thumb.invalidate(); it.bindMark() } }
@@ -435,6 +444,7 @@ class PagePanel(
         clearSelected()
         adapter.notifyDataSetChanged()
         cache.evictAll()
+        inkThumbs.evictAll()
     }
 
     /** 뒤로 가기: 선택 → 찾기 → (쪽 한눈에 보기면) 닫기 순으로 하나씩 끝낸다. 한 게 있으면 true */
@@ -458,6 +468,7 @@ class PagePanel(
         jobs.clear()
         if (inkDoc !== ink) {
             cache.evictAll()
+            inkThumbs.evictAll()
             clearSelected()
         }
         doc = d
@@ -512,6 +523,7 @@ class PagePanel(
             jobs.values.forEach { it.cancel() }
             jobs.clear()
             cache.evictAll()
+            inkThumbs.evictAll()
             adapter.notifyDataSetChanged()
         }
     }
@@ -947,18 +959,55 @@ class PagePanel(
             dst.set(l, t, l + w, t + h)
             canvas.save()
             canvas.clipRect(dst)
-            canvas.drawColor(Color.WHITE)
-            keyOf(page)?.let { cache.get(it) }?.let { canvas.drawBitmap(it, null, dst, bmpPaint) }
-            val s = w / d.sizes[page].width
-            canvas.translate(l, t)
-            canvas.scale(s, s)
-            hits[page]?.forEach { canvas.drawRect(it, hitPaint) }
+            val key = keyOf(page)
+            val base = key?.let { cache.get(it) }
             val strokes = ink?.pages?.getOrNull(page)
-            if (!strokes.isNullOrEmpty()) {
-                // 그림을 먼저, 필기를 그 위에
-                for (st in strokes.sortedBy { inkLayer(it) }) drawInkStroke(canvas, inkPaint, st)
+            val s = w / d.sizes[page].width
+            if (key != null && !strokes.isNullOrEmpty() && w >= 1f && h >= 1f) {
+                // 필기가 있는 쪽: 합쳐 둔 한 장을 그린다 (필기·칸 크기·쪽 그림이 바뀐 때만 새로 합친다)
+                val sig = inkSignature(strokes)
+                var thumb = inkThumbs.get(key)
+                if (thumb == null || thumb.signature != sig || thumb.base !== base || thumb.bmp.width != w.toInt() || thumb.bmp.height != h.toInt()) {
+                    thumb = InkThumb(composeInkThumb(base, strokes, w.toInt(), h.toInt(), s), sig, base)
+                    inkThumbs.put(key, thumb)
+                }
+                canvas.drawBitmap(thumb.bmp, l, t, bmpPaint)
+                canvas.translate(l, t)
+                canvas.scale(s, s)
+                hits[page]?.forEach { canvas.drawRect(it, hitPaint) }
+            } else {
+                canvas.drawColor(Color.WHITE)
+                base?.let { canvas.drawBitmap(it, null, dst, bmpPaint) }
+                canvas.translate(l, t)
+                canvas.scale(s, s)
+                hits[page]?.forEach { canvas.drawRect(it, hitPaint) }
             }
             canvas.restore()
+        }
+
+        /** 쪽 그림 [base](있으면)와 [strokes]를 [w]×[h] 한 장에 합친다 ([s]는 쪽 → 칸 배율) */
+        private fun composeInkThumb(base: Bitmap?, strokes: List<Stroke>, w: Int, h: Int, s: Float): Bitmap {
+            val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            val c = Canvas(bmp)
+            c.drawColor(Color.WHITE)
+            base?.let { c.drawBitmap(it, null, RectF(0f, 0f, w.toFloat(), h.toFloat()), bmpPaint) }
+            c.scale(s, s)
+            // 그림을 먼저, 필기를 그 위에
+            for (st in strokes.sortedBy { inkLayer(it) }) drawInkStroke(c, inkPaint, st)
+            return bmp
+        }
+
+        /** 이 쪽의 필기가 바뀌었는지 가늠하는 값: 획 목록의 차례·획마다의 버전과 겉으로 보이는 상태 */
+        private fun inkSignature(strokes: List<Stroke>): Long {
+            var h = strokes.size.toLong()
+            for (st in strokes) {
+                h = h * 31 + System.identityHashCode(st)
+                h = h * 31 + st.version
+                h = h * 31 + st.count
+                if (st.revealed) h = h * 31 + 1
+                st.note?.let { if (it.collapsed) h = h * 31 + 2 }
+            }
+            return h
         }
     }
 
