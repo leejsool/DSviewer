@@ -2644,9 +2644,7 @@ class ViewerActivity : AppCompatActivity() {
             b.layoutParams = lp
             b.setPadding(px(8f * s), px(12f * s), px(8f * s), px(12f * s))
         }
-        findViewById<View>(R.id.tabRow).let { row ->
-            row.layoutParams = row.layoutParams.also { it.height = px(maxOf(48f, 44f * s + 4f)) }
-        }
+        findViewById<TabActionRow>(R.id.tabRow).rowHeightPx = px(maxOf(48f, 44f * s + 4f))
     }
 
     /** 툴바 아이콘 크기를 소·중·대로 고르는 항목. [key]에 번호를 남기고 [apply]로 바로 적용한다 */
