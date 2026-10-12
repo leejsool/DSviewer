@@ -488,17 +488,25 @@
                         <com.google.android.material.button.MaterialButton
                             android:id="@+id/symConfirm"
                             style="@style/SymSmallButton.Filled"
-                            android:layout_width="wrap_content"
-                            android:layout_height="30dp"
-                            android:text="확정" />
+                            android:layout_width="44dp"
+                            android:layout_height="32dp"
+                            android:contentDescription="확정"
+                            android:tooltipText="확정"
+                            app:icon="@drawable/ic_check"
+                            app:iconGravity="textStart"
+                            app:iconPadding="0dp" />
 
                         <com.google.android.material.button.MaterialButton
                             android:id="@+id/symCancel"
                             style="@style/SymSmallButton.Text"
-                            android:layout_width="wrap_content"
-                            android:layout_height="30dp"
+                            android:layout_width="44dp"
+                            android:layout_height="32dp"
                             android:layout_marginTop="2dp"
-                            android:text="취소" />
+                            android:contentDescription="취소"
+                            android:tooltipText="취소"
+                            app:icon="@drawable/ic_close"
+                            app:iconGravity="textStart"
+                            app:iconPadding="0dp" />
                     </LinearLayout>
                 </LinearLayout>
             </HorizontalScrollView>
@@ -516,15 +524,17 @@
 
             <LinearLayout
                 android:layout_width="wrap_content"
-                android:layout_height="44dp"
-                android:gravity="center_vertical"
+                android:layout_height="wrap_content"
+                android:gravity="bottom"
                 android:orientation="horizontal"
-                android:paddingHorizontal="6dp">
+                android:paddingHorizontal="6dp"
+                android:paddingVertical="4dp">
 
                 <TextView
                     android:id="@+id/selectionCount"
                     android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
+                    android:layout_height="40dp"
+                    android:gravity="center_vertical"
                     android:layout_marginHorizontal="6dp"
                     android:textAppearance="?attr/textAppearanceLabelLarge" />
 
@@ -542,31 +552,47 @@
                     android:tooltipText="색"
                     app:iconPadding="0dp" />
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/selectionFlipH"
-                    style="?attr/materialButtonTonalStyle"
+                <!-- 좌우·상하 반전: 이름표 '반전' 아래 한 묶음 -->
+                <LinearLayout
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginEnd="2dp"
-                    app:icon="@drawable/ic_flip_h"
-                    android:contentDescription="좌우 반전"
-                    android:minWidth="44dp"
-                    android:paddingHorizontal="10dp"
-                    android:tooltipText="좌우 반전"
-                    app:iconPadding="0dp" />
+                    android:gravity="center_horizontal"
+                    android:orientation="vertical">
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/selectionFlipV"
-                    style="?attr/materialButtonTonalStyle"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginEnd="2dp"
-                    app:icon="@drawable/ic_flip_v"
-                    android:contentDescription="상하 반전"
-                    android:minWidth="44dp"
-                    android:paddingHorizontal="10dp"
-                    android:tooltipText="상하 반전"
-                    app:iconPadding="0dp" />
+                    <TextView
+                        style="@style/SymCaption"
+                        android:text="반전" />
+
+                    <com.google.android.material.button.MaterialButtonToggleGroup
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/selectionFlipH"
+                            style="?attr/materialButtonTonalStyle"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:contentDescription="좌우 반전"
+                            android:minWidth="44dp"
+                            android:paddingHorizontal="10dp"
+                            android:tooltipText="좌우 반전"
+                            app:icon="@drawable/ic_flip_h"
+                            app:iconPadding="0dp" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/selectionFlipV"
+                            style="?attr/materialButtonTonalStyle"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:contentDescription="상하 반전"
+                            android:minWidth="44dp"
+                            android:paddingHorizontal="10dp"
+                            android:tooltipText="상하 반전"
+                            app:icon="@drawable/ic_flip_v"
+                            app:iconPadding="0dp" />
+                    </com.google.android.material.button.MaterialButtonToggleGroup>
+                </LinearLayout>
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/selectionSymmetry"
