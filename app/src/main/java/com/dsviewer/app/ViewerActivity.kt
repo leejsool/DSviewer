@@ -1662,7 +1662,18 @@ class ViewerActivity : AppCompatActivity() {
 
     private val shot: ShotController by lazy {
         // 복사해 두면 '붙여넣기' 단추가 보이게 올가미 도구로 (툴바를 다시 짠다)
-        ShotController(this, { docView }, textEditor, progress, { current }, ::toast) { tools.selectTool(Tool.LASSO) }
+        ShotController(this, { docView }, textEditor, progress, { current }, ::toast) {
+            tools.selectTool(Tool.LASSO)
+            pasteNotice("영역을 복사했습니다. 공부할 문서에서 '붙여넣기'를 누르세요.")
+        }
+    }
+
+    /**
+     * 복사해 둔 그림을 바로 붙이는 '붙여넣기' 단추가 달린 알림. 폭이 좁은 화면에서는 툴바 끝의 단추가 가려지므로,
+     * 문서 화면 아래에 눈에 띄게 띄운다 (붙일 문서로 옮겨 갈 시간을 주려고 오래 둔다)
+     */
+    private fun pasteNotice(msg: String) = Notice.show(this, msg, "붙여넣기", 15000) {
+        docView.pasteClipboard()
     }
 
     private val wrong: WrongController by lazy {
@@ -2013,7 +2024,7 @@ class ViewerActivity : AppCompatActivity() {
         // 무손실로 담는다 (글자가 또렷하게)
         docView.copyImage(InkImage(bmp, null), bmp.width * k, bmp.height * k)
         tools.selectTool(Tool.LASSO)
-        toast("그림을 복사했습니다. 넣을 쪽에서 선택 도구의 '붙여넣기'를 누르세요.")
+        pasteNotice("그림을 복사했습니다. 넣을 쪽에서 '붙여넣기'를 누르세요.")
     }
 
     /** 떠 있는 단추로 찍어 온 화면을 시작할 때 보던 쪽 다음에 넣는다 */

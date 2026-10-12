@@ -467,7 +467,7 @@
                     android:id="@+id/selectionCount"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginHorizontal="10dp"
+                    android:layout_marginHorizontal="6dp"
                     android:textAppearance="?attr/textAppearanceLabelLarge" />
 
                 <com.google.android.material.button.MaterialButton
@@ -475,54 +475,78 @@
                     style="?attr/materialButtonTonalStyle"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginEnd="4dp"
-                    android:text="색"
+                    android:layout_marginEnd="2dp"
                     app:icon="@drawable/ic_palette"
-                    app:iconTint="@null" />
+                    app:iconTint="@null"
+                    android:contentDescription="색"
+                    android:minWidth="44dp"
+                    android:paddingHorizontal="10dp"
+                    android:tooltipText="색"
+                    app:iconPadding="0dp" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/selectionFlipH"
                     style="?attr/materialButtonTonalStyle"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginEnd="4dp"
-                    android:text="좌우"
-                    app:icon="@drawable/ic_flip_h" />
+                    android:layout_marginEnd="2dp"
+                    app:icon="@drawable/ic_flip_h"
+                    android:contentDescription="좌우 반전"
+                    android:minWidth="44dp"
+                    android:paddingHorizontal="10dp"
+                    android:tooltipText="좌우 반전"
+                    app:iconPadding="0dp" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/selectionFlipV"
                     style="?attr/materialButtonTonalStyle"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginEnd="4dp"
-                    android:text="상하"
-                    app:icon="@drawable/ic_flip_v" />
+                    android:layout_marginEnd="2dp"
+                    app:icon="@drawable/ic_flip_v"
+                    android:contentDescription="상하 반전"
+                    android:minWidth="44dp"
+                    android:paddingHorizontal="10dp"
+                    android:tooltipText="상하 반전"
+                    app:iconPadding="0dp" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/selectionSymmetry"
                     style="?attr/materialButtonTonalStyle"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginEnd="4dp"
-                    android:text="대칭"
-                    app:icon="@drawable/ic_symmetry" />
+                    android:layout_marginEnd="2dp"
+                    app:icon="@drawable/ic_symmetry"
+                    android:contentDescription="대칭"
+                    android:minWidth="44dp"
+                    android:paddingHorizontal="10dp"
+                    android:tooltipText="대칭"
+                    app:iconPadding="0dp" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/selectionCopy"
                     style="?attr/materialButtonTonalStyle"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginEnd="4dp"
-                    android:text="복사"
-                    app:icon="@drawable/ic_copy" />
+                    android:layout_marginEnd="2dp"
+                    app:icon="@drawable/ic_copy"
+                    android:contentDescription="복사"
+                    android:minWidth="44dp"
+                    android:paddingHorizontal="10dp"
+                    android:tooltipText="복사"
+                    app:iconPadding="0dp" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/selectionDelete"
                     style="?attr/materialButtonTonalStyle"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="삭제"
-                    app:icon="@drawable/ic_delete" />
+                    app:icon="@drawable/ic_delete"
+                    android:contentDescription="삭제"
+                    android:minWidth="44dp"
+                    android:paddingHorizontal="10dp"
+                    android:tooltipText="삭제"
+                    app:iconPadding="0dp" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 

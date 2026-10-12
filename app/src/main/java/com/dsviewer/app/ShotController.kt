@@ -24,7 +24,7 @@ internal class ShotController(
     /** 지금 보는 탭 */
     private val current: () -> DocTab?,
     private val toast: (String) -> Unit,
-    /** 복사해 둔 뒤: 툴바의 '붙여넣기' 단추를 보이게 한다 */
+    /** 복사해 둔 뒤: 올가미 도구로 바꾸고 붙여넣기 알림을 띄운다 */
     private val onCopied: () -> Unit,
 ) {
     private val docView get() = docViewOf()
@@ -89,7 +89,6 @@ internal class ShotController(
             // 그새 칸이 바뀌었어도 지금 고른 칸이 복사본을 쥔다 (붙여넣을 칸)
             docView.copyImage(img, rect.width(), rect.height())
             onCopied()
-            toast("영역을 복사했습니다. 공부할 문서에서 올가미 도구의 '붙여넣기'를 누르세요.")
         }
     }
 }
