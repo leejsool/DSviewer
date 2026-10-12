@@ -387,6 +387,11 @@ class DocumentView @JvmOverloads constructor(
     }
     private val tmpRect = RectF()
     private val tmpRect2 = RectF()
+    /** [onDraw]에서 쪽 좌표로 본 보이는 범위, 그리고 층(그림·채우기·필기)별로 모은 그릴 획 (프레임마다 새로 만들지 않게) */
+    private val clipTmp = android.graphics.Rect()
+    /** 획의 화면용 모양(경로)을 만들어 둔 쪽들. 멀어진 쪽은 [trimFarInkCaches]가 버린다 */
+    private val warmPages = HashSet<Int>()
+    private val layerBuckets = Array(3) { ArrayList<Stroke>() }
     /** 쪽 오른쪽 바깥 여백의 바탕 */
     private val marginPaint = Paint().apply { color = 0xFFF1F1F1.toInt() }
 
@@ -574,9 +579,59 @@ class DocumentView @JvmOverloads constructor(
         cancelRendering()
         doc = null
         ink = null
+        warmPages.clear()
         sizes = emptyList()
         baseCache.evictAll()
         details = emptyList()
+        invalidate()
+    }
+
+    /**
+     * 보이는 쪽에서 [INK_CACHE_KEEP_PAGES]쪽보다 멀어진 쪽 획의 화면용 모양을 버린다
+     * (책 한 권을 훑어도 지나간 쪽의 경로가 메모리에 쌓이지 않게. 다시 가면 그때 다시 만든다)
+     */
+    private fun trimFarInkCaches(range: IntRange) {
+        if (warmPages.size <= range.last - range.first + 1 + 2 * INK_CACHE_KEEP_PAGES) return
+        val inkDoc = ink ?: return
+        val lo = range.first - INK_CACHE_KEEP_PAGES
+        val hi = range.last + INK_CACHE_KEEP_PAGES
+        val it = warmPages.iterator()
+        while (it.hasNext()) {
+            val p = it.next()
+            if (p in lo..hi) continue
+            inkDoc.pages.getOrNull(p)?.forEach { st -> st.releaseCaches() }
+            it.remove()
+        }
+    }
+
+    /**
+     * 시스템이 메모리를 아껴 달라고 할 때 ([android.content.ComponentCallbacks2] 단계):
+     * 화면이 가려지면 쪽 그림을 반으로 줄이고 보이지 않는 쪽의 경로를 버리고,
+     * 많이 부족하면 쪽 그림과 확대 그림까지 모두 비운다 (보는 쪽은 곧바로 다시 그려진다)
+     */
+    @Suppress("DEPRECATION")  // RUNNING_* 단계는 새 안드로이드에서는 오지 않지만 예전 기기(전자칠판)에서는 온다
+    fun trimMemory(level: Int) {
+        if (level < android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) return
+        // 앱이 가려진 단계(UI_HIDDEN)는 절반만, 실행 중 아주 부족하거나 백그라운드로 밀려난 단계는 모두
+        val critical = level == android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL ||
+            level >= android.content.ComponentCallbacks2.TRIM_MEMORY_BACKGROUND
+        if (critical) {
+            baseCache.evictAll()
+            details = emptyList()
+        } else {
+            baseCache.trimToSize(baseCache.size() / 2)
+        }
+        val range = if (doc == null) IntRange.EMPTY else visibleRange()
+        val inkDoc = ink
+        if (inkDoc != null) {
+            val it = warmPages.iterator()
+            while (it.hasNext()) {
+                val p = it.next()
+                if (!critical && p in range) continue
+                inkDoc.pages.getOrNull(p)?.forEach { st -> st.releaseCaches() }
+                it.remove()
+            }
+        }
         invalidate()
     }
 
@@ -596,6 +651,7 @@ class DocumentView @JvmOverloads constructor(
         cancelRendering()
         doc = d
         ink = inkDoc
+        warmPages.clear()
         sizes = d.sizes
         notes.reset()
         addFooter.reset()
@@ -867,10 +923,24 @@ class DocumentView @JvmOverloads constructor(
             searchHits[i]?.forEach { canvas.drawRect(it, hitPaint) }
             val dragging = (moving || resizing || rotating) && selPage == i
             // 그림을 먼저, 채우기를 그 위에, 나머지 필기는 맨 위에 (배지·포스트잇은 바깥 여백까지 그려야 해서 따로)
-            if (!hideInk) for (layer in 0..2) for (st in inkDoc.pages[i]) {
-                if (inkLayer(st) != layer || st === hiddenStroke || (dragging && st in selSet) || st.isMarginItem()) continue
-                // 대칭 미리 보기: 확정하면 없어질 원본은 아주 흐리게만 (남는 모양과 헷갈리지 않게)
-                drawStroke(canvas, st, if (symmetry.hides(st)) FADED_ALPHA else 1f)
+            if (!hideInk) {
+                // 획 목록을 한 번만 훑으며 화면 밖 획을 빼고 겹치는 차례(층)별로 모은다
+                val inView = canvas.getClipBounds(clipTmp)
+                warmPages.add(i)
+                for (st in inkDoc.pages[i]) {
+                    val layer = inkLayer(st)
+                    if (layer > 2 || st === hiddenStroke) continue
+                    if (inView && !st.mayTouch(clipTmp.left - 1f, clipTmp.top - 1f, clipTmp.right + 1f, clipTmp.bottom + 1f)) continue
+                    if ((dragging && st in selSet) || st.isMarginItem()) continue
+                    layerBuckets[layer].add(st)
+                }
+                for (bucket in layerBuckets) {
+                    for (st in bucket) {
+                        // 대칭 미리 보기: 확정하면 없어질 원본은 아주 흐리게만 (남는 모양과 헷갈리지 않게)
+                        drawStroke(canvas, st, if (symmetry.hides(st)) FADED_ALPHA else 1f)
+                    }
+                    bucket.clear()
+                }
             }
             fillCtl.drawPending(canvas, i)
             textMarks.draw(canvas, i)
@@ -917,6 +987,7 @@ class DocumentView @JvmOverloads constructor(
             // 앞뒤 한 페이지 미리 그리기
             for (p in ViewportMath.prefetchPages(range.first, range.last, sizes.size)) if (baseCache.get(p) == null) requestBase(p)
             cancelUnneededJobs(range.first - 1, range.last + 1)
+            trimFarInkCaches(range)
         }
         if (penPointerId != -1 && penErasing) {
             canvas.drawCircle(lastSx, lastSy, if (palmErasing) palmRadius else eraserRadiusDp * density, cursorPaint)
@@ -2876,6 +2947,8 @@ class DocumentView @JvmOverloads constructor(
         private const val TAG = "DocumentView"
         /** 대칭 미리 보기에서 없어질 원본의 진하기 */
         private const val FADED_ALPHA = 0.12f
+        /** 보이는 쪽에서 이만큼 안쪽 쪽의 획은 화면용 모양을 쥐고 있는다 */
+        private const val INK_CACHE_KEEP_PAGES = 4
         private const val MIN_ZOOM = 0.1f
         private const val MAX_ZOOM = 6f
         /** 가로 넘김에서 이 배율 이하(확대 안 한 상태)면 손을 뗄 때 한 쪽에 맞춘다 */

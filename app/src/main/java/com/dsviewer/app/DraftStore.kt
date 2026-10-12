@@ -20,10 +20,16 @@ internal data class DraftMeta(
     val canOverwrite: Boolean,
     /** 마지막으로 자동 저장한 때 (ms) */
     val time: Long,
+    /**
+     * 가벼운 자동 저장본: `<id>.pdf`는 필기만 담은 파일이고 문서 자체는 `<id>.base.pdf`에 따로 둔다.
+     * 아니면 필기를 얹은 PDF 하나 (예전 방식)
+     */
+    val lite: Boolean = false,
 )
 
 /**
- * 자동 저장 임시 파일 보관소: 문서마다 `<id>.pdf`(필기를 얹은 PDF)와 `<id>.meta`(정보) 한 쌍.
+ * 자동 저장 임시 파일 보관소: 문서마다 `<id>.pdf`(필기를 얹은 PDF, 또는 가벼운 저장이면 필기만 담은 파일 + 문서 사본 `<id>.base.pdf`)와
+ * `<id>.meta`(정보) 한 쌍.
  * 쓰는 도중에 죽어도 옛 쌍이 멀쩡하도록 임시 파일에 다 쓴 뒤 바꿔 끼운다.
  * Android 클래스를 모르는 순수 파일 다루기라 JVM 단위 시험으로 확인한다.
  */
@@ -35,6 +41,31 @@ internal class DraftStore(private val dir: File) {
             .take(10).joinToString("") { "%02x".format(it) }
 
     fun pdf(id: String) = File(dir, "$id.pdf")
+
+    /** 가벼운 자동 저장본이 필기를 얹을 문서 사본 */
+    fun base(id: String) = File(dir, "$id.base.pdf")
+
+    /**
+     * 문서 사본 [src]를 [base]로 둔다 (필기와 따로, 문서가 바뀔 때만). 같은 저장소 안이면 파일을 잇기만 해서 복사하지 않는다.
+     * [src]는 제자리에서 고치지 않는 파일이어야 한다. 못 하면 false
+     */
+    fun putBase(id: String, src: File): Boolean {
+        dir.mkdirs()
+        val tmp = File(dir, "$id.base.tmp")
+        return try {
+            tmp.delete()
+            try {
+                Files.createLink(tmp.toPath(), src.toPath())
+            } catch (e: Exception) {
+                src.copyTo(tmp, overwrite = true)
+            }
+            Files.move(tmp.toPath(), base(id).toPath(), StandardCopyOption.REPLACE_EXISTING)
+            true
+        } catch (e: Exception) {
+            tmp.delete()
+            false
+        }
+    }
 
     /** 필기를 얹은 PDF를 쓰는 곳 (다 쓰면 [commit]) */
     fun tmp(id: String): File = File(dir, "$id.tmp").also { dir.mkdirs() }
@@ -52,6 +83,7 @@ internal class DraftStore(private val dir: File) {
             setProperty("newNote", meta.isNewNote.toString())
             setProperty("canOverwrite", meta.canOverwrite.toString())
             setProperty("time", meta.time.toString())
+            setProperty("lite", meta.lite.toString())
         }
         val tmpMeta = File(dir, "${meta.id}.meta.tmp")
         tmpMeta.writer(StandardCharsets.UTF_8).use { props.store(it, null) }
@@ -69,11 +101,14 @@ internal class DraftStore(private val dir: File) {
         return try {
             val p = Properties().apply { f.reader(StandardCharsets.UTF_8).use { load(it) } }
             val uri = p.getProperty("uri") ?: return null
+            val lite = p.getProperty("lite") == "true"
+            if (lite && !base(id).isFile) return null
             DraftMeta(
                 id, uri, p.getProperty("name") ?: "문서",
                 p.getProperty("type") ?: DocType.PDF.name,
                 p.getProperty("newNote") == "true", p.getProperty("canOverwrite") == "true",
                 p.getProperty("time")?.toLongOrNull() ?: 0L,
+                lite,
             )
         } catch (e: Exception) {
             null
@@ -88,8 +123,10 @@ internal class DraftStore(private val dir: File) {
 
     fun delete(id: String) {
         pdf(id).delete()
+        base(id).delete()
         metaFile(id).delete()
         File(dir, "$id.tmp").delete()
+        File(dir, "$id.base.tmp").delete()
         File(dir, "$id.meta.tmp").delete()
     }
 

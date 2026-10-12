@@ -490,6 +490,7 @@ class ViewerActivity : AppCompatActivity() {
     /** 자동 저장본을 문서 대신 열도록 탭을 맞춘다 (저장은 원래 문서 자리로) */
     private fun useDraft(t: DocTab, meta: DraftMeta) {
         t.draftFile = drafts.pdf(meta.id)
+        t.draftBase = if (meta.lite) drafts.base(meta.id) else null
         t.name = meta.name
         t.type = DocType.entries.firstOrNull { it.name == meta.type } ?: DocType.PDF
         t.canOverwrite = meta.canOverwrite
@@ -535,12 +536,15 @@ class ViewerActivity : AppCompatActivity() {
         textEditor.commit()
         overview.hide()
         docView.searchHits = emptyMap()
+        val leaving = current
         current?.let {
             rememberPage(it)
             it.viewState = docView.viewState()
         }
         current = t
         focused.tab = t
+        // 더는 어느 칸에도 없는 문서는 획의 화면용 모양을 버린다 (탭을 여럿 열어도 보는 문서만 쥐고 있게)
+        leaving?.let { if (it !== t && panesOf(it).isEmpty()) it.ink?.releaseCaches() }
         val d = t.pdf
         val inkDoc = t.ink
         if (d != null && inkDoc != null) {
@@ -704,7 +708,7 @@ class ViewerActivity : AppCompatActivity() {
                 val file = withContext(Dispatchers.IO) {
                     // 다른 탭이 쓰고 있을 수 있으므로 오래된 캐시 정리는 첫 탭에서만
                     if (docs.size == 1) FileUtil.cleanOld(this@ViewerActivity)
-                    if (draftFile != null) FileUtil.tempFile(this@ViewerActivity, "draft", "pdf").also { draftFile.copyTo(it, overwrite = true) }
+                    if (draftFile != null) FileUtil.tempFile(this@ViewerActivity, "draft", "pdf").also { (t.draftBase ?: draftFile).copyTo(it, overwrite = true) }
                     else FileUtil.copyToCache(this@ViewerActivity, uri, name)
                 }
                 if (draftFile != null) {  // 자동 저장본은 이미 PDF
@@ -736,11 +740,25 @@ class ViewerActivity : AppCompatActivity() {
         // 이 앱으로 저장한 필기가 있으면 꺼내서 편집 가능한 상태로 만든다
         val marks = HashSet<Int>()
         val wrongs = HashMap<Int, String>()
+        val inkDraft = if (t.draftBase != null) t.draftFile else null  // 가벼운 자동 저장본: 필기는 이 파일에서, 문서는 file에서
         val (renderFile, strokes) = withContext(Dispatchers.IO) {
+            val clean: File
+            val found: List<List<Stroke>>?
             if (PdfInk.containsInk(file)) {
-                val clean = FileUtil.tempFile(this@ViewerActivity, "clean", "pdf")
-                clean to PdfInk.extract(file, clean, marks, wrongs)
-            } else file to null
+                clean = FileUtil.tempFile(this@ViewerActivity, "clean", "pdf")
+                found = PdfInk.extract(file, clean, if (inkDraft == null) marks else null, if (inkDraft == null) wrongs else null)
+            } else {
+                clean = file
+                found = null
+            }
+            if (inkDraft == null) return@withContext clean to found
+            // 문서 사본에 예전에 저장한 필기가 있어도 자동 저장한 필기가 그 뒤의 것이니 그것만 쓴다
+            val scratch = FileUtil.tempFile(this@ViewerActivity, "ink", "pdf")
+            try {
+                clean to PdfInk.extract(inkDraft, scratch, marks, wrongs)
+            } finally {
+                scratch.delete()
+            }
         }
         t.renderPdf = renderFile
         val d = PdfDoc.open(renderFile)
@@ -761,6 +779,7 @@ class ViewerActivity : AppCompatActivity() {
         // 자동 저장본에서 열었으면 아직 저장하지 않은 필기로 (탭에 디스켓 표시, 닫을 때 저장 여부를 묻는다)
         if (t.draftFile != null) {
             t.draftFile = null
+            t.draftBase = null
             inkDoc.restoreDirty()
         }
         t.handwriting = HandwritingIndex(
@@ -2315,6 +2334,7 @@ class ViewerActivity : AppCompatActivity() {
                 }
                 val old = t.pdf
                 t.pdf = nd
+                t.splitViewState = null
                 t.sourcePdf = newSrc
                 t.renderPdf = newRender
                 val after = PageFiles(newSrc, newRender, 0)
@@ -2363,6 +2383,7 @@ class ViewerActivity : AppCompatActivity() {
                 }
                 val old = t.pdf
                 t.pdf = nd
+                t.splitViewState = null
                 t.sourcePdf = f.source
                 t.renderPdf = f.render
                 val shown = panesOf(t)
@@ -2419,12 +2440,13 @@ class ViewerActivity : AppCompatActivity() {
      * 아니면 탭이 기억해 둔 자리
      */
     private fun sharedState(pane: ViewerPane, t: DocTab): DocumentView.ViewState? =
-        panes.firstOrNull { it !== pane && it.shown && it.tab === t }?.view?.viewState() ?: t.viewState
+        panes.firstOrNull { it !== pane && it.shown && it.tab === t }?.let { t.splitViewState ?: it.view.viewState() } ?: t.viewState
 
     /** [t]를 [pane]에 띄운다 (아직 다 안 열렸으면 빈 화면). 고른 칸이나 탭 줄·쪽 관리 창은 건드리지 않는다 */
     private fun showIn(pane: ViewerPane, t: DocTab) {
         pane.view.searchHits = emptyMap()
         val state = sharedState(pane, t)
+        t.splitViewState = null
         pane.tab = t
         val d = t.pdf
         val inkDoc = t.ink
@@ -2533,6 +2555,7 @@ class ViewerActivity : AppCompatActivity() {
         drop.view.clearSelection()
         drop.view.clearLaser()
         if (drop.tab !== keep.tab) drop.tab?.viewState = drop.view.viewState()
+        else keep.tab?.splitViewState = drop.view.viewState()
         drop.view.clearDocument()
         drop.tab = null
         split = false
@@ -2791,9 +2814,21 @@ class ViewerActivity : AppCompatActivity() {
         prefs.edit().putBoolean("horizontalFlow", on).apply()
         if (docView.horizontal == on) return
         textEditor.commit()
-        for (t in docs) if (t !== current) t.viewState = null
+        for (t in docs) {
+            if (t !== current) t.viewState = null
+            t.splitViewState = null
+        }
         for (p in panes) p.view.horizontal = on
         updateActions()
+    }
+
+    /** 시스템이 메모리를 아껴 달라고 하면 각 칸의 쪽 그림·획 경로 캐시를 줄인다 */
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        for (p in panes) p.view.trimMemory(level)
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) {
+            for (t in docs) if (panesOf(t).isEmpty()) t.ink?.releaseCaches()
+        }
     }
 
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()

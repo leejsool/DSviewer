@@ -17,6 +17,8 @@ internal class DocTab(var uri: Uri, var canOverwrite: Boolean, var isNewNote: Bo
     var pagesBusy = false
     /** 다른 탭에 가 있는 동안 기억해 둔 스크롤·확대 위치 */
     var viewState: DocumentView.ViewState? = null
+    /** 같은 문서를 둘로 나눠 보다가 끌 때 없어지는 칸이 보던 자리 (다시 나눠 볼 때 둘째 칸이 여기서 시작한다) */
+    var splitViewState: DocumentView.ViewState? = null
     /** 글자 찾기 (처음 찾을 때 만든다. 쪽을 바꾸면 화면용 PDF가 바뀌어 새로 만든다) */
     var search: DocSearch? = null
     /** PDF 링크 (읽기 모드에서 처음 누를 때 꺼낸다. 쪽을 바꾸면 새로) */
@@ -27,6 +29,8 @@ internal class DocTab(var uri: Uri, var canOverwrite: Boolean, var isNewNote: Bo
     val draft = DraftState()
     /** 복구하는 탭: 문서 대신 이 자동 저장본을 열고(필기가 저장 안 된 상태로), 다 열면 비운다 */
     var draftFile: File? = null
+    /** 가벼운 자동 저장본이면 [draftFile]은 필기만 담은 파일이고, 문서 자체는 이 사본 (아니면 null) */
+    var draftBase: File? = null
     /** 필기를 글로 읽은 색인 (필기 검색) */
     var handwriting: HandwritingIndex? = null
     /** 오답 복습용 탭이면 그 복습 (풀이는 저장하지 않고 자동 저장도 하지 않는다) */

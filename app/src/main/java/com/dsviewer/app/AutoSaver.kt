@@ -27,6 +27,8 @@ internal class DraftState {
     /** 자동 저장본의 이름표 (문서 주소가 바뀌어도 옛 것을 지울 수 있게) */
     var draftId: String? = null
     var scheduled: Runnable? = null
+    /** 자동 저장본 옆에 문서 사본으로 둔 원본 파일 (다른 파일이 되면 사본도 다시 둔다) */
+    var baseSource: java.io.File? = null
     /** 탭을 닫는 중: 탭 목록에서 빠진 뒤에도 마지막 필기를 적는다 */
     var closing = false
 }
@@ -79,6 +81,7 @@ internal class AutoSaver(
         st.urgent = false
         st.draftId?.let(store::delete)
         st.draftId = null
+        st.baseSource = null
         store.delete(store.idOf(t.uri.toString()))
     }
 
@@ -131,8 +134,17 @@ internal class AutoSaver(
         scope.launch {
             val tmp = if (reviewFile != null) File(reviewFile.parentFile, reviewFile.name + ".tmp").also { it.parentFile?.mkdirs() }
             else store.tmp(id)
+            // 복습 풀이는 PDF로 남겨야 하니 원본에 필기를 얹어 쓰고, 나머지는 필기만 가볍게 적는다
+            // (문서 사본은 처음과 쪽 구성이 바뀐 뒤에만 다시 둔다)
+            val lite = reviewFile == null
             val ok = try {
-                withContext(Dispatchers.IO) { PdfInk.save(src, tmp, snapshot, marks, wrongSave) }
+                withContext(Dispatchers.IO) {
+                    if (!lite) PdfInk.save(src, tmp, snapshot, marks, wrongSave)
+                    else {
+                        if ((st.baseSource != src || !store.base(id).isFile) && !store.putBase(id, src)) error("문서 사본을 둘 수 없습니다.")
+                        PdfInk.saveLite(tmp, snapshot, marks, wrongSave)
+                    }
+                }
                 true
             } catch (e: Throwable) {  // 메모리 부족도 앱을 죽이지 않고 이번만 건너뛴다
                 tmp.delete()
@@ -141,9 +153,12 @@ internal class AutoSaver(
             val now = System.currentTimeMillis()
             st.saving = false
             val committed = ok && gen == st.generation &&
-                if (reviewFile != null) moveReview(tmp, reviewFile) else store.commit(meta.copy(time = now), tmp)
+                if (reviewFile != null) moveReview(tmp, reviewFile) else store.commit(meta.copy(time = now, lite = true), tmp)
             if (committed) {
-                if (reviewFile == null) st.draftId = id
+                if (reviewFile == null) {
+                    st.draftId = id
+                    st.baseSource = src
+                }
                 st.savedChange = startedChange
             } else {
                 tmp.delete()

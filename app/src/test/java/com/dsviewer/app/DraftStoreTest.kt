@@ -54,6 +54,59 @@ class DraftStoreTest {
         assertEquals(1, store.list().size)
     }
 
+    @Test fun liteDraftNeedsItsBaseCopy() {
+        val m = meta("a").copy(lite = true)
+        assertTrue(commit(m, "필기만"))
+        // 문서 사본이 없으면 열 수 없는 자동 저장본
+        assertNull(store.meta("a"))
+        val src = File(dir, "원본.pdf").also { it.writeText("문서") }
+        assertTrue(store.putBase("a", src))
+        assertEquals(m, store.meta("a"))
+        assertEquals("문서", store.base("a").readText())
+        assertEquals("필기만", store.pdf("a").readText())
+    }
+
+    @Test fun baseCopyIsReplacedWhenTheDocumentChanges() {
+        val one = File(dir, "one.pdf").also { it.writeText("하나") }
+        val two = File(dir, "two.pdf").also { it.writeText("둘") }
+        assertTrue(store.putBase("a", one))
+        assertTrue(store.putBase("a", two))
+        assertEquals("둘", store.base("a").readText())
+        // 사본을 바꿔도 원본은 그대로
+        assertEquals("하나", one.readText())
+        assertFalse(File(dir, "drafts/a.base.tmp").exists())
+    }
+
+    @Test fun missingSourceLeavesOldBase() {
+        val one = File(dir, "one.pdf").also { it.writeText("하나") }
+        assertTrue(store.putBase("a", one))
+        assertFalse(store.putBase("a", File(dir, "없는파일.pdf")))
+        assertEquals("하나", store.base("a").readText())
+    }
+
+    @Test fun oldDraftWithoutLiteKeyStillOpens() {
+        commit(meta("a"))
+        assertEquals(false, store.meta("a")?.lite)
+    }
+
+    @Test fun deleteAlsoRemovesTheBaseCopy() {
+        val src = File(dir, "원본.pdf").also { it.writeText("문서") }
+        commit(meta("a").copy(lite = true))
+        store.putBase("a", src)
+        store.delete("a")
+        assertFalse(store.base("a").exists())
+    }
+
+    @Test fun cleanupKeepsBaseOfValidDraftAndDropsOrphanBase() {
+        val src = File(dir, "원본.pdf").also { it.writeText("문서") }
+        commit(meta("keep", time = 5000).copy(lite = true))
+        store.putBase("keep", src)
+        store.putBase("orphan", src)
+        store.cleanup(oldestTime = 1000)
+        assertTrue(store.base("keep").exists())
+        assertFalse(store.base("orphan").exists())
+    }
+
     @Test fun missingDraftHasNoMeta() {
         assertNull(store.meta("nope"))
     }

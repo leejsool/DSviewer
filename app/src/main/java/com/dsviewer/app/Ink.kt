@@ -314,13 +314,38 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
     private var penPathKept = 0
 
     fun add(x: Float, y: Float, p: Float) {
-        if (count * 3 + 3 > data.size) data = data.copyOf(data.size * 2)
+        if (count * 3 + 3 > data.size) data = data.copyOf(maxOf(data.size * 2, 3 * 64))
         data[count * 3] = x
         data[count * 3 + 1] = y
         data[count * 3 + 2] = p
         count++
         version++
         appended++
+    }
+
+    /** 점 배열의 남는 칸을 돌려준다 (다 그은 획: 점을 더할 때마다 두 배로 키워 최대 절반이 놀고 있다). 이어 더하면 다시 자란다 */
+    fun trim() {
+        if (data.size > count * 3) data = data.copyOf(count * 3)
+    }
+
+    /**
+     * 화면용으로 만들어 둔 모양(경로·외곽선)을 버린다. 다시 그릴 때 저절로 다시 만들어지므로,
+     * 한동안 보지 않을 쪽의 메모리를 돌려주려고 부른다 (다른 스레드가 쥔 경로는 그대로 두고 여기서 놓기만 한다)
+     */
+    fun releaseCaches() {
+        cachedPaths = null
+        cachedVersion = -1
+        cachedShape = null
+        cachedShapeVersion = -1
+        cachedOutline = null
+        cachedOutlineVersion = -1
+        synchronized(this) {
+            penPath = null
+            penPathVersion = -1
+            penPathAppended = 0
+            penPathCount = 0
+            penPathKept = 0
+        }
     }
 
     /** i번째 점의 필압 값만 바꾼다 (만년필·붓펜 끝 가늘기) */
@@ -578,6 +603,38 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
     fun x(i: Int) = data[i * 3]
     fun y(i: Int) = data[i * 3 + 1]
     fun p(i: Int) = data[i * 3 + 2]
+
+    private var boundsVersion = -1
+    private val bounds = FloatArray(4)
+
+    /**
+     * 이 획이 쪽 좌표의 상자 ([l], [t], [r], [b])와 겹칠 수 있는가 (화면 밖 획을 그리지 않으려고 본다).
+     * 선 굵기만큼 넉넉히 넓힌 점들의 상자로 가늠하니, 겹치지 않으면 확실히 false이고 true여도 안 겹칠 수 있다.
+     * 점이 바뀔 때만 상자를 다시 센다
+     */
+    fun mayTouch(l: Float, t: Float, r: Float, b: Float): Boolean {
+        if (count == 0) return false
+        if (boundsVersion != version) {
+            var x0 = data[0]
+            var x1 = x0
+            var y0 = data[1]
+            var y1 = y0
+            for (i in 1 until count) {
+                val x = data[i * 3]
+                val y = data[i * 3 + 1]
+                if (x < x0) x0 = x else if (x > x1) x1 = x
+                if (y < y0) y0 = y else if (y > y1) y1 = y
+            }
+            // 표는 굵은 선·뾰족한 모서리가 상자 밖으로 나올 수 있다
+            val pad = (if (table != null) width * 10f else halfWidth) + 2f
+            bounds[0] = x0 - pad
+            bounds[1] = y0 - pad
+            bounds[2] = x1 + pad
+            bounds[3] = y1 + pad
+            boundsVersion = version
+        }
+        return bounds[2] >= l && bounds[0] <= r && bounds[3] >= t && bounds[1] <= b
+    }
 
     /** 필압에 따라 굵기가 달라지는 구간들로 나눠 콜백한다. 화면 그리기와 PDF 저장이 같은 규칙을 쓴다. */
     inline fun forEachGroup(block: (w: Float, from: Int, to: Int) -> Unit) {
@@ -1014,7 +1071,13 @@ class InkDocument(pageCount: Int) {
         }
     }
 
+    /** 모든 쪽의 획이 쥔 화면용 모양을 버린다 (보고 있지 않은 문서의 메모리를 돌려준다) */
+    fun releaseCaches() {
+        for (p in pages) for (st in p) st.releaseCaches()
+    }
+
     fun add(page: Int, stroke: Stroke) {
+        stroke.trim()
         pages[page].add(stroke)
         push(Action.Add(pages[page], stroke))
     }
@@ -1051,6 +1114,7 @@ class InkDocument(pageCount: Int) {
     /** 붙여넣기 */
     fun addAll(page: Int, strokes: List<Stroke>) {
         if (strokes.isEmpty()) return
+        strokes.forEach { it.trim() }
         pages[page].addAll(strokes)
         push(Action.AddAll(pages[page], strokes))
     }
@@ -1090,6 +1154,7 @@ class InkDocument(pageCount: Int) {
     fun jumped(before: Any, after: Any) {
         undoStack.addLast(Action.Jump(before, after))
         redoStack.clear()
+        capUndo()
         onChanged?.invoke()
     }
 
@@ -1180,7 +1245,17 @@ class InkDocument(pageCount: Int) {
     private fun push(a: Action) {
         undoStack.addLast(a)
         redoStack.clear()
+        capUndo()
         changed()
+    }
+
+    /** 실행 취소 기록은 가장 오래된 것부터 버려 [MAX_UNDO]개까지만 (지운 획·바꾸기 전 모양을 계속 쥐고 있지 않게) */
+    private fun capUndo() {
+        while (undoStack.size > MAX_UNDO) undoStack.removeFirst()
+    }
+
+    companion object {
+        const val MAX_UNDO = 1000
     }
 
     private fun changed() {

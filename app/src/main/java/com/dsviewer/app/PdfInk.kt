@@ -179,6 +179,42 @@ object PdfInk {
     }
 
     /**
+     * 자동 저장용 가벼운 필기 파일: 원본 PDF를 열지 않고 쪽 수만큼의 빈 쪽에 필기 정보만 담아 [out]에 쓴다.
+     * 획은 [encode] 글만 주석에 달고 외형(다른 앱에서 보이는 그림)은 만들지 않으며, 그림만 외형 속에 담는다.
+     * 쓰는 시간이 PDF 크기와 상관없이 필기 양에만 따른다. 읽을 때는 [extract]에 그대로 넣으면 되고
+     * (북마크·오답 정보 포함), 쪽의 크기·회전은 담지 않는다 (좌표는 모두 쪽 기준 값이라 필요 없다)
+     */
+    fun saveLite(out: File, pages: List<List<Stroke>>, marks: Set<Int> = emptySet(), wrongs: WrongSave? = null) {
+        PDDocument().use { doc ->
+            for (i in pages.indices) {
+                val page = PDPage(PDRectangle.LETTER)
+                doc.addPage(page)
+                val list = ArrayList<PDAnnotation>(pages[i].size)
+                for (s in pages[i]) {
+                    if (s.count == 0) continue
+                    list.add(if (s.image != null) makeImageAnnotation(doc, page, s) else makeLiteAnnotation(s))
+                }
+                page.annotations = list
+                if (i in marks) page.cosObject.setBoolean(MARK_NAME, true)
+                wrongs?.metas?.get(i)?.let { page.cosObject.setString(WRONG_NAME, it) }
+            }
+            doc.save(out)
+        }
+    }
+
+    /** 자동 저장용 주석: 필기 정보 글([encode])과 글에 단 링크만 */
+    private fun makeLiteAnnotation(s: Stroke): PDAnnotation {
+        val dict = COSDictionary()
+        dict.setItem(COSName.TYPE, COSName.ANNOT)
+        dict.setItem(COSName.SUBTYPE, COSName.getPDFName("Stamp"))
+        val annot = PDAnnotation.createAnnotation(dict)
+        annot.rectangle = PDRectangle(0f, 0f, 1f, 1f)
+        dict.setString(KEY_NAME, encode(s))
+        if (s.text != null) s.link?.let { dict.setString(LINK_NAME, it) }
+        return annot
+    }
+
+    /**
      * 오답노트 목차: 맨 위 단계에 '오답노트' 하나, 그 아래 기호별 묶음(별 5개 → 1개, 세모, 엑스, 네모, 분류 없음),
      * 그 아래 '#번호 제목 #태그' 항목이 그 오답 쪽(반 쪽이면 그 칸 위)으로 간다.
      * 원래 있던 다른 목차 항목은 그대로 두고, 이 앱이 전에 만든 '오답노트' 항목만 갈아 끼운다
@@ -1005,6 +1041,7 @@ object PdfInk {
                 val h = size?.getOrNull(1)?.toFloatOrNull() ?: StickyNote.DEFAULT_H
                 s.note = StickyNote(txt, w, h).also { it.collapsed = parts.getOrNull(7) == "C" }
             }
+            s.trim()
             if (s.count > 0 && (!isText || s.count >= 4) && (!isNote || s.count >= 2) && (!isTable || (s.count >= 4 && s.table != null))) s else null
         }
     } catch (e: Exception) {
