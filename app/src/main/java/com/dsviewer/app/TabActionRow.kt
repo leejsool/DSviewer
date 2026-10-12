@@ -2,7 +2,9 @@ package com.dsviewer.app
 
 import android.content.Context
 import android.util.AttributeSet
+import android.view.Gravity
 import android.view.ViewGroup
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 
 /**
@@ -36,6 +38,9 @@ class TabActionRow @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
             stacked = narrow
             orientation = if (narrow) VERTICAL else HORIZONTAL
             actions.setBackgroundColor(if (narrow) context.getColor(R.color.doc_bg) else 0)
+            // 두 줄일 때 단추가 폭보다 적으면 오른쪽에 붙인다 (넘치면 평소처럼 옆으로 민다)
+            (actions as? HorizontalScrollView)?.isFillViewport = narrow
+            (inner as? LinearLayout)?.gravity = Gravity.CENTER_VERTICAL or (if (narrow) Gravity.END else Gravity.START)
         }
         val tlp = tabs.layoutParams as LayoutParams
         val alp = actions.layoutParams as LayoutParams
