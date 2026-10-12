@@ -1008,7 +1008,9 @@ object PdfInk {
             val isNote = parts[1] == "N"
             val pen = if (tool == Tool.PEN && !isNote && parts[1].length == 1) PenStyle.of(parts[1][0]) ?: PenStyle.FELT else PenStyle.FELT
             val s = Stroke(tool, color, if (isText) 0f else parts[3].toFloat(), dashed = parts[1] == "D", pen = pen)
-            for (pt in parts[4].split(';')) {
+            val fast = PointText.parse(parts[4])
+            if (fast != null) s.adopt(fast)
+            else for (pt in parts[4].split(';')) {
                 val v = pt.split(',')
                 if (v.size == 3) s.add(v[0].toFloat(), v[1].toFloat(), v[2].toFloat())
             }

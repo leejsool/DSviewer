@@ -519,6 +519,13 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
         version++
     }
 
+    /** 점 배열을 그대로 넘겨받는다 (x, y, 필압 세 값씩, 복사하지 않는다. 파일에서 읽을 때) */
+    fun adopt(points: FloatArray) {
+        data = points
+        count = points.size / 3
+        version++
+    }
+
     /** 점들을 통째로 바꾼다 (x, y, 필압 세 값씩). 접기에서 쓰고, 되돌리기는 [state]·[restore]로 */
     fun setPoints(points: FloatArray) {
         data = points.copyOf()
