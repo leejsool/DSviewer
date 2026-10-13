@@ -3,6 +3,7 @@ package com.dsviewer.app
 import android.content.SharedPreferences
 import android.graphics.Bitmap
 import android.graphics.RectF
+import android.util.SizeF
 import android.view.View
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
@@ -28,7 +29,7 @@ internal class WrongController(
     private val current: () -> DocTab?,
     private val toast: (String) -> Unit,
     /** 쪽을 넣고 빼며 필기를 함께 고친다 (뷰어의 editPages) */
-    private val editPages: (DocTab, (File, File) -> Unit, (() -> Unit)?, (MutableList<MutableList<Stroke>>) -> Int) -> Unit,
+    private val editPages: (DocTab, (File, File) -> Unit, (() -> Unit)?, ((List<SizeF>) -> List<SizeF?>)?, (MutableList<MutableList<Stroke>>) -> Int) -> Unit,
     /** 고른 오답들로 복습을 시작한다 */
     private val startReview: (DocTab, List<WrongEntry>) -> Unit,
     /** 고른 오답들의 문제지 PDF를 만든다 */
@@ -133,7 +134,9 @@ internal class WrongController(
             }
             toast("스크랩 #$number 을(를) ${index + 1}쪽에 스크랩했습니다. 아래 빈 곳에 풀이를 써 보세요.")
         }
-        editPages(t, { src, out -> PdfPages.insert(src, out, index, c.paper, WrongNote.PAGE_W, WrongNote.PAGE_H) }, onDone) { pages ->
+        // 문서 맨 뒤에 새 쪽 하나만 붙으니, 앞 쪽들의 크기는 다시 읽지 않는다
+        val sizesAfter: (List<SizeF>) -> List<SizeF?> = { old -> old + null }
+        editPages(t, { src, out -> PdfPages.insert(src, out, index, c.paper, WrongNote.PAGE_W, WrongNote.PAGE_H) }, onDone, sizesAfter) { pages ->
             val list = mutableListOf(built.header, built.body)
             pages.add(index, list)
             inkDoc.attachWrong(list, entry)

@@ -40,8 +40,11 @@ import com.google.android.material.snackbar.Snackbar
 import com.dsviewer.app.conv.DocConvert
 import com.dsviewer.app.conv.ImagePdf
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import android.util.SizeF
 import java.io.File
 import kotlin.math.max
 import kotlin.math.min
@@ -2255,12 +2258,12 @@ class ViewerActivity : AppCompatActivity() {
             true -> short to long
             false -> long to short
         }
-        var found = paper
+        val sourceFile = t.sourcePdf
+        // 원본에서 한 번 알아낸 바탕을 화면용 PDF에도 똑같이 (원본·화면용을 동시에 고치므로 한 번만 알아내게 잠가 둔다)
+        val found by lazy { paper ?: runCatching { PdfPages.paperOf(sourceFile ?: return@runCatching Paper.PLAIN, ref) }.getOrDefault(Paper.PLAIN) }
         editPages(t, { src, out ->
-            // 원본에서 한 번 알아낸 바탕을 화면용 PDF에도 똑같이
-            val p = found ?: runCatching { PdfPages.paperOf(src, ref) }.getOrDefault(Paper.PLAIN).also { found = it }
-            PdfPages.insert(src, out, at, p, w, h)
-        }) { pages ->
+            PdfPages.insert(src, out, at, found, w, h)
+        }, sizesAfter = { old -> old.toMutableList<SizeF?>().also { it.add(at.coerceAtMost(it.size), null) } }) { pages ->
             pages.add(at, mutableListOf())
             at
         }
@@ -2305,7 +2308,10 @@ class ViewerActivity : AppCompatActivity() {
                 else "$what 지웠습니다."
             )
         }
-        editPages(t, { src, out -> PdfPages.remove(src, out, from, to) }, done) { pages ->
+        editPages(
+            t, { src, out -> PdfPages.remove(src, out, from, to) }, done,
+            sizesAfter = { old -> old.filterIndexed { i, _ -> i !in from..to } },
+        ) { pages ->
             repeat(to - from + 1) { pages.removeAt(from) }
             from.coerceAtMost(pages.size - 1)
         }
@@ -2318,6 +2324,7 @@ class ViewerActivity : AppCompatActivity() {
      */
     private fun editPages(
         t: DocTab, pdfOp: (File, File) -> Unit, onDone: (() -> Unit)? = null,
+        sizesAfter: ((List<SizeF>) -> List<SizeF?>)? = null,
         applyInk: (MutableList<MutableList<Stroke>>) -> Int,
     ) {
         val src = t.sourcePdf ?: return
@@ -2328,17 +2335,33 @@ class ViewerActivity : AppCompatActivity() {
         textEditor.commit()
         docView.clearSelection()
         val before = PageFiles(src, render, (paneOf(t)?.view ?: docView).currentPage().coerceAtLeast(0))
+        // 바뀌지 않은 쪽의 크기는 다시 읽지 않는다 (쪽 수가 많을수록 오래 걸린다)
+        val hint = sizesAfter?.invoke(t.pdf?.sizes.orEmpty())
         lifecycleScope.launch {
             progress.visibility = View.VISIBLE
             try {
                 val (newSrc, newRender) = withContext(Dispatchers.IO) {
                     val ns = FileUtil.tempFile(this@ViewerActivity, "pages_src", "pdf")
-                    pdfOp(src, ns)
-                    val nr = if (render == src) ns
-                    else FileUtil.tempFile(this@ViewerActivity, "pages_view", "pdf").also { pdfOp(render, it) }
+                    if (render == src) {
+                        pdfOp(src, ns)
+                        return@withContext ns to ns
+                    }
+                    val nr = FileUtil.tempFile(this@ViewerActivity, "pages_view", "pdf")
+                    // 원본과 화면용 사본을 동시에 고친다. 둘을 한꺼번에 메모리에 올리므로 큰 문서는 차례로
+                    if (src.length() + render.length() <= PARALLEL_EDIT_MAX_BYTES) {
+                        coroutineScope {
+                            val a = async { pdfOp(src, ns) }
+                            val b = async { pdfOp(render, nr) }
+                            a.await()
+                            b.await()
+                        }
+                    } else {
+                        pdfOp(src, ns)
+                        pdfOp(render, nr)
+                    }
                     ns to nr
                 }
-                val nd = PdfDoc.open(newRender)
+                val nd = PdfDoc.open(newRender, hint)
                 if (t !in docs) {
                     nd.close()
                     return@launch
@@ -2848,6 +2871,8 @@ class ViewerActivity : AppCompatActivity() {
     private fun undoNotice(msg: String) = Notice.show(this, msg) { undoButton.performClick() }
 
     companion object {
+        /** 원본·화면용 PDF를 동시에 고치는 것은 둘을 합친 크기가 이 이하일 때만 (메모리) */
+        private const val PARALLEL_EDIT_MAX_BYTES = 40L shl 20
         /** 넘기지 않은 채 이만큼(ms) 지나면 쪽 번호가 흐려지며 사라진다 */
         private const val PAGE_LABEL_SHOW_MS = 2500L
         private const val PAGE_LABEL_FADE_MS = 400L

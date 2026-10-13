@@ -53,7 +53,11 @@ class PdfDoc private constructor(
     }
 
     companion object {
-        suspend fun open(file: File): PdfDoc {
+        /**
+         * [file]을 연다. [sizesHint]는 쪽 수만큼의 크기 목록으로, 이미 아는 쪽은 그 크기를 쓰고 null인 쪽만 읽는다
+         * (쪽 수가 많은 문서는 쪽마다 열어 보는 데 오래 걸린다). 쪽 수가 맞지 않으면 힌트를 버리고 모두 읽는다
+         */
+        suspend fun open(file: File, sizesHint: List<SizeF?>? = null): PdfDoc {
             val executor = Executors.newSingleThreadExecutor()
             val dispatcher = executor.asCoroutineDispatcher()
             try {
@@ -65,8 +69,9 @@ class PdfDoc private constructor(
                         pfd.close()
                         throw e
                     }
+                    val hint = sizesHint?.takeIf { it.size == r.pageCount }
                     val sizes = (0 until r.pageCount).map { i ->
-                        r.openPage(i).use { p -> SizeF(p.width.toFloat(), p.height.toFloat()) }
+                        hint?.get(i) ?: r.openPage(i).use { p -> SizeF(p.width.toFloat(), p.height.toFloat()) }
                     }
                     PdfDoc(pfd, r, sizes, executor, dispatcher)
                 }
