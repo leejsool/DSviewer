@@ -47,7 +47,7 @@ internal class WrongController(
         if (current()?.pagesBusy == true) return
         if (!docView.startWrongPick()) return
         wrongHint?.dismiss()
-        wrongHint = Snackbar.make(activity.findViewById(R.id.docFrame), "스크랩할 문제 영역을 끌어서 고르세요. (두 손가락: 이동 · 확대)", Snackbar.LENGTH_INDEFINITE)
+        wrongHint = SnackHost.make(activity, "스크랩할 문제 영역을 끌어서 고르세요. (두 손가락: 이동 · 확대)", Snackbar.LENGTH_INDEFINITE)
             .setAction("취소") { docView.cancelWrongPick() }
             .addCallback(object : Snackbar.Callback() {
                 override fun onDismissed(bar: Snackbar?, event: Int) {

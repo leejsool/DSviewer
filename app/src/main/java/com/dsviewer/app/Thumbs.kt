@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ColorFilter
+import android.graphics.CornerPathEffect
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
@@ -324,10 +325,11 @@ class ThumbView @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? = n
     }
 }
 
-/** 폴더 그림: 뒷면(탭)은 조금 진하게, 앞면은 [color]에 [pattern] 무늬 */
-class FolderDrawable(private val color: Int, private val pattern: TapePattern) : Drawable() {
+/** 폴더 그림: 뒷면(탭)은 조금 진하게, 앞면은 [color]에 [pattern] 무늬. [open]이면 앞면이 기울어 열린 폴더로 보인다 */
+class FolderDrawable(private val color: Int, private val pattern: TapePattern, private val open: Boolean = false) : Drawable() {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val path = Path()
+    private val front = Path()
     private val m = Matrix()
 
     override fun draw(canvas: Canvas) {
@@ -343,10 +345,22 @@ class FolderDrawable(private val color: Int, private val pattern: TapePattern) :
         path.addRoundRect(x, y, x + w * 0.42f, y + h * 0.3f, rad, rad, Path.Direction.CW)
         path.addRoundRect(x, y + h * 0.1f, x + w, y + h, rad, rad, Path.Direction.CW)
         canvas.drawPath(path, paint)
-        // 앞면
-        val ft = y + h * 0.22f
+        // 앞면 (열린 폴더는 윗변이 오른쪽으로 밀린 평행사변형)
+        val ft = y + h * (if (open) 0.3f else 0.22f)
+        val lean = if (open) w * 0.16f else 0f
+        front.reset()
+        if (open) {
+            front.moveTo(x + lean, ft)
+            front.lineTo(x + w, ft)
+            front.lineTo(x + w - lean, y + h)
+            front.lineTo(x, y + h)
+            front.close()
+            paint.pathEffect = CornerPathEffect(rad)
+        } else {
+            front.addRoundRect(x, ft, x + w, y + h, rad, rad, Path.Direction.CW)
+        }
         paint.color = color
-        canvas.drawRoundRect(x, ft, x + w, y + h, rad, rad, paint)
+        canvas.drawPath(front, paint)
         TapeTile.shader(pattern, color)?.let { sh ->
             // 무늬 한 칸이 폴더 너비의 1/7쯤
             val k = w / 7f / (TapeTile.PERIOD * TapeTile.TILE_PX)
@@ -354,12 +368,13 @@ class FolderDrawable(private val color: Int, private val pattern: TapePattern) :
             m.postTranslate(x, ft)
             sh.setLocalMatrix(m)
             paint.shader = sh
-            canvas.drawRoundRect(x, ft, x + w, y + h, rad, rad, paint)
+            canvas.drawPath(front, paint)
             paint.shader = null
         }
+        paint.pathEffect = null
         // 앞면 윗가장자리 밝은 줄
         paint.color = ColorUtils.blendARGB(color, Color.WHITE, 0.35f)
-        canvas.drawRect(x + rad, ft, x + w - rad, ft + maxOf(1f, h * 0.025f), paint)
+        canvas.drawRect(x + lean + rad, ft, x + w - rad, ft + maxOf(1f, h * 0.025f), paint)
     }
 
     override fun getIntrinsicWidth() = -1

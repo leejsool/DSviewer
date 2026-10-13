@@ -15,9 +15,9 @@ internal object Notice {
 
     /** [message]를 보이고 '[action]'(기본 '실행 취소')을 누르면 [onAction]을 한다. 문서 화면이 없는 화면이면 아무것도 하지 않는다 */
     fun show(activity: Activity, message: String, action: String = "실행 취소", durationMs: Int = SHOW_MS, onAction: () -> Unit) {
-        val host = activity.findViewById<View>(R.id.docFrame) ?: return
+        activity.findViewById<View>(R.id.docFrame) ?: return
         bar?.dismiss()
-        val shown = Snackbar.make(host, message, durationMs).setAction(action) { onAction() }
+        val shown = SnackHost.make(activity, message, durationMs).setAction(action) { onAction() }
         shown.addCallback(object : Snackbar.Callback() {
             // 화면을 붙들고 있지 않게 닫히면 놓는다 (새 알림으로 바뀐 경우엔 새것을 지우지 않는다)
             override fun onDismissed(transientBottomBar: Snackbar?, event: Int) {

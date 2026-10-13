@@ -1,26 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 뷰어 탭 줄의 ⋮ 버튼 메뉴 (실행 취소·다시 실행·저장은 탭 줄 버튼) -->
+<!-- 뷰어 탭 줄의 ⋮ 버튼 메뉴 (실행 취소·다시 실행·저장은 탭 줄 버튼). 항목마다 그림이 붙는다 (ViewerActivity.showMoreMenu에서 그림을 켠다) -->
 <menu xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:id="@+id/action_save_menu" android:title="저장">
+    <item android:id="@+id/action_save_menu" android:title="저장" android:icon="@drawable/ic_save">
         <menu>
-            <item android:id="@+id/action_save_now" android:title="저장" />
-            <item android:id="@+id/action_save_as" android:title="다른 이름으로 저장" />
-            <item android:id="@+id/action_save_image" android:title="이미지로 저장" />
+            <item android:id="@+id/action_save_now" android:title="저장" android:icon="@drawable/ic_save" />
+            <item android:id="@+id/action_save_as" android:title="다른 이름으로 저장" android:icon="@drawable/ic_save_as" />
+            <item android:id="@+id/action_save_image" android:title="이미지로 저장" android:icon="@drawable/ic_image" />
         </menu>
     </item>
-    <item android:id="@+id/action_go_page" android:title="쪽 이동" />
-    <item android:id="@+id/action_outline" android:title="목차 (제목으로 이동)" />
-    <item android:id="@+id/action_insert_page" android:title="이 쪽 뒤에 빈 쪽 넣기">
+    <item android:id="@+id/action_go_page" android:title="쪽 이동" android:icon="@drawable/ic_page_goto" />
+    <item android:id="@+id/action_outline" android:title="목차 (제목으로 이동)" android:icon="@drawable/ic_outline" />
+    <item android:id="@+id/action_insert_page" android:title="이 쪽 뒤에 빈 쪽 넣기" android:icon="@drawable/ic_page_add">
         <menu>
-            <item android:id="@+id/action_insert_plain" android:title="흰 바탕" />
-            <item android:id="@+id/action_insert_grid" android:title="모눈" />
-            <item android:id="@+id/action_insert_lined" android:title="줄" />
+            <item android:id="@+id/action_insert_plain" android:title="흰 바탕" android:icon="@drawable/ic_paper_plain" />
+            <item android:id="@+id/action_insert_grid" android:title="모눈" android:icon="@drawable/ic_paper_grid" />
+            <item android:id="@+id/action_insert_lined" android:title="줄" android:icon="@drawable/ic_paper_lined" />
         </menu>
     </item>
-    <item android:id="@+id/action_delete_page" android:title="쪽 지우기" />
-    <item android:id="@+id/action_finger" android:title="손가락으로 쓰기"
+    <item android:id="@+id/action_delete_page" android:title="쪽 지우기" android:icon="@drawable/ic_page_delete" />
+    <item android:id="@+id/action_finger" android:title="손가락으로 쓰기" android:icon="@drawable/ic_finger"
         android:checkable="true" />
-    <item android:id="@+id/action_timer" android:title="시험·풀이 타이머…" />
-    <item android:id="@+id/action_options" android:title="옵션…" />
-    <item android:id="@+id/action_about" android:title="앱 정보 · 업데이트" />
+    <item android:id="@+id/action_calc" android:title="계산기" android:icon="@drawable/ic_calc" />
+    <item android:id="@+id/action_timer" android:title="시험·풀이 타이머…" android:icon="@drawable/ic_timer" />
+    <item android:id="@+id/action_options" android:title="옵션…" android:icon="@drawable/ic_settings" />
+    <item android:id="@+id/action_about" android:title="앱 정보 · 업데이트" android:icon="@drawable/ic_info" />
 </menu>

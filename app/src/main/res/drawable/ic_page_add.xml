@@ -1,0 +1,10 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24"
+    android:tint="?attr/colorControlNormal">
+    <!-- 쪽 테두리 + 가운데 + -->
+    <path android:fillColor="@android:color/white" android:fillType="evenOdd"
+        android:pathData="M6,2h8l6,6v12a2,2 0 0,1 -2,2H6a2,2 0 0,1 -2,-2V4a2,2 0 0,1 2,-2zM6,4v16h12V9h-5V4H6z" />
+    <path android:fillColor="@android:color/white"
+        android:pathData="M11,11.5h2v2.5h2.5v2H13v2.5h-2V16H8.5v-2H11z" />
+</vector>

@@ -1,0 +1,8 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24"
+    android:tint="?attr/colorControlNormal">
+    <!-- 계산기: 둥근 몸통 + 표시창 + 단추 네 개 -->
+    <path android:fillColor="@android:color/white" android:fillType="evenOdd"
+        android:pathData="M7,2h10a2,2 0 0,1 2,2v16a2,2 0 0,1 -2,2H7a2,2 0 0,1 -2,-2V4a2,2 0 0,1 2,-2zM7,4v4h10V4H7zM7.5,10.5h3v2.5h-3zM13.5,10.5h3v2.5h-3zM7.5,14.5h3v2.5h-3zM13.5,14.5h3v5h-3zM7.5,18.5h3v1.5h-3z" />
+</vector>

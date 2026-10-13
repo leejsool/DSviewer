@@ -1,9 +1,13 @@
 package com.dsviewer.app
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.ContentValues
+import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.RectF
 import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Environment
@@ -13,13 +17,16 @@ import android.view.View
 import android.widget.PopupMenu
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.Date
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 /**
  * 문서 저장: 저장 · 다른 이름으로 저장 · 이미지로 저장 (사진첩 Pictures/DSnote).
@@ -47,26 +54,6 @@ internal class DocSaver(
 
     /** '다른 이름으로 저장' 창이 끝났을 때 저장할 탭을 꺼낸다 (한 번만) */
     fun takeSaveTarget(): DocTab? = saveTarget.also { saveTarget = null }
-
-    /** 저장 ▾: 저장 / 다른 이름으로 저장 / 이미지로 저장 */
-    fun showSaveMenu(anchor: View) {
-        val t = current() ?: return
-        if (t.ink == null || t.review != null) return
-        val popup = PopupMenu(activity, anchor)
-        popup.menu.add(0, 1, 0, "저장").setIcon(R.drawable.ic_save)
-        popup.menu.add(0, 2, 1, "다른 이름으로 저장").setIcon(R.drawable.ic_save_as)
-        popup.menu.add(0, 3, 2, "이미지로 저장").setIcon(R.drawable.ic_image)
-        popup.setForceShowIcon(true)
-        popup.setOnMenuItemClickListener { item ->
-            when (item.itemId) {
-                1 -> save(t, asNew = false)
-                2 -> save(t, asNew = true)
-                3 -> askExportImages(t)
-            }
-            true
-        }
-        popup.show()
-    }
 
     /** 이미지로 저장할 쪽 고르기: 지금 쪽만 / 모든 쪽 / n쪽부터 m쪽까지 */
     fun askExportImages(t: DocTab) {
@@ -116,6 +103,96 @@ internal class DocSaver(
             }
         }
     }
+
+    // ----- 올가미로 고른 부분만 이미지로 -----
+
+    /** 올가미 선택 막대의 '이미지' 단추: 고른 부분을 클립보드에 이미지로 복사 / 사진첩에 저장 */
+    fun showSelectionImageMenu(anchor: View) {
+        val t = current() ?: return
+        val d = t.pdf ?: return
+        val inkDoc = t.ink ?: return
+        val (page, region) = docView.selectionRegion() ?: return
+        val popup = PopupMenu(activity, anchor)
+        popup.menu.add(0, 1, 0, "이미지로 복사 (클립보드)").setIcon(R.drawable.ic_copy)
+        popup.menu.add(0, 2, 1, "사진첩에 저장").setIcon(R.drawable.ic_image)
+        popup.setForceShowIcon(true)
+        popup.setOnMenuItemClickListener { item ->
+            exportRegion(t, d, inkDoc, page, region, toClipboard = item.itemId == 1)
+            true
+        }
+        popup.show()
+    }
+
+    private fun exportRegion(t: DocTab, d: PdfDoc, inkDoc: InkDocument, page: Int, region: RectF, toClipboard: Boolean) {
+        activity.lifecycleScope.launch {
+            progress.visibility = View.VISIBLE
+            try {
+                val bmp = regionBitmap(d, inkDoc, page, region)
+                if (toClipboard) {
+                    withContext(Dispatchers.IO) {
+                        val file = newClipFile()
+                        file.outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                        putOnClipboard(file)
+                    }
+                    Toast.makeText(activity, "이미지를 클립보드에 복사했습니다. 붙여넣을 앱에서 붙여넣기를 누르세요.", Toast.LENGTH_LONG).show()
+                } else {
+                    val base = FileNames.safe(FileUtil.baseName(t.name))
+                    val stamp = DateFormat.format("HHmmss", Date())
+                    withContext(Dispatchers.IO) { saveToGallery(bmp, "${base}_${page + 1}쪽_선택_$stamp.png") }
+                    Toast.makeText(activity, "선택한 부분을 사진첩(Pictures/DSnote)에 저장했습니다.", Toast.LENGTH_LONG).show()
+                }
+                bmp.recycle()
+            } catch (e: Exception) {
+                MaterialAlertDialogBuilder(activity)
+                    .setMessage("이미지로 만들지 못했습니다.\n${e.message ?: e.javaClass.simpleName}")
+                    .setPositiveButton("확인", null)
+                    .show()
+            } finally {
+                progress.visibility = View.GONE
+            }
+        }
+    }
+
+    /** 쪽의 [region](쪽 좌표 pt)만 필기·그림과 함께 그린다. 작은 부분은 글자가 또렷하도록 더 크게 그린다 */
+    private suspend fun regionBitmap(d: PdfDoc, inkDoc: InkDocument, p: Int, region: RectF): Bitmap {
+        var scale = EXPORT_DPI / 72f
+        if (region.width() * scale < REGION_MIN_PX) scale = (REGION_MIN_PX / region.width()).coerceAtMost(REGION_MAX_SCALE)
+        val px = region.width() * scale * region.height() * scale
+        if (px > REGION_MAX_PIXELS) scale *= sqrt(REGION_MAX_PIXELS / px)
+        val w = (region.width() * scale).roundToInt().coerceAtLeast(1)
+        val h = (region.height() * scale).roundToInt().coerceAtLeast(1)
+        val bmp = withContext(d.dispatcher) { d.render(p, scale, region.left, region.top, w, h) }
+        val c = Canvas(bmp)
+        c.scale(scale, scale)
+        c.translate(-region.left, -region.top)
+        val paint = inkPaint()
+        inkDoc.pages.getOrNull(p)?.sortedBy { inkLayer(it) }?.forEach { drawInkStroke(c, paint, it) }
+        return bmp
+    }
+
+    /** 클립보드로 보낼 PNG를 쓸 새 파일 (앱 캐시 share/). 지난번 것은 지운다 */
+    private fun newClipFile(): File {
+        val dir = File(activity.cacheDir, "share").apply { mkdirs() }
+        dir.listFiles { f -> f.name.startsWith("clip_") }?.forEach { it.delete() }
+        return File(dir, "clip_${System.currentTimeMillis()}.png")
+    }
+
+    /** [file](PNG)을 클립보드에 이미지로 담는다. 이미지는 파일 주소로 담긴다 (붙여넣는 앱이 읽을 수 있게 FileProvider 주소) */
+    private fun putOnClipboard(file: File) {
+        val uri = FileProvider.getUriForFile(activity, "${activity.packageName}.files", file)
+        val cm = activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        cm.setPrimaryClip(ClipData.newUri(activity.contentResolver, "DSnote 이미지", uri))
+    }
+
+    /** [bmp]를 클립보드에 PNG 이미지로 복사한다 (IO 스레드에서) */
+    fun copyBitmapToClipboard(bmp: Bitmap) {
+        val file = newClipFile()
+        file.outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        putOnClipboard(file)
+    }
+
+    /** [bmp]를 사진첩(Pictures/DSnote)에 PNG [name]으로 저장한다 (IO 스레드에서) */
+    fun saveBitmapToGallery(bmp: Bitmap, name: String) = saveToGallery(bmp, name)
 
     /** 쪽을 필기·그림과 함께 [EXPORT_DPI]로 그린다 */
     suspend fun pageBitmap(d: PdfDoc, inkDoc: InkDocument, p: Int): Bitmap {
@@ -246,5 +323,9 @@ internal class DocSaver(
     companion object {
         /** 이미지로 저장할 때 해상도 */
         private const val EXPORT_DPI = 150f
+        /** 고른 부분 이미지: 가로가 이보다 좁으면 더 크게 그리고(최대 4배), 전체 픽셀은 이 수를 넘기지 않는다 */
+        private const val REGION_MIN_PX = 1000f
+        private const val REGION_MAX_SCALE = 4f
+        private const val REGION_MAX_PIXELS = 12_000_000f
     }
 }

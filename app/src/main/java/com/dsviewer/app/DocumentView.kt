@@ -2902,6 +2902,18 @@ class DocumentView @JvmOverloads constructor(
         clipSize.set(0f, 0f, b.width(), b.height())
     }
 
+    /**
+     * 고른 것을 감싸는 쪽 번호와 쪽 좌표(pt) 네모 (획 굵기만큼 여유를 두고 쪽 안으로 자른다).
+     * 이미지로 내보낼 때 쓴다. 고른 것이 없으면 null
+     */
+    fun selectionRegion(): Pair<Int, RectF>? {
+        if (selection.isEmpty() || selBounds.isEmpty || selPage !in sizes.indices) return null
+        val r = RectF(selBounds)
+        r.inset(-SELECTION_IMAGE_PAD, -SELECTION_IMAGE_PAD)
+        if (!r.intersect(0f, 0f, sizes[selPage].width, sizes[selPage].height)) return null
+        return selPage to r
+    }
+
     /** 영역 스크린샷 [img]를 복사해 둔다 ([widthPt]×[heightPt]는 찍은 영역의 쪽 크기). 붙여넣기로 어느 문서에든 넣는다 */
     fun copyImage(img: InkImage, widthPt: Float, heightPt: Float) {
         val st = Stroke(Tool.PEN, Color.BLACK, 0f).apply {
@@ -2916,22 +2928,104 @@ class DocumentView @JvmOverloads constructor(
     }
 
     /** 복사해 둔 획을 지금 보이는 페이지 가운데에 붙이고 선택한다 (실행 취소 가능) */
-    fun pasteClipboard() {
+    fun pasteClipboard() = pasteStrokes(clipboard, clipSize)
+
+    /** [list](왼쪽 위가 원점, 크기 [size])를 지금 보이는 쪽 가운데에 붙이고 선택한다 */
+    private fun pasteStrokes(list: List<Stroke>, size: RectF) {
         val inkDoc = ink ?: return
-        if (clipboard.isEmpty() || sizes.isEmpty()) return
+        if (list.isEmpty() || sizes.isEmpty()) return
         val page = currentPage()
         // 그림 하나(영역 스크린샷 등)가 쪽보다 크면 쪽에 들어오게 줄여 붙인다
-        val fit = if (clipboard.size == 1 && clipboard[0].image != null)
-            PlacementMath.pasteFit(clipSize.width(), clipSize.height(), sizes[page].width, sizes[page].height) else 1f
+        val fit = if (list.size == 1 && list[0].image != null)
+            PlacementMath.pasteFit(size.width(), size.height(), sizes[page].width, sizes[page].height) else 1f
         val at = PlacementMath.pasteOrigin(
             offX, offY, width.toFloat(), height.toFloat(), scale,
-            lefts[page], tops[page], sizes[page].width, sizes[page].height, clipSize.width() * fit, clipSize.height() * fit,
+            lefts[page], tops[page], sizes[page].width, sizes[page].height, size.width() * fit, size.height() * fit,
         )
-        val copies = clipboard.map { it.copy().apply { role = null; if (fit < 1f) scale(fit, 0f, 0f); translate(at[0], at[1]) } }
+        val copies = list.map { it.copy().apply { role = null; if (fit < 1f) scale(fit, 0f, 0f); translate(at[0], at[1]) } }
         clearSelection()
         inkDoc.addAll(page, copies)
         select(page, copies)
         invalidate()
+    }
+
+    /**
+     * 기기 클립보드(다른 앱에서 복사한 것)를 지금 보이는 쪽 가운데에 붙이고 선택한다 (실행 취소 가능).
+     * 그림이면 그림으로, 글이면 글 상자로 넣는다. 이 앱 안에서 복사해 둔 획([pasteClipboard])은 건드리지 않는다
+     */
+    fun pasteSystemClipboard() {
+        if (ink == null || sizes.isEmpty()) return
+        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        val clip = cm.primaryClip
+        val item = if (clip != null && clip.itemCount > 0) clip.getItemAt(0) else null
+        if (item == null) {
+            textSay?.invoke("클립보드가 비어 있습니다.")
+            return
+        }
+        val uri = item.uri
+        val isImage = uri != null && (clip?.description?.hasMimeType("image/*") == true ||
+            runCatching { context.contentResolver.getType(uri) }.getOrNull()?.startsWith("image/") == true)
+        if (isImage && uri != null) {
+            scope.launch {
+                val bmp = withContext(Dispatchers.IO) { runCatching { decodeClipImage(uri) }.getOrNull() }
+                if (bmp == null) {
+                    textSay?.invoke("클립보드의 그림을 읽지 못했습니다.")
+                    return@launch
+                }
+                // 화면 픽셀을 쪽 크기(pt)로: 192dpi 정도 (영역 스크린샷과 같게). 쪽보다 크면 붙일 때 줄어든다
+                val k = 72f / 192f
+                val w = bmp.width * k
+                val h = bmp.height * k
+                val st = Stroke(Tool.PEN, Color.BLACK, 0f).apply {
+                    image = InkImage(bmp, null)
+                    add(0f, 0f, 1f)
+                    add(w, 0f, 1f)
+                    add(w, h, 1f)
+                    add(0f, h, 1f)
+                }
+                pasteStrokes(listOf(st), RectF(0f, 0f, w, h))
+            }
+            return
+        }
+        val text = item.coerceToText(context)?.toString()?.trim().orEmpty()
+        if (text.isEmpty()) {
+            textSay?.invoke("붙일 수 있는 그림이나 글이 클립보드에 없습니다.")
+            return
+        }
+        pasteText(text)
+    }
+
+    /** [text]를 지금 보이는 쪽 가운데에 글 상자로 넣고 선택한다 */
+    private fun pasteText(text: String) {
+        val inkDoc = ink ?: return
+        val page = currentPage()
+        val wrap = min(sizes[page].width * 0.8f, PASTE_TEXT_MAX_WRAP)
+        val t = InkText(text, PASTE_TEXT_SIZE, wrap)
+        val at = PlacementMath.pasteOrigin(
+            offX, offY, width.toFloat(), height.toFloat(), scale,
+            lefts[page], tops[page], sizes[page].width, sizes[page].height, t.boxW.toFloat(), t.boxH.toFloat(),
+        )
+        val c = PlacementMath.upright(at[0], at[1], t.boxW.toFloat(), t.boxH.toFloat())
+        val st = Stroke(Tool.PEN, penColor, 0f).apply {
+            this.text = t
+            for (i in 0 until 4) add(c[i * 2], c[i * 2 + 1], 1f)
+        }
+        clearSelection()
+        inkDoc.add(page, st)
+        select(page, listOf(st))
+        invalidate()
+    }
+
+    /** 클립보드의 그림 [uri]를 읽는다. 너무 큰 것은 긴 변이 [PASTE_IMAGE_MAX_PX]를 넘지 않게 줄여 읽는다 */
+    private fun decodeClipImage(uri: android.net.Uri): Bitmap? {
+        val resolver = context.contentResolver
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        resolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, bounds) }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        var sample = 1
+        while (max(bounds.outWidth, bounds.outHeight) / sample > PASTE_IMAGE_MAX_PX) sample *= 2
+        val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+        return resolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, opts) }
     }
 
     override fun onDetachedFromWindow() {
@@ -2945,6 +3039,13 @@ class DocumentView @JvmOverloads constructor(
 
     companion object {
         private const val TAG = "DocumentView"
+        /** 고른 것을 이미지로 내보낼 때 둘레에 두는 여유 (pt) */
+        private const val SELECTION_IMAGE_PAD = 6f
+        /** 클립보드의 글을 붙일 때 글 크기(pt)와 줄 바꾸는 폭의 한계(pt) */
+        private const val PASTE_TEXT_SIZE = 14f
+        private const val PASTE_TEXT_MAX_WRAP = 420f
+        /** 클립보드의 그림을 읽을 때 긴 변의 한계(픽셀) */
+        private const val PASTE_IMAGE_MAX_PX = 2400
         /** 대칭 미리 보기에서 없어질 원본의 진하기 */
         private const val FADED_ALPHA = 0.12f
         /** 보이는 쪽에서 이만큼 안쪽 쪽의 획은 화면용 모양을 쥐고 있는다 */

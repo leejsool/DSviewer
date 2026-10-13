@@ -621,6 +621,19 @@
                     app:iconPadding="0dp" />
 
                 <com.google.android.material.button.MaterialButton
+                    android:id="@+id/selectionImage"
+                    style="?attr/materialButtonTonalStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="2dp"
+                    app:icon="@drawable/ic_image"
+                    android:contentDescription="이미지로 복사·저장"
+                    android:minWidth="44dp"
+                    android:paddingHorizontal="10dp"
+                    android:tooltipText="이미지로 복사·저장"
+                    app:iconPadding="0dp" />
+
+                <com.google.android.material.button.MaterialButton
                     android:id="@+id/selectionDelete"
                     style="?attr/materialButtonTonalStyle"
                     android:layout_width="wrap_content"
@@ -678,6 +691,13 @@
             android:clickable="true"
             android:focusable="true"
             android:visibility="gone" />
+
+        <!-- 스낵바(실행 취소 알림·안내)가 뜨는 자리: 문서 칸 안에서만 뜨게 해서 아래·옆 툴바를 가리지 않는다 (SnackHost).
+             평소엔 비어 있고 터치를 받지 않아 아래 문서로 그대로 전달된다 -->
+        <androidx.coordinatorlayout.widget.CoordinatorLayout
+            android:id="@+id/snackHost"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
     </FrameLayout>
     </LinearLayout>
 
@@ -834,13 +854,24 @@
                 android:orientation="horizontal"
                 android:visibility="gone">
 
+                <!-- 이 앱 안에서 복사한 것 붙여넣기 (아이콘에 DS). 복사해 둔 것이 있을 때만 -->
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/pasteButton"
                     style="?attr/materialButtonTonalStyle"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:layout_marginEnd="6dp"
                     android:text="붙여넣기"
                     android:visibility="gone"
+                    app:icon="@drawable/ic_paste_ds" />
+
+                <!-- 기기 클립보드(다른 앱에서 복사한 그림·글) 붙여넣기 -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/pasteClipButton"
+                    style="?attr/materialButtonTonalStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="클립보드 붙여넣기"
                     app:icon="@drawable/ic_paste" />
             </LinearLayout>
 

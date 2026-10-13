@@ -203,6 +203,7 @@ class ViewerActivity : AppCompatActivity() {
         // 쪽 번호를 누르면 쪽 이동
         pageLabel.setOnClickListener { showGoToPage() }
         tools = ToolbarController(this, { docView }, textEditor, prefs, { current?.ink }, { shot.onPickEnded(); wrong.startPick() }, { wrong.onPickEnded(); shot.startPick() }, ::showOptionsDialog)
+        tools.onSelectionImage = { saver.showSelectionImageMenu(it) }
         tools.setupSelectionTools()
         tools.setupEraserTools()
         tools.setupToolbarDock()
@@ -221,6 +222,7 @@ class ViewerActivity : AppCompatActivity() {
         setupActions()
         onBackPressedDispatcher.addCallback(this, backCallback)
         timer.restore()
+        calc.restore()
 
         if (!handleIntent(intent)) {
             Toast.makeText(this, "열 파일이 없습니다.", Toast.LENGTH_SHORT).show()
@@ -362,6 +364,7 @@ class ViewerActivity : AppCompatActivity() {
         // 다른 앱으로 가거나 화면이 꺼지면 치던 글을 쪽에 넣어 둔다
         textEditor.commit()
         timer.onPause()
+        calc.onPause()
     }
 
     override fun onStop() {
@@ -861,7 +864,8 @@ class ViewerActivity : AppCompatActivity() {
         // 쪽을 넣고 빼는 중에는 기다린다 (PDF를 다 만든 뒤에야 기록이 생기므로)
         undoButton.setOnClickListener { if (current?.pagesBusy == false) { textEditor.commit(); docView.clearSelection(); ink?.undo() } }
         redoButton.setOnClickListener { if (current?.pagesBusy == false) { textEditor.commit(); docView.clearSelection(); ink?.redo() } }
-        saveButton.setOnClickListener { saver.showSaveMenu(it) }
+        // 저장 단추: 바로 덮어쓰기 저장 (다른 이름으로 저장·이미지로 저장은 ⋮ 메뉴의 '저장' 안)
+        saveButton.setOnClickListener { current?.let { saver.save(it, asNew = false) } }
         overview = PagePanel(findViewById(R.id.overviewPanel), lifecycleScope, overview = true, host = pageHost(true))
         overviewButton.setOnClickListener { toggleOverview() }
         insertButton.setOnClickListener { showInsertMenu(it) }
@@ -1521,6 +1525,7 @@ class ViewerActivity : AppCompatActivity() {
     private fun showMoreMenu(anchor: View) {
         val popup = PopupMenu(this, anchor)
         popup.menuInflater.inflate(R.menu.viewer, popup.menu)
+        popup.setForceShowIcon(true)
         popup.menu.findItem(R.id.action_save_menu).isEnabled = ink != null
         popup.menu.findItem(R.id.action_insert_page).isEnabled = ink != null
         popup.menu.findItem(R.id.action_go_page).isEnabled = (current?.pdf?.pageCount ?: 0) > 1
@@ -1537,6 +1542,7 @@ class ViewerActivity : AppCompatActivity() {
                 R.id.action_save_now -> current?.let { if (it.ink != null) saver.save(it, asNew = false) }
                 R.id.action_save_as -> current?.let { if (it.ink != null) saver.save(it, asNew = true) }
                 R.id.action_save_image -> current?.let { if (it.ink != null) saver.askExportImages(it) }
+                R.id.action_calc -> calc.toggle()
                 R.id.action_timer -> timer.open()
                 R.id.action_options -> showOptionsDialog(0)
                 R.id.action_about -> updater.show()
@@ -1650,7 +1656,7 @@ class ViewerActivity : AppCompatActivity() {
         textEditor.commit()
         if (!docView.startNotePlacement()) return
         placeHint?.dismiss()
-        placeHint = Snackbar.make(findViewById(R.id.docFrame), "포스트잇을 붙일 곳을 탭해 주세요.", Snackbar.LENGTH_INDEFINITE)
+        placeHint = SnackHost.make(this, "포스트잇을 붙일 곳을 탭해 주세요.", Snackbar.LENGTH_INDEFINITE)
             .setAction("취소") { docView.cancelNotePlacement() }
             .addCallback(object : Snackbar.Callback() {
                 // 밀어서 닫아도 붙이기를 그만둔다
@@ -1677,6 +1683,11 @@ class ViewerActivity : AppCompatActivity() {
         TimerController(this, findViewById(R.id.docFrame), prefs, ::toast)
     }
 
+    /** 공학용 계산기 (⋮ 메뉴 ▸ 계산기). 창·플로팅 단추가 문서 칸 위에 뜬다 */
+    private val calc: CalcController by lazy {
+        CalcController(this, findViewById(R.id.docFrame), prefs, ::toast)
+    }
+
     /** ⋮ ▸ 앱 정보 · 업데이트 */
     private val updater by lazy { Updater(this) }
 
@@ -1685,7 +1696,7 @@ class ViewerActivity : AppCompatActivity() {
 
     private val shot: ShotController by lazy {
         // 복사해 두면 '붙여넣기' 단추가 보이게 올가미 도구로 (툴바를 다시 짠다)
-        ShotController(this, { docView }, textEditor, progress, { current }, ::toast) {
+        ShotController(this, { docView }, textEditor, progress, { current }, ::toast, saver) {
             tools.selectTool(Tool.LASSO)
             pasteNotice("영역을 복사했습니다. 공부할 문서에서 '붙여넣기'를 누르세요.")
         }

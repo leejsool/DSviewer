@@ -109,6 +109,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var pathBar: View
     private lateinit var pathScroll: HorizontalScrollView
     private lateinit var pathText: TextView
+    private lateinit var crumbRow: LinearLayout
     private lateinit var upButton: View
     private lateinit var newFolderButton: View
     private lateinit var filterButton: MaterialButton
@@ -190,6 +191,7 @@ class MainActivity : AppCompatActivity() {
         pathBar = findViewById(R.id.pathBar)
         pathScroll = findViewById(R.id.pathScroll)
         pathText = findViewById(R.id.pathText)
+        crumbRow = findViewById(R.id.crumbRow)
         upButton = findViewById(R.id.upButton)
         newFolderButton = findViewById(R.id.newFolderButton)
         filterButton = findViewById(R.id.filterButton)
@@ -342,6 +344,7 @@ class MainActivity : AppCompatActivity() {
             Tab.RECENT -> {
                 progress.isVisible = false
                 barLabel = { n -> if (n == 0) "최근 연 문서" else "최근 연 문서 ${n}개" }
+                crumbs = null
                 show(recentRows(), "최근에 연 파일이 없습니다.\n'모든 문서'나 '폴더' 탭에서 문서를 골라 보세요.")
             }
             Tab.FAVORITE -> {
@@ -349,9 +352,9 @@ class MainActivity : AppCompatActivity() {
                 val rows = favoriteRows()
                 val path = FavFolders.path(FavFolders.list(this), favDir)
                 barLabel = { listOf("즐겨찾기").plus(path.map { it.name }).joinToString("  ›  ") }
+                crumbs = favCrumbs(path)
                 upButton.isEnabled = favDir != null
                 upButton.alpha = if (favDir != null) 1f else 0.3f
-                pathScroll.post { pathScroll.fullScroll(View.FOCUS_RIGHT) }
                 show(
                     rows,
                     if (favDir == null) "즐겨찾기한 문서가 없습니다.\n'최근 파일'에서 문서 옆의 ☆를 누르면 여기에 모입니다.\n오른쪽 위 폴더 단추로 즐겨찾기 폴더를 만들 수 있습니다."
@@ -360,6 +363,7 @@ class MainActivity : AppCompatActivity() {
             }
             Tab.ALL -> {
                 barLabel = { n -> if (n == 0) "기기의 문서" else "기기의 문서 ${n}개" }
+                crumbs = null
                 val key = sortKey()
                 load("기기에서 문서(PDF·한글·워드·파워포인트·글)를 찾지 못했습니다.") {
                     val rec = Recents.list(this).associateBy { it.uri }
@@ -373,7 +377,7 @@ class MainActivity : AppCompatActivity() {
                 val d = dir
                 val label = pathLabel(d)
                 barLabel = { label }
-                pathScroll.post { pathScroll.fullScroll(View.FOCUS_RIGHT) }
+                crumbs = folderCrumbs(d)
                 upButton.isEnabled = canGoUp()
                 upButton.alpha = if (canGoUp()) 1f else 0.3f
                 val key = sortKey()
@@ -408,7 +412,7 @@ class MainActivity : AppCompatActivity() {
         this.emptyMsg = if (rows.none { !it.isFolder } && all.any { !it.isFolder })
             "고른 형식(${groups.joinToString("·") { it.label }})의 문서가 없습니다.\n깔때기 단추에서 볼 형식을 고르세요."
         else emptyMsg
-        pathText.text = barLabel(rows.count { !it.isFolder })
+        renderPath(rows.count { !it.isFolder })
         applyFilter()
         onSelectionChanged()
         pendingScroll?.let { list.layoutManager?.onRestoreInstanceState(it) }
@@ -513,6 +517,114 @@ class MainActivity : AppCompatActivity() {
     private fun pathLabel(d: File?): String {
         if (d == null) return "저장소"
         return shortPath(d).split('/').filter { it.isNotEmpty() }.joinToString("  ›  ")
+    }
+
+    /** 경로 줄의 폴더 하나: 그림 · 이름 · 누르면 그 폴더로 (지금 들어간 폴더는 null) */
+    private class Crumb(val name: String, val icon: Drawable, val onClick: (() -> Unit)?)
+
+    /** 폴더·즐겨찾기 탭의 경로(맨 위 폴더 … 지금 폴더). 다른 탭은 null이라 글자만 보인다 */
+    private var crumbs: List<Crumb>? = null
+
+    /** 폴더 탭: 저장소 … 지금 폴더. 지금 폴더는 열린 폴더 그림 */
+    private fun folderCrumbs(d: File?): List<Crumb> {
+        if (d == null) return listOf(Crumb("저장소", FolderDrawable(DocColors.HWP, TapePattern.SOLID, open = true), null))
+        val chain = ArrayList<File>()
+        var f: File? = d
+        while (f != null) {
+            chain.add(0, f)
+            if (isRoot(f)) break
+            f = f.parentFile
+        }
+        return chain.mapIndexed { i, dir ->
+            val here = i == chain.lastIndex
+            val root = roots.firstOrNull { it.file.path == dir.path }
+            Crumb(
+                root?.name ?: dir.name,
+                FolderDrawable(if (root != null) DocColors.HWP else FOLDER_COLOR, TapePattern.SOLID, open = here),
+                if (here) null else ({ openDir(dir) }),
+            )
+        }
+    }
+
+    /** 즐겨찾기 탭: 즐겨찾기 … 지금 폴더 ([path]는 맨 위 폴더부터) */
+    private fun favCrumbs(path: List<FavFolder>): List<Crumb> {
+        val out = ArrayList<Crumb>()
+        out += Crumb("즐겨찾기", FolderDrawable(FOLDER_COLOR, TapePattern.SOLID, open = path.isEmpty()), if (path.isEmpty()) null else ({ openFavRoot() }))
+        path.forEachIndexed { i, f ->
+            val here = i == path.lastIndex
+            out += Crumb(f.name, FolderDrawable(f.color, f.pattern, open = here), if (here) null else ({ openFavDir(f.id) }))
+        }
+        return out
+    }
+
+    /**
+     * 목록 위 경로 줄을 그린다. 폴더·즐겨찾기 탭은 지금 폴더와 그 위 두 폴더를 폴더 그림과 이름으로 (더 위는 …),
+     * 다른 탭은 글자 하나. 위 폴더를 누르면 그 폴더로 간다
+     */
+    private fun renderPath(count: Int) {
+        val cs = crumbs
+        if (cs == null) {
+            crumbRow.isVisible = false
+            pathText.isVisible = true
+            pathText.text = barLabel(count)
+            return
+        }
+        pathText.isVisible = false
+        crumbRow.isVisible = true
+        crumbRow.removeAllViews()
+        val shown = cs.takeLast(CRUMBS_SHOWN)
+        if (cs.size > shown.size) crumbRow.addView(crumbSeparator("…"))
+        shown.forEachIndexed { i, c ->
+            if (i > 0 || cs.size > shown.size) crumbRow.addView(crumbSeparator("›"))
+            crumbRow.addView(crumbView(c, here = i == shown.lastIndex))
+        }
+        pathScroll.post { pathScroll.fullScroll(View.FOCUS_RIGHT) }
+    }
+
+    private fun crumbSeparator(text: String) = TextView(this).apply {
+        this.text = text
+        setTextColor(com.google.android.material.color.MaterialColors.getColor(this@MainActivity, com.google.android.material.R.attr.colorOutline, Color.GRAY))
+        setPadding(dp(4), 0, dp(4), 0)
+    }
+
+    /** 폴더 그림 + 이름. 지금 들어간 폴더는 굵게, 위 폴더는 누를 수 있다 */
+    private fun crumbView(c: Crumb, here: Boolean): View {
+        val onSurface = com.google.android.material.color.MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurface, Color.BLACK)
+        val variant = com.google.android.material.color.MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurfaceVariant, Color.DKGRAY)
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(dp(6), dp(4), dp(8), dp(4))
+            addView(ImageView(context).apply { setImageDrawable(c.icon) }, LinearLayout.LayoutParams(dp(if (here) 28 else 24), dp(if (here) 24 else 20)))
+            addView(TextView(context).apply {
+                text = c.name
+                setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyMedium)
+                setTextColor(if (here) onSurface else variant)
+                if (here) setTypeface(typeface, android.graphics.Typeface.BOLD)
+                isSingleLine = true
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                maxWidth = dp(180)
+                setPadding(dp(6), 0, 0, 0)
+            })
+            c.onClick?.let { go ->
+                val out = android.util.TypedValue()
+                theme.resolveAttribute(android.R.attr.selectableItemBackground, out, true)
+                setBackgroundResource(out.resourceId)
+                contentDescription = "${c.name} 폴더로 가기"
+                setOnClickListener { go() }
+            } ?: run { contentDescription = "지금 ${c.name} 폴더" }
+        }
+    }
+
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+    /** 즐겨찾기 맨 위로 (지금 폴더에서 한꺼번에 올라간다) */
+    private fun openFavRoot() {
+        scrollStates["fav:${favDir ?: ""}"] = list.layoutManager?.onSaveInstanceState()
+        setFavDir(null)
+        pendingScroll = scrollStates.remove("fav:")
+        adapter.submit(emptyList())
+        refresh()
     }
 
     // ================= 정렬 · 보기 =================
@@ -1774,6 +1886,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
+        /** 경로 줄에 폴더 그림으로 보일 폴더 수 (지금 폴더 + 그 위 두 폴더) */
+        private const val CRUMBS_SHOWN = 3
+
         /** 자동 저장본은 마지막 저장 뒤 이만큼(30일) 지나면 지운다 */
         private const val DRAFT_KEEP_MS = 30L * 24 * 3600 * 1000
         /** 이번 실행에서 복구할 필기를 이미 찾아봤는지 */

@@ -40,13 +40,15 @@ internal class ToolbarController(
     private val ink: () -> InkDocument?,
     /** 오답 ▸ 오답 담기 */
     private val startWrongPick: () -> Unit,
-    /** 올가미 ▸ 영역 스크린샷 */
+    /** 올가미 ▸ 영역 스크린샷 (보낼 곳은 시작할 때 고른다: [ShotController]) */
     private val startShot: () -> Unit,
     /** 옵션 창 (⋮ ▸ 옵션, 툴바 손잡이 톡) */
     private val showOptions: (start: Int) -> Unit,
 
 ) {
     private val docView get() = docViewOf()
+    /** 올가미 선택 막대의 '이미지' 단추: 고른 부분을 이미지로 복사·저장하는 메뉴를 띄운다 (뷰어가 채운다) */
+    var onSelectionImage: (anchor: View) -> Unit = {}
     /** 모든 칸의 문서 화면 (겹쳐 뜬 줄이 가리는 만큼을 칸마다 따로 알려 줄 때) */
     var allViews: () -> List<DocumentView> = { listOf(docView) }
     /** 겹쳐 뜬 줄들의 둘레를 담는 틀 (칸의 자리를 이 틀 기준으로 재려고) */
@@ -67,6 +69,7 @@ internal class ToolbarController(
     private val shapeRow: LinearLayout = findViewById(R.id.shapeRow)
     private val lassoRow: View = findViewById(R.id.lassoRow)
     private val pasteButton: View = findViewById(R.id.pasteButton)
+    private val pasteClipButton: View = findViewById(R.id.pasteClipButton)
     private val selectionBar: View = findViewById(R.id.selectionBar)
     lateinit var toolButtons: Map<Tool, ImageButton>
     private lateinit var dock: ToolbarDock
@@ -106,6 +109,7 @@ internal class ToolbarController(
             pasteButton.visibility = View.VISIBLE
             Toast.makeText(activity, "복사했습니다. '붙여넣기'로 원하는 페이지에 붙일 수 있습니다.", Toast.LENGTH_SHORT).show()
         }
+        findViewById<View>(R.id.selectionImage).setOnClickListener { onSelectionImage(it) }
         findViewById<View>(R.id.selectionColor).setOnClickListener { v ->
             val initial = docView.selectionColor ?: return@setOnClickListener
             ColorPickerPopup(activity, initial, recentColors(Tool.PEN)) { c, done ->
@@ -116,6 +120,7 @@ internal class ToolbarController(
             }.show(v)
         }
         pasteButton.setOnClickListener { docView.pasteClipboard() }
+        pasteClipButton.setOnClickListener { docView.pasteSystemClipboard() }
 
         // 자유 선택 / 네모 선택 / 대상 선택 (고르는 곳은 옵션 줄)
         val lassoMode = prefs.getInt("lassoMode", if (prefs.getBoolean("lassoRect", false)) 1 else 0)
@@ -302,7 +307,14 @@ internal class ToolbarController(
         (pasteButton as MaterialButton).apply {
             text = if (v) "" else "붙여넣기"
             iconPadding = if (v) 0 else px(8)
-            tooltipText = "붙여넣기"
+            tooltipText = "이 앱에서 복사한 것 붙여넣기 (DS)"
+            contentDescription = tooltipText
+        }
+        (pasteClipButton as MaterialButton).apply {
+            text = if (v) "" else "클립보드 붙여넣기"
+            iconPadding = if (v) 0 else px(8)
+            tooltipText = "클립보드(다른 앱에서 복사한 그림·글) 붙여넣기"
+            contentDescription = tooltipText
         }
         updateOverlayInsets()
     }
