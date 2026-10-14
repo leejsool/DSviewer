@@ -1,0 +1,636 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>DSnote 수학 선생님 사용 안내서</title>
+<style>
+@page { size: A4; margin: 0; }
+:root{
+  --brand:#009CD9; --brand-d:#0A5F86; --brand-l:#E6F5FB; --ink:#1E2A36; --mute:#5B6B7A;
+  --line:#D6E2EA; --acc:#F28C28; --acc-l:#FFF1E2; --red:#E5484D; --green:#2E9E6B;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:#fff}
+body{font-family:"Malgun Gothic","맑은 고딕","Apple SD Gothic Neo",sans-serif;color:var(--ink);font-size:10.4pt;line-height:1.55;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.page{width:210mm;height:297mm;padding:15mm 15mm 13mm;position:relative;overflow:hidden;page-break-after:always;background:#fff}
+.page:last-child{page-break-after:auto}
+.foot{position:absolute;left:15mm;right:15mm;bottom:7mm;display:flex;justify-content:space-between;font-size:8pt;color:var(--mute);border-top:1px solid var(--line);padding-top:2mm}
+.foot b{color:var(--brand-d)}
+
+/* section header */
+.hd{display:flex;align-items:center;gap:4mm;margin-bottom:4mm}
+.num{flex:none;width:12mm;height:12mm;border-radius:50%;background:var(--brand);color:#fff;font-weight:800;font-size:17pt;display:flex;align-items:center;justify-content:center}
+.hd h2{margin:0;font-size:19pt;line-height:1.2;color:var(--ink);letter-spacing:-.3px}
+.hd small{display:block;font-size:10pt;font-weight:400;color:var(--mute);margin-top:1mm}
+h3{margin:5mm 0 1.5mm;font-size:12.2pt;color:var(--brand-d)}
+p{margin:0 0 2mm}
+.lead{font-size:11.4pt;background:var(--brand-l);border-left:1.6mm solid var(--brand);padding:3mm 4mm;border-radius:0 2mm 2mm 0;margin-bottom:4mm}
+ul{margin:0 0 2mm;padding-left:5mm} li{margin-bottom:1mm}
+b.k{color:var(--brand-d)}
+.kbd{display:inline-block;border:1px solid #B8C9D4;background:#F4F8FA;border-radius:1.2mm;padding:0 1.6mm;font-size:9.2pt;font-weight:700;color:var(--brand-d);white-space:nowrap}
+.cols{display:flex;gap:5mm}.cols>*{flex:1;min-width:0}
+.fig{border:1px solid var(--line);border-radius:2.5mm;background:#FBFDFE;padding:2.5mm;text-align:center}
+.fig .cap{font-size:8.6pt;color:var(--mute);margin-top:1mm}
+.tip{background:var(--acc-l);border-left:1.6mm solid var(--acc);border-radius:0 2mm 2mm 0;padding:2.4mm 4mm;margin:3mm 0;font-size:9.8pt}
+.tip b{color:#B35A00}
+.note{font-size:8.8pt;color:var(--mute)}
+.steps{counter-reset:s;list-style:none;padding:0;margin:0 0 2mm}
+.steps>li{counter-increment:s;position:relative;padding-left:8mm;margin-bottom:2mm}
+.steps>li::before{content:counter(s);position:absolute;left:0;top:.3mm;width:5.4mm;height:5.4mm;border-radius:50%;background:var(--brand-d);color:#fff;font-size:8.6pt;font-weight:700;display:flex;align-items:center;justify-content:center}
+.card{border:1px solid var(--line);border-radius:2.5mm;padding:3mm 3.5mm;background:#fff}
+.card h4{margin:0 0 1mm;font-size:10.6pt;color:var(--brand-d)}
+.card p{font-size:9.4pt;margin:0;color:#34434F;line-height:1.5}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:3mm}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:3mm}
+table{border-collapse:collapse;width:100%;font-size:9.4pt}
+th,td{border:1px solid var(--line);padding:1.7mm 2.4mm;text-align:left;vertical-align:top}
+th{background:var(--brand-l);color:var(--brand-d)}
+.pill{display:inline-block;background:var(--brand);color:#fff;border-radius:10mm;padding:0 2.6mm;font-size:8.6pt;font-weight:700;margin-right:1mm}
+.shape{border:1px solid var(--line);border-radius:2mm;text-align:center;padding:1.5mm 0 1mm;background:#fff;font-size:8.4pt;color:#34434F}
+.shape svg{width:100%;height:11.5mm;display:block}
+.shape svg *{vector-effect:non-scaling-stroke}
+
+/* cover */
+.cover{padding:0;background:linear-gradient(160deg,#00A9EA 0%,#0A6FA0 55%,#084B6E 100%);color:#fff}
+.cover .in{position:absolute;inset:0;padding:24mm 20mm}
+.cover .tag{display:inline-block;border:1px solid rgba(255,255,255,.6);border-radius:10mm;padding:1mm 4mm;font-size:10pt;letter-spacing:.5px}
+.cover h1{font-size:44pt;line-height:1.1;margin:8mm 0 3mm;letter-spacing:-1px}
+.cover h1 span{font-weight:300}
+.cover .sub{font-size:17pt;line-height:1.45;opacity:.96;font-weight:300}
+.cover .six{position:absolute;left:20mm;right:20mm;bottom:20mm;display:grid;grid-template-columns:repeat(3,1fr);gap:3mm}
+.cover .six div{background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.3);border-radius:3mm;padding:3mm 3.4mm;font-size:10pt;line-height:1.4}
+.cover .six b{display:block;font-size:11.4pt;margin-bottom:.6mm}
+.cover .ver{position:absolute;right:20mm;top:24mm;font-size:10pt;opacity:.85}
+</style>
+</head>
+<body>
+
+<!-- ================= 표지 ================= -->
+<section class="page cover">
+  <div class="in">
+    <span class="tag">수학 선생님을 위한 태블릿 판서 앱</span>
+    <div class="ver">버전 1.0.6 · 2026.10</div>
+    <h1>DS<span>note</span><br>사용 안내서</h1>
+    <p class="sub">전자칠판의 손맛 그대로,<br>함수·도형은 깔끔하게, 수업 자료는 한곳에.</p>
+
+    <!-- 태블릿 일러스트 -->
+    <svg viewBox="0 0 520 300" style="position:absolute;left:20mm;top:104mm;width:170mm">
+      <rect x="4" y="4" width="512" height="292" rx="22" fill="#0b2f44" stroke="#9fdcf5" stroke-width="2" stroke-opacity=".6"/>
+      <rect x="18" y="18" width="484" height="264" rx="10" fill="#fff"/>
+      <!-- toolbar -->
+      <rect x="18" y="18" width="484" height="26" rx="10" fill="#E6F5FB"/>
+      <g fill="#0A5F86"><circle cx="40" cy="31" r="5"/><circle cx="62" cy="31" r="5" opacity=".6"/><rect x="82" y="26" width="22" height="10" rx="5"/><circle cx="122" cy="31" r="5" opacity=".6"/><circle cx="144" cy="31" r="5" opacity=".6"/></g>
+      <!-- grid -->
+      <g stroke="#E3EEF4" stroke-width="1">
+        <path d="M40 60V270M80 60V270M120 60V270M160 60V270M200 60V270M240 60V270M280 60V270M320 60V270M360 60V270M400 60V270M440 60V270M480 60V270"/>
+        <path d="M30 80H500M30 120H500M30 160H500M30 200H500M30 240H500"/>
+      </g>
+      <!-- axes -->
+      <g stroke="#1E2A36" stroke-width="2"><path d="M30 200H500"/><path d="M260 56V274"/></g>
+      <!-- parabola + filled region -->
+      <path d="M150 90 Q260 330 370 90" fill="none" stroke="#009CD9" stroke-width="4" stroke-linecap="round"/>
+      <path d="M190 160 Q260 292 330 160 Z" fill="#F28C28" opacity=".45"/>
+      <path d="M215 200 L215 234 M305 200 L305 234" stroke="#999" stroke-dasharray="4 4"/>
+      <!-- fold line -->
+      <path d="M260 56V274" stroke="#2E9E6B" stroke-width="2.5" stroke-dasharray="7 5"/>
+      <circle cx="260" cy="60" r="6" fill="#2E9E6B"/><circle cx="260" cy="270" r="6" fill="#2E9E6B"/>
+      <!-- triangle -->
+      <path d="M390 130 L450 130 L390 80 Z" fill="none" stroke="#E5484D" stroke-width="3.5" stroke-linejoin="round"/>
+      <path d="M100 80 L60 130 L100 130 Z" fill="none" stroke="#E5484D" stroke-width="3.5" stroke-linejoin="round" stroke-dasharray="7 5" opacity=".7"/>
+      <text x="410" y="195" font-size="17" fill="#1E2A36" font-family="Malgun Gothic" font-style="italic">y = x² − 4</text>
+    </svg>
+
+    <div class="six">
+      <div><b>① 손으로·비벼서 지우기</b>전자칠판 그대로</div>
+      <div><b>② 보정 펜</b>도형·함수를 반듯하게</div>
+      <div><b>③ 대칭이동·접기</b>|f(x)|, f(|x|)까지</div>
+      <div><b>④ 색칠하기</b>영역 한 번에 채우기</div>
+      <div><b>⑤ 나눠 보기</b>개념+문제, 문제+해설</div>
+      <div><b>⑥ 스크랩</b>중요 문제 보관·판서 공간</div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 2. 개요 ================= -->
+<section class="page">
+  <div class="hd"><div class="num">★</div><h2>이런 선생님께 권합니다<small>DSnote는 PDF·한글·PPT 자료에 바로 판서하는 수업용 필기 앱입니다</small></h2></div>
+
+  <p class="lead">시험지·교재 PDF를 열고 <b>그 위에 그대로 필기</b>합니다. 필기는 PDF에 저장되어 다른 PDF 앱에서도 그대로 보이고, 수업 후 학생에게 바로 나눠 줄 수 있습니다.</p>
+
+  <div class="grid2">
+    <div class="card"><h4>① 손으로 지우기 + 비벼서 지우기</h4><p>전자칠판에서 쓰던 <b>손바닥 지우기</b>와, 펜을 든 채 <b>쓱쓱 비비면 지워지는</b> 긁어서 지우기. 도구를 바꿀 필요가 없습니다.</p></div>
+    <div class="card"><h4>② 보정 펜으로 도형·함수</h4><p>삐뚤빼뚤 그려도 <b>일차~사차 함수, 지수·로그, 사인·탄젠트, 쌍곡선, 원·삼각형·사각형</b>으로 반듯하게 다듬어 줍니다.</p></div>
+    <div class="card"><h4>③ 대칭이동·접기</h4><p>올가미로 고른 그래프를 <b>선대칭 복사·이동·접기</b>. y=|f(x)|, y=f(|x|) 그래프를 몇 초 만에 만듭니다.</p></div>
+    <div class="card"><h4>④ 도형에 색칠하기</h4><p>닫힌 영역을 <b>톡 누르면 색이 채워지고</b>, 빗금·격자 무늬도 됩니다. 글씨는 가리지 않습니다.</p></div>
+    <div class="card"><h4>⑤ 나눠 보기 · 동시 발표</h4><p>한 문서를 둘로 나누거나 <b>두 문서를 나란히</b>. 개념+문제, 문제+해설, 두 학생이 각자 칸에서 풀이 발표.</p></div>
+    <div class="card"><h4>⑥ 문제 스크랩</h4><p>중요 문제를 영역으로 골라 <b>스크랩 쪽에 모으고</b>, 그 아래에 <b>풀이 공간이 바로 생깁니다.</b> 문제지 PDF로 내보내기까지.</p></div>
+  </div>
+
+  <h3>이 안내서에서 기능을 찾는 곳</h3>
+  <table>
+    <tr><th style="width:30%">기능</th><th>어디서 누르나요</th></tr>
+    <tr><td>지우기 옵션</td><td>툴바 <b>지우개</b>를 고르면 나타나는 옵션 줄(획/영역 지우개 · 긁어서 지우기 · 손바닥 지우기)</td></tr>
+    <tr><td>도형·함수</td><td>툴바 <b>보정 펜(f(x))</b> → 나타나는 도형 줄에서 일차·이차·원·삼각형 … 중 고르기</td></tr>
+    <tr><td>대칭</td><td><b>올가미</b>로 그래프 선택 → 선택 막대의 <b>대칭</b></td></tr>
+    <tr><td>색칠</td><td>툴바 <b>채우기</b>(형광펜 오른쪽) → 칠하기 / 자유 영역 / 무늬</td></tr>
+    <tr><td>나눠 보기</td><td>위쪽 줄 <b>보기 ▾ → 분할 보기</b></td></tr>
+    <tr><td>스크랩</td><td>위쪽 줄 <b>스크랩 ▾ → 스크랩하기</b> (올가미 펼침 창에도 있음)</td></tr>
+    <tr><td>빈 쪽·좌표평면</td><td>위쪽 줄 <b>삽입 ▾ → 빈 쪽</b> (흰 바탕·모눈·줄·점 격자·<b>좌표평면</b> …)</td></tr>
+  </table>
+
+  <h3>시작하기</h3>
+  <ol class="steps">
+    <li>안드로이드 태블릿(전자칠판 포함)에서 <b>DSnote.apk</b>를 받아 설치합니다 (알 수 없는 앱 설치 허용 필요).<br><span class="note">최신 버전 주소: github.com/leejsool/DSviewer/releases/latest/download/DSnote.apk</span></li>
+    <li>앱을 열고 PDF · 한글(HWP) · PPT · 워드 · 그림 파일을 고르면 <b>기기 안에서 변환해 바로 판서</b>할 수 있습니다.</li>
+    <li>⋮ 메뉴 ▸ <b>앱 정보 · 업데이트</b>에서 새 버전 확인, <b>건의 · 오류 신고</b>도 바로 보낼 수 있습니다.</li>
+  </ol>
+  <div class="foot"><span><b>DSnote</b> 수학 선생님 사용 안내서</span><span>2</span></div>
+</section>
+
+<!-- ================= 3. 지우기 ================= -->
+<section class="page">
+  <div class="hd"><div class="num">1</div><h2>손으로 지우기 · 비벼서 지우기<small>전자칠판에서 쓰던 방식 그대로 — 도구를 바꾸지 않습니다</small></h2></div>
+
+  <p class="lead">수업 중 가장 많이 하는 동작은 <b>쓰고, 지우고, 다시 쓰기</b>입니다. DSnote는 펜을 든 채로, 혹은 손바닥으로 바로 지울 수 있어 흐름이 끊기지 않습니다.</p>
+
+  <div class="cols" style="gap:3mm">
+    <div class="fig">
+      <svg viewBox="0 0 170 110" width="100%">
+        <rect x="0" y="0" width="170" height="110" fill="#fff"/>
+        <text x="12" y="40" font-size="18" fill="#1E2A36" font-style="italic" font-family="Malgun Gothic">x² − 4x + 3 = 0</text>
+        <text x="12" y="76" font-size="18" fill="#1E2A36" font-style="italic" font-family="Malgun Gothic">(x−1)(x−3)</text>
+        <path d="M10 18 L70 62 L12 40 L72 76 L14 62 L78 92 L26 80 L80 100" fill="none" stroke="#E5484D" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" opacity=".85"/>
+        <circle cx="84" cy="98" r="3.5" fill="#E5484D"/>
+      </svg>
+      <div class="cap"><b>긁어서(비벼서) 지우기</b><br>펜으로 좌우·위아래로 쓱쓱</div>
+    </div>
+    <div class="fig">
+      <svg viewBox="0 0 170 110" width="100%">
+        <rect width="170" height="110" fill="#fff"/>
+        <text x="12" y="40" font-size="18" fill="#1E2A36" font-style="italic" font-family="Malgun Gothic">x² − 4x + 3 = 0</text>
+        <text x="12" y="76" font-size="18" fill="#1E2A36" font-style="italic" font-family="Malgun Gothic">(x−1)(x−3)</text>
+        <ellipse cx="110" cy="58" rx="34" ry="30" fill="#F28C28" opacity=".35"/>
+        <g fill="none" stroke="#B35A00" stroke-width="2.4" stroke-linecap="round" opacity=".8"><path d="M130 30 Q150 56 130 86"/><path d="M118 24 Q140 56 118 92" opacity=".5"/></g>
+        <text x="90" y="62" font-size="9" fill="#7a3d00" text-anchor="middle" font-weight="700">손바닥</text>
+      </svg>
+      <div class="cap"><b>손바닥으로 지우기</b><br>손으로 문지른 자리만 지워짐</div>
+    </div>
+    <div class="fig">
+      <svg viewBox="0 0 170 110" width="100%">
+        <rect width="170" height="110" fill="#fff"/>
+        <text x="12" y="40" font-size="18" fill="#1E2A36" font-style="italic" font-family="Malgun Gothic" opacity=".0">x² − 4x + 3 = 0</text>
+        <text x="12" y="76" font-size="18" fill="#1E2A36" font-style="italic" font-family="Malgun Gothic" opacity=".0">(x−1)(x−3)</text>
+        <text x="85" y="62" font-size="11" fill="#9aa9b5" text-anchor="middle">깨끗한 판서 공간</text>
+        <rect x="6" y="8" width="158" height="94" rx="4" fill="none" stroke="#C9D8E2" stroke-dasharray="4 4"/>
+      </svg>
+      <div class="cap"><b>지운 뒤</b><br>바로 이어서 쓰기</div>
+    </div>
+  </div>
+
+  <h3>긁어서(비벼서) 지우기</h3>
+  <ul>
+    <li>펜을 든 채로 지우고 싶은 글씨 위를 <b>좌우나 위아래로 마구 긁으면</b> 긁은 자리가 지워집니다. 지우개로 바꿀 필요가 없습니다.</li>
+    <li>글씨를 쓰다가 생기는 <b>ㅗ, ㅇ 같은 획은 지우지 않도록</b> 여러 번 오간 데다 아래 필기를 실제로 가로지른 경우에만 반응합니다. 지울 것이 없으면 보통 선으로 남습니다.</li>
+    <li>긁은 선은 남지 않고, 실수로 지워졌어도 <b>실행 취소 한 번</b>이면 돌아옵니다.</li>
+    <li>켜고 끄기: 지우개 옵션 줄의 <span class="kbd">긁어서 지우기</span> (기본 켜짐)</li>
+  </ul>
+
+  <h3>손바닥으로 지우기 <span class="note">— 전자칠판 방식</span></h3>
+  <ul>
+    <li><span class="kbd">손가락으로 쓰기</span>를 켠 상태에서, <b>손바닥(주먹) 크기로 닿거나 손가락 3개 이상이 한꺼번에 닿으면</b> 쓰던 획을 버리고 닿은 부분을 지웁니다.</li>
+    <li>펜과 손가락을 함께 쓰는 선생님은 <b>펜으로 쓰고 손으로 지우는</b> 칠판 습관 그대로 수업할 수 있습니다.</li>
+    <li>손가락 필기를 끈 상태에서는 작동하지 않아, 펜으로만 쓰는 분은 손바닥을 짚고 써도 글씨가 지워지지 않습니다.</li>
+    <li>켜고 끄기: 지우개 옵션 줄의 <span class="kbd">손바닥 지우기</span>. 손가락으로 쓰기가 꺼져 있을 때 누르면 <b>함께 켤지 물어봅니다.</b></li>
+  </ul>
+
+  <h3>지우개 종류</h3>
+  <div class="grid3">
+    <div class="card"><h4>획 지우개</h4><p>닿은 선 하나를 통째로.</p></div>
+    <div class="card"><h4>영역 지우개</h4><p>닿은 부분만 잘라 냄. 크기 조절 가능.</p></div>
+    <div class="card"><h4>형광펜만 · 쪽 전체</h4><p>‘형광펜만’을 켜면 형광펜만 지우고, 쪽의 필기 모두 지우기로 한 번에 비웁니다.</p></div>
+  </div>
+  <div class="tip"><b>수업 팁</b> <b>영역 지우개</b>의 크기를 크게 해 두면 칠판 한 면을 시원하게 닦을 수 있습니다. 지운 직후에는 화면 아래에 <b>실행 취소</b> 알림이 떠서 안심하고 지울 수 있습니다.</div>
+  <div class="foot"><span><b>DSnote</b> 수학 선생님 사용 안내서</span><span>3</span></div>
+</section>
+
+<!-- ================= 4. 보정 펜 ================= -->
+<section class="page">
+  <div class="hd"><div class="num">2</div><h2>보정 펜으로 도형 · 함수 그리기<small>대충 그려도 반듯하게 — 칠판식 과장도 살려 줍니다</small></h2></div>
+
+  <p class="lead">툴바의 <b>보정 펜(f(x))</b>을 고르고 <b>한 획으로</b> 그리면, 놓는 순간 도형 줄에서 고른 종류에 맞춰 다듬어집니다. 종류 안의 세부 모양(지수 ↔ 로그, 사인 ↔ 코사인, 쌍곡선의 반대쪽 가지 등)은 그린 모양을 보고 알아서 정합니다.</p>
+
+  <div class="cols" style="gap:4mm;align-items:stretch">
+    <div class="fig" style="flex:1.05;padding:2mm">
+      <svg viewBox="0 0 200 84" width="100%">
+        <g stroke="#DCE7EE" stroke-width="1"><path d="M0 42H200M100 0V84"/></g>
+        <path d="M18 76 C 40 20, 52 6, 70 30 C 84 50, 96 80, 116 62 C 138 42, 150 20, 184 10" fill="none" stroke="#9AA9B5" stroke-width="2.2" stroke-dasharray="3 3"/>
+        <text x="100" y="82" font-size="8" fill="#6b7b88" text-anchor="middle">손으로 대충 그린 선</text>
+      </svg>
+      <div style="font-size:13pt;color:var(--brand);line-height:1">⬇</div>
+      <svg viewBox="0 0 200 84" width="100%">
+        <g stroke="#DCE7EE" stroke-width="1"><path d="M0 42H200M100 0V84"/></g>
+        <path d="M18 80 C 52 -8, 62 -6, 84 40 C 100 76, 112 82, 132 52 C 150 24, 164 14, 184 6" fill="none" stroke="#009CD9" stroke-width="3.4" stroke-linecap="round"/>
+        <text x="100" y="82" font-size="8" fill="#0A5F86" text-anchor="middle" font-weight="700">삼차함수로 보정 (극값 위치 유지)</text>
+      </svg>
+    </div>
+    <div style="flex:1.25">
+      <h3 style="margin-top:0">이런 점이 수학 수업에 맞습니다</h3>
+      <ul>
+        <li><b>진짜 함수 + 칠판식 과장</b>: 삼차·사차는 극점 위치를 유지하고 바깥 팔을 늘려, 좁은 칠판에도 모양이 잘 보입니다.</li>
+        <li><b>점선 / 실선</b>: 보정 펜 줄 맨 앞 칸으로 모든 도형을 점선으로 그릴 수 있습니다.</li>
+        <li><b>보조선 자동</b>: 쌍곡선·지수/로그·탄젠트는 <b>점근선</b>(안 그림/점선), 사인·코사인은 <b>축</b>(안 그림/점선/실선)을 고를 수 있습니다.</li>
+        <li><b>색·굵기</b>는 펜과 같은 칸을 씁니다. 결과는 다른 필기처럼 선택·이동·크기 조절됩니다.</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>그릴 수 있는 것들 <span class="note">— 도형 줄에서 종류를 고른 뒤 한 획으로</span></h3>
+  <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2mm">
+    <div class="shape"><svg viewBox="0 0 80 60"><path d="M8 50 L72 10" fill="none" stroke="#0A5F86" stroke-width="2.6" stroke-linecap="round"/></svg>일차</div>
+    <div class="shape"><svg viewBox="0 0 80 60"><path d="M10 10 Q40 82 70 10" fill="none" stroke="#0A5F86" stroke-width="2.6" stroke-linecap="round"/></svg>이차</div>
+    <div class="shape"><svg viewBox="0 0 80 60"><path d="M8 54 C32 -8 48 68 72 6" fill="none" stroke="#0A5F86" stroke-width="2.6" stroke-linecap="round"/></svg>삼차</div>
+    <div class="shape"><svg viewBox="0 0 80 60"><path d="M6 8 C20 72 34 52 40 28 C46 52 60 72 74 8" fill="none" stroke="#0A5F86" stroke-width="2.6" stroke-linecap="round"/></svg>사차</div>
+    <div class="shape"><svg viewBox="0 0 80 60"><path d="M6 54 C40 52 56 42 72 6" fill="none" stroke="#0A5F86" stroke-width="2.6" stroke-linecap="round"/><path d="M4 56 H78" stroke="#009CD9" stroke-dasharray="3 3" stroke-width="1.6"/></svg>지수·로그</div>
+    <div class="shape"><svg viewBox="0 0 80 60"><path d="M4 30 C14 -4 26 -4 40 30 S66 64 76 30" fill="none" stroke="#0A5F86" stroke-width="2.6" stroke-linecap="round"/><path d="M2 30 H78" stroke="#009CD9" stroke-dasharray="3 3" stroke-width="1.6"/></svg>사인·코사인</div>
+    <div class="shape"><svg viewBox="0 0 80 60"><path d="M14 54 C18 38 30 36 40 30 C50 24 62 22 66 6" fill="none" stroke="#0A5F86" stroke-width="2.6" stroke-linecap="round"/><path d="M10 2 V58 M70 2 V58" stroke="#009CD9" stroke-dasharray="3 3" stroke-width="1.6"/></svg>탄젠트</div>
+
+    <div class="shape"><svg viewBox="0 0 80 60"><path d="M72 6 C52 22 52 38 72 54 M8 6 C28 22 28 38 8 54" fill="none" stroke="#0A5F86" stroke-width="2.6" stroke-linecap="round"/><path d="M6 6 L74 54 M6 54 L74 6" stroke="#009CD9" stroke-dasharray="3 3" stroke-width="1.4"/></svg>쌍곡선</div>
+    <div class="shape"><svg viewBox="0 0 80 60"><path d="M6 46 C14 8 26 8 38 40 C48 62 62 56 74 52" fill="none" stroke="#0A5F86" stroke-width="2.6" stroke-linecap="round"/><path d="M2 54 H78" stroke="#009CD9" stroke-dasharray="3 3" stroke-width="1.6"/></svg>이차×지수</div>
+    <div class="shape"><svg viewBox="0 0 80 60"><circle cx="40" cy="30" r="22" fill="none" stroke="#0A5F86" stroke-width="2.6"/></svg>원</div>
+    <div class="shape"><svg viewBox="0 0 80 60"><ellipse cx="40" cy="30" rx="32" ry="19" fill="none" stroke="#0A5F86" stroke-width="2.6"/></svg>타원</div>
+    <div class="shape"><svg viewBox="0 0 80 60"><path d="M15 52 L15 8 A44 44 0 0 1 59 52 Z" fill="none" stroke="#0A5F86" stroke-width="2.6" stroke-linejoin="round"/></svg>부채꼴</div>
+    <div class="shape"><svg viewBox="0 0 80 60"><path d="M10 44 A30 30 0 0 1 70 44 Z" fill="none" stroke="#0A5F86" stroke-width="2.6" stroke-linejoin="round"/></svg>반원</div>
+    <div class="shape"><svg viewBox="0 0 80 60"><circle cx="40" cy="30" r="22" fill="none" stroke="#0A5F86" stroke-width="2.6"/><path d="M40 30 H62" stroke="#0A5F86" stroke-width="2.2"/><circle cx="40" cy="30" r="2.4" fill="#0A5F86"/></svg>중심·반지름</div>
+
+    <div class="shape"><svg viewBox="0 0 80 60"><path d="M8 52 L72 52 L28 8 Z" fill="none" stroke="#0A5F86" stroke-width="2.6" stroke-linejoin="round"/></svg>일반삼각형</div>
+    <div class="shape"><svg viewBox="0 0 80 60"><path d="M40 6 L70 54 L10 54 Z" fill="none" stroke="#0A5F86" stroke-width="2.6" stroke-linejoin="round"/></svg>정·이등변삼각형</div>
+    <div class="shape"><svg viewBox="0 0 80 60"><path d="M14 6 V54 H68 Z" fill="none" stroke="#0A5F86" stroke-width="2.6" stroke-linejoin="round"/><path d="M14 44 H24 V54" fill="none" stroke="#0A5F86" stroke-width="1.6"/></svg>직각(이등변)삼각형</div>
+    <div class="shape"><svg viewBox="0 0 80 60"><path d="M12 12 L68 8 L72 50 L8 54 Z" fill="none" stroke="#0A5F86" stroke-width="2.6" stroke-linejoin="round"/></svg>일반사각형</div>
+    <div class="shape"><svg viewBox="0 0 80 60"><rect x="16" y="8" width="48" height="44" fill="none" stroke="#0A5F86" stroke-width="2.6" stroke-linejoin="round"/></svg>정사각·직사각형</div>
+    <div class="shape"><svg viewBox="0 0 80 60"><path d="M40 4 L70 30 L40 56 L10 30 Z" fill="none" stroke="#0A5F86" stroke-width="2.6" stroke-linejoin="round"/></svg>마름모</div>
+    <div class="shape"><svg viewBox="0 0 80 60"><path d="M22 10 L74 10 L58 50 L6 50 Z" fill="none" stroke="#0A5F86" stroke-width="2.6" stroke-linejoin="round"/></svg>평행사변형</div>
+  </div>
+
+  <h3>보조선도 한 번에 <span class="note">— 보정 펜 줄 맨 앞</span></h3>
+  <div class="cols" style="gap:3mm">
+    <div class="fig" style="flex:none;width:56mm;padding:1.5mm">
+      <svg viewBox="0 0 200 70" width="100%">
+        <path d="M10 44 Q50 6 96 30" stroke="#0A5F86" stroke-width="2.4" fill="none"/><path d="M86 30 L97 31 L91 40" fill="none" stroke="#0A5F86" stroke-width="2.4" stroke-linejoin="round"/>
+        <path d="M118 52 Q150 20 184 52" stroke="#0A5F86" stroke-width="2.4" fill="none" stroke-dasharray="5 4"/>
+        <path d="M118 52 V58 M184 52 V58" stroke="#0A5F86" stroke-width="2"/>
+        <text x="52" y="62" font-size="8" text-anchor="middle" fill="#5B6B7A">곡선 화살표</text>
+        <text x="151" y="68" font-size="8" text-anchor="middle" fill="#5B6B7A">길이 표시(점선)</text>
+      </svg>
+    </div>
+    <div style="font-size:9.6pt">
+      <b>직선·곡선·돼지꼬리 화살표</b>, 그리고 두 점 사이 <b>길이 표시</b>(가운데 비움)를 실선/점선으로 그을 수 있습니다. 변의 길이 표시, 이동 방향 표시, 풀이 흐름 화살표에 좋습니다.
+    </div>
+  </div>
+  <div class="tip"><b>수업 팁</b> 좌표평면이 필요하면 <span class="kbd">삽입 ▾ → 빈 쪽 → 좌표평면</span>으로 축이 그려진 쪽을 넣고, 그 위에 보정 펜으로 그래프를 그리면 됩니다. 손으로 쓴 글씨는 그대로 두고 도형만 다듬어 줍니다.</div>
+  <div class="foot"><span><b>DSnote</b> 수학 선생님 사용 안내서</span><span>4</span></div>
+</section>
+
+<!-- ================= 5. 대칭 ================= -->
+<section class="page">
+  <div class="hd"><div class="num">3</div><h2>대칭이동 · 접기<small>y=|f(x)|, y=f(|x|), 선대칭 도형을 판서로 바로</small></h2></div>
+
+  <p class="lead">그래프를 <b>올가미</b>로 고른 뒤 선택 막대의 <b>대칭</b>을 누르면 <b>접는 선(초록 점선)</b>이 나타납니다. 선을 끌어 위치를 정하고, 결과를 <b>흐린 미리 보기</b>로 확인한 뒤 확정합니다.</p>
+
+  <div class="cols" style="gap:3mm">
+    <div class="fig">
+      <svg viewBox="0 0 200 160" width="100%">
+        <g stroke="#1E2A36" stroke-width="1.4"><path d="M6 140H194"/><path d="M100 8V152"/></g>
+        <path d="M20 122 L80 122 L30 52 Z" fill="none" stroke="#009CD9" stroke-width="3" stroke-linejoin="round"/>
+        <path d="M180 122 L120 122 L170 52 Z" fill="none" stroke="#009CD9" stroke-width="3" stroke-linejoin="round" stroke-dasharray="7 5" opacity=".75"/>
+        <path d="M100 20V132" stroke="#2E9E6B" stroke-width="2.4" stroke-dasharray="6 4"/>
+        <circle cx="100" cy="20" r="5" fill="#2E9E6B"/><circle cx="100" cy="132" r="5" fill="#2E9E6B"/>
+      </svg>
+      <div class="cap"><b>복사</b> — 선대칭 도형 만들기<br>(원본 남김, 사본은 점선·실선 선택)</div>
+    </div>
+    <div class="fig">
+      <svg viewBox="0 0 200 160" width="100%">
+        <g stroke="#1E2A36" stroke-width="1.4"><path d="M6 90H194"/><path d="M100 8V152"/></g>
+        <path d="M60 90 Q100 170 140 90" fill="none" stroke="#B0BEC8" stroke-width="2.6" stroke-dasharray="5 4"/>
+        <path d="M40 40 Q50 70 60 90 Q100 10 140 90 Q150 70 160 40" fill="none" stroke="#009CD9" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M6 90H194" stroke="#2E9E6B" stroke-width="2.4" stroke-dasharray="6 4"/>
+        <text x="100" y="152" font-size="9" fill="#6b7b88" text-anchor="middle">x축 아래를 위로 접음</text>
+        <text x="166" y="36" font-size="11" fill="#0A5F86" font-weight="700">y=|f(x)|</text>
+      </svg>
+      <div class="cap"><b>접기</b> — 접는 선 아래쪽을 위로<br>→ <b>y = |f(x)|</b></div>
+    </div>
+    <div class="fig">
+      <svg viewBox="0 0 200 160" width="100%">
+        <g stroke="#1E2A36" stroke-width="1.4"><path d="M6 140H194"/><path d="M100 8V152"/></g>
+        <path d="M40 126.8 Q70 69.2 100 54.8" fill="none" stroke="#B0BEC8" stroke-width="2.6" stroke-dasharray="5 4"/>
+        <path d="M100 54.8 Q145 33.2 190 108.8" fill="none" stroke="#009CD9" stroke-width="3.4" stroke-linecap="round"/>
+        <path d="M100 54.8 Q55 33.2 10 108.8" fill="none" stroke="#009CD9" stroke-width="3.4" stroke-linecap="round"/>
+        <path d="M100 14V138" stroke="#2E9E6B" stroke-width="2.4" stroke-dasharray="6 4"/>
+        <text x="100" y="156" font-size="9" fill="#6b7b88" text-anchor="middle">y축 왼쪽을 지우고 오른쪽을 접어 넣음</text>
+        <text x="150" y="26" font-size="11" fill="#0A5F86" font-weight="700">y=f(|x|)</text>
+      </svg>
+      <div class="cap"><b>접기</b> — 오른쪽을 왼쪽으로<br>→ <b>y = f(|x|)</b></div>
+    </div>
+  </div>
+
+  <h3>사용 방법</h3>
+  <ol class="steps">
+    <li>툴바 <b>올가미</b>로 대칭시킬 그래프(도형)를 둘러 선택합니다.</li>
+    <li>선택 막대에서 <span class="kbd">대칭</span>을 누르면 <b>접는 선</b>이 나타납니다. 선 몸통을 끌면 위치가, <b>양 끝 동그라미</b>를 끌면 각도가 바뀝니다. <b>가로 · 세로 · 45°</b>에 가까워지면 딱 붙습니다.</li>
+    <li>방식을 고릅니다.
+      <ul style="margin-top:1mm">
+        <li><b>복사</b> — 사본을 더함 &nbsp; <b>이동</b> — 반사한 자리로 옮김 &nbsp; <b>접기</b> — 한쪽을 반대쪽으로 접어 넣음</li>
+        <li>원본: 없음 / 점선 / 실선 &nbsp; 결과: 실선 / 점선 &nbsp; 축: 점선 / 실선 / 투명</li>
+        <li>접기는 <b>남길 쪽을 눌러</b> 고릅니다 (접는 쪽 바꾸기 가능).</li>
+      </ul></li>
+    <li>흐린 <b>미리 보기</b>를 확인하고 <b>확정</b>. 확정은 <b>실행 취소 한 번</b>으로 되돌아갑니다.</li>
+  </ol>
+
+  <div class="grid2">
+    <div class="card"><h4>이럴 때 씁니다</h4><p>• 이차함수 y=ax²+bx+c → <b>y=|f(x)|</b>, <b>y=f(|x|)</b><br>• 삼각형·사각형의 <b>선대칭 도형</b> 작도<br>• y=f(x)와 y=−f(x), y=f(−x)의 비교(x축·y축 대칭)<br>• 직선 y=x 에 대한 대칭(<b>45°</b> 붙이기) → 역함수 그래프</p></div>
+    <div class="card"><h4>수업이 빨라지는 점</h4><p>학생이 보는 앞에서 <b>그래프를 다시 그리지 않고</b> “접는다 / 뒤집는다”를 말 그대로 보여 줄 수 있습니다. 점선으로 남긴 원본과 실선 결과를 겹쳐 두면 <b>무엇이 어떻게 바뀌었는지</b> 한눈에 보입니다.</p></div>
+  </div>
+  <div class="card" style="margin-top:3mm"><h4>따라 해 보기 — y = |x² − 4x + 3| 그리기</h4><p>① 보정 펜 <b>이차</b>로 포물선을 그리고 → ② 올가미로 선택 → ③ <b>대칭 ▸ 접기</b>로 접는 선을 <b>x축</b>에 놓고 남길 쪽(위)을 누르기 → ④ 축 아래 부분이 위로 접히는 미리 보기를 확인하고 <b>확정</b> → ⑤ 점선으로 남긴 원래 곡선과 비교하며 설명.</p></div>
+  <div class="tip"><b>알아 두세요</b> 접기는 접는 선 한쪽의 필기만 남기고 점이 많은 쪽을 기본으로 남깁니다. 의도와 반대면 <b>접는 쪽 바꾸기</b>를 누르세요. 보정 펜으로 먼저 그래프를 반듯하게 만든 뒤 대칭을 쓰면 결과가 가장 깔끔합니다.</div>
+  <div class="foot"><span><b>DSnote</b> 수학 선생님 사용 안내서</span><span>5</span></div>
+</section>
+
+<!-- ================= 6. 색칠 ================= -->
+<section class="page">
+  <div class="hd"><div class="num">4</div><h2>도형에 색칠하기<small>닫힌 영역을 톡 — 넓이·집합·경우의 수 설명에</small></h2></div>
+
+  <p class="lead">툴바의 <b>채우기</b>(형광펜 오른쪽)로 도형 안을 누르면 <b>필기와 PDF의 선을 경계로 인식해</b> 그 영역이 채워집니다. 색은 <b>곱하기</b>로 칠해져서 안쪽의 글씨·선은 그대로 보입니다.</p>
+
+  <div class="cols" style="gap:3mm">
+    <div class="fig">
+      <svg viewBox="0 0 200 150" width="100%">
+        <defs><pattern id="hatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="7" height="7" fill="#FFE7B8"/><path d="M0 0V7" stroke="#F28C28" stroke-width="2"/></pattern></defs>
+        <g stroke="#1E2A36" stroke-width="1.4"><path d="M10 124H192"/><path d="M26 10V136"/></g>
+        <path d="M60 124 V82 Q110 28 150 82 V124 Z" fill="url(#hatch)"/>
+        <path d="M36 98 Q110 -4 176 98" fill="none" stroke="#009CD9" stroke-width="3.2"/>
+        <path d="M60 124V82M150 124V82" stroke="#1E2A36" stroke-width="1.6" stroke-dasharray="4 3"/>
+        <text x="60" y="138" font-size="9" text-anchor="middle" fill="#1E2A36">a</text><text x="150" y="138" font-size="9" text-anchor="middle" fill="#1E2A36">b</text>
+      </svg>
+      <div class="cap"><b>빗금 무늬</b> — 곡선과 x축 사이의 넓이</div>
+    </div>
+    <div class="fig">
+      <svg viewBox="0 0 200 150" width="100%">
+        <g style="mix-blend-mode:multiply">
+          <circle cx="78" cy="62" r="42" fill="#7FD0F0"/><circle cx="122" cy="62" r="42" fill="#FFC27A"/><circle cx="100" cy="102" r="42" fill="#B9E3B0"/>
+        </g>
+        <g fill="none" stroke="#1E2A36" stroke-width="1.8"><circle cx="78" cy="62" r="42"/><circle cx="122" cy="62" r="42"/><circle cx="100" cy="102" r="42"/></g>
+        <text x="58" y="48" font-size="12" font-weight="700" fill="#1E2A36">A</text><text x="136" y="48" font-size="12" font-weight="700" fill="#1E2A36">B</text><text x="97" y="128" font-size="12" font-weight="700" fill="#1E2A36">C</text>
+      </svg>
+      <div class="cap"><b>색 겹침</b> — 벤다이어그램의 영역별 색칠</div>
+    </div>
+    <div class="fig">
+      <svg viewBox="0 0 200 150" width="100%">
+        <path d="M30 128 L170 128 L100 14 Z" fill="#FFF2B0"/>
+        <path d="M100 14 L135 71 L65 71 Z" fill="#9ED8F3"/>
+        <path d="M30 128 L170 128 L100 14 Z" fill="none" stroke="#1E2A36" stroke-width="2.6" stroke-linejoin="round"/>
+        <path d="M65 71 L135 71 M65 71 L100 128 L135 71" fill="none" stroke="#1E2A36" stroke-width="1.8"/>
+        <text x="100" y="52" font-size="10" text-anchor="middle" fill="#1E2A36">1</text><text x="100" y="100" font-size="10" text-anchor="middle" fill="#1E2A36">3</text>
+      </svg>
+      <div class="cap"><b>자유 영역</b> — 넓이비·닮음비 설명</div>
+    </div>
+  </div>
+
+  <h3>세 가지 방법</h3>
+  <table>
+    <tr><th style="width:22%">방법</th><th>이렇게 씁니다</th></tr>
+    <tr><td><span class="pill">칠하기</span></td><td>색을 고르고 <b>닫힌 도형 안을 누르면</b> 영역이 채워집니다(펜 · 손가락 톡). 같은 영역을 다시 누르면 새 색으로 바뀝니다. 선이 조금 끊겨 있어도 틈 허용을 <b>0.5 / 1.5 / 3pt</b> 중에서 골라 막을 수 있습니다.</td></tr>
+    <tr><td><span class="pill">자유 영역</span></td><td>색칠할 곳을 <b>펜으로 둘러 닫으면</b> 안쪽이 채워집니다. 선이 없는 곳에도 칠할 수 있고, 손떨림 보정과 <b>다각형 보정(꺾은선으로 반듯하게)</b>을 켤 수 있습니다.</td></tr>
+    <tr><td><span class="pill">무늬 ▾</span></td><td>단색 대신 <b>빗금 · 반대 빗금 · 엇빗금 · 가로줄 · 세로줄 · 격자 · 점</b> 무늬(배경 없이 무늬만)로 채웁니다. 흑백 인쇄해도 구별됩니다.</td></tr>
+  </table>
+
+  <h3>지우기와 관리</h3>
+  <ul>
+    <li>옵션 줄의 <span class="kbd">지우개 ▾ → 채우기만</span>으로 색만 지웁니다. 일반 지우개는 처음 닿은 것이 선이면 색은 건드리지 않아 <b>글씨를 지우다 색까지 날아가지 않습니다.</b></li>
+    <li>채운 색은 PDF 주석으로 저장되어 다른 PDF 앱에서도 보입니다.</li>
+  </ul>
+  <div class="tip"><b>알아 두세요</b> 영역이 닫혀 있지 않거나 쪽 가장자리까지 새면 “채울 수 없음” 안내가 나옵니다. 이때는 <b>자유 영역</b>으로 둘러 채우거나, 보정 펜으로 도형을 먼저 닫아 주세요.</div>
+
+  <h3>이런 수업에 좋습니다</h3>
+  <div class="grid3">
+    <div class="card"><h4>정적분과 넓이</h4><p>곡선과 축 사이를 빗금으로 칠하고 구간을 점선으로 표시.</p></div>
+    <div class="card"><h4>집합 · 확률</h4><p>벤다이어그램에서 A∩B, A∪Bᶜ 영역만 색으로 강조.</p></div>
+    <div class="card"><h4>도형의 넓이 · 닮음</h4><p>삼각형을 나눈 조각마다 다른 색을 칠해 비 설명.</p></div>
+  </div>
+  <div class="foot"><span><b>DSnote</b> 수학 선생님 사용 안내서</span><span>6</span></div>
+</section>
+
+<!-- ================= 7. 나눠 보기 ================= -->
+<section class="page">
+  <div class="hd"><div class="num">5</div><h2>나눠 보기 · 동시에 띄우기<small>개념 + 문제 · 문제 + 해설 · 여러 문제 · 학생 발표</small></h2></div>
+
+  <p class="lead">위쪽 줄 <b>보기 ▾ → 분할 보기</b>로 화면을 두 칸으로 나눕니다. 가로 화면은 <b>좌우</b>, 세로 화면은 <b>위아래</b>로 나뉘고, 가운데 구분선을 끌어 <b>비율을 조절</b>합니다. 칸마다 <b>따로 확대 · 이동 · 필기</b>가 됩니다.</p>
+
+  <div class="cols" style="gap:3mm">
+    <div class="fig">
+      <svg viewBox="0 0 240 160" width="68%">
+        <rect x="2" y="2" width="236" height="156" rx="10" fill="#0b2f44"/><rect x="9" y="9" width="222" height="142" rx="4" fill="#fff"/>
+        <rect x="9" y="9" width="108" height="142" fill="#FBFDFE"/><rect x="123" y="9" width="108" height="142" fill="#FBFDFE"/>
+        <rect x="117" y="9" width="6" height="142" fill="#C9D8E2"/><rect x="118.4" y="70" width="3.2" height="20" rx="1.6" fill="#7e93a3"/>
+        <rect x="123" y="9" width="108" height="3.5" fill="#009CD9"/>
+        <g fill="#C9D8E2"><rect x="18" y="22" width="60" height="5" rx="2"/><rect x="18" y="34" width="88" height="3" rx="1.5"/><rect x="18" y="42" width="84" height="3" rx="1.5"/><rect x="18" y="50" width="90" height="3" rx="1.5"/><rect x="18" y="58" width="70" height="3" rx="1.5"/></g>
+        <g fill="#C9D8E2"><rect x="132" y="22" width="52" height="5" rx="2"/><rect x="132" y="34" width="90" height="3" rx="1.5"/><rect x="132" y="42" width="84" height="3" rx="1.5"/></g>
+        <path d="M134 120 Q166 70 214 118" fill="none" stroke="#009CD9" stroke-width="2.6"/>
+        <path d="M134 120H214" stroke="#1E2A36" stroke-width="1"/>
+        <text x="63" y="140" font-size="10" text-anchor="middle" fill="#0A5F86" font-weight="700">개념 정리</text>
+        <text x="177" y="141" font-size="10" text-anchor="middle" fill="#0A5F86" font-weight="700">문제 풀이</text>
+      </svg>
+      <div class="cap">좌우 분할 — 위의 파란 줄이 <b>고른 칸</b>(필기·툴바가 닿는 칸)</div>
+    </div>
+    <div class="fig">
+      <svg viewBox="0 0 150 200" width="38%">
+        <rect x="2" y="2" width="146" height="196" rx="10" fill="#0b2f44"/><rect x="9" y="9" width="132" height="182" rx="4" fill="#FBFDFE"/>
+        <rect x="9" y="9" width="132" height="3.5" fill="#009CD9"/>
+        <rect x="9" y="97" width="132" height="6" fill="#C9D8E2"/><rect x="66" y="98.4" width="18" height="3.2" rx="1.6" fill="#7e93a3"/>
+        <g fill="#C9D8E2"><rect x="18" y="24" width="60" height="5" rx="2"/><rect x="18" y="38" width="108" height="3" rx="1.5"/><rect x="18" y="46" width="100" height="3" rx="1.5"/><rect x="18" y="54" width="104" height="3" rx="1.5"/></g>
+        <g fill="#C9D8E2"><rect x="18" y="114" width="60" height="5" rx="2"/><rect x="18" y="128" width="108" height="3" rx="1.5"/><rect x="18" y="136" width="100" height="3" rx="1.5"/></g>
+        <text x="75" y="90" font-size="9" text-anchor="middle" fill="#0A5F86" font-weight="700">문제</text>
+        <text x="75" y="183" font-size="9" text-anchor="middle" fill="#0A5F86" font-weight="700">해설</text>
+      </svg>
+      <div class="cap">세로 화면 — 위아래 분할</div>
+    </div>
+  </div>
+
+  <h3>두 가지로 나눕니다</h3>
+  <div class="grid2">
+    <div class="card"><h4>① 지금 문서를 둘로 나눠 보기</h4><p>같은 문서를 두 칸에 띄웁니다. 한 칸은 <b>앞쪽 개념(공식) 쪽</b>에 두고, 다른 칸은 <b>뒤쪽 문제</b>로 넘겨 가며 풀이합니다. 스크랩 쪽(문서 맨 뒤)을 한 칸에 두는 용도로도 좋습니다.</p></div>
+    <div class="card"><h4>② 다른 문서와 나란히</h4><p><b>다른 문서 나눠 보기…</b>를 고르거나 열려 있는 문서를 고르면 두 번째 칸에 뜹니다. 문제지 + 해설지, 교재 + 학습지처럼 <b>서로 다른 파일</b>을 함께 봅니다.</p></div>
+  </div>
+
+  <h3>수업 장면별 활용</h3>
+  <table>
+    <tr><th style="width:24%">장면</th><th>배치</th></tr>
+    <tr><td><b>개념 + 문제</b></td><td>왼쪽 칸 = 개념·공식 정리 쪽, 오른쪽 칸 = 문제. 공식을 계속 띄워 둔 채 풀이합니다.</td></tr>
+    <tr><td><b>문제 + 해설</b></td><td>문제지와 해설지를 나란히. 해설을 보며 판서하거나, 풀이 후 해설과 대조합니다.</td></tr>
+    <tr><td><b>문제 여러 개</b></td><td>탭에 문서를 최대 <b>6개</b>까지 열어 두고 탭을 눌러 칸에 띄웁니다. 가로 화면에서는 <span class="kbd">양쪽 보기</span>로 한 문서의 두 쪽을 나란히 볼 수 있고, <span class="kbd">쪽 한눈에 보기</span>로 쪽을 골라 가기도 쉽습니다.</td></tr>
+    <tr><td><b>학생 동시 발표</b></td><td>두 칸에 문제를 하나씩 띄우고 <b>학생 두 명이 각자 칸</b>에서 풀이합니다. 칸을 처음 누르면 그 칸이 ‘고른 칸’이 되어 그 칸에 필기됩니다(위의 파란 줄로 표시).</td></tr>
+  </table>
+
+  <h3 style="margin-top:3mm">조작 요약</h3>
+  <ul>
+    <li><b>고른 칸</b>: 문서를 마지막으로 누른 칸(위에 파란 줄). 툴바·필기는 이 칸에, 탭 줄에서 탭을 누르면 이 칸의 문서가 바뀝니다.</li>
+    <li>다른 앱(영상·웹)과 나란히 쓰는 <b>안드로이드 분할 화면</b>에서도 동작하며, <span class="kbd">삽입 ▾ → 다른 앱 화면 가져오기</span>로 옆 앱 화면을 쪽으로 가져와 판서할 수 있습니다.</li>
+  </ul>
+  <div class="tip"><b>수업 팁</b> 구분선을 끌어 문제 칸을 넓게 쓰다가 공식을 볼 때만 개념 칸을 넓히세요. 마지막 비율은 기억됩니다.</div>
+  <div class="foot"><span><b>DSnote</b> 수학 선생님 사용 안내서</span><span>7</span></div>
+</section>
+
+<!-- ================= 8. 스크랩 ================= -->
+<section class="page">
+  <div class="hd"><div class="num">6</div><h2>문제 스크랩 — 중요 문서 보관 + 판서 공간<small>영역을 고르면 문제는 모이고, 풀이 공간은 저절로 생깁니다</small></h2></div>
+
+  <p class="lead">시험지나 교재에서 <b>수업에 쓸 문제만 골라</b> 문서 맨 뒤 <b>스크랩 쪽</b>에 모읍니다. 스크랩한 문제 아래에는 <b>풀이 칸(줄·모눈·흰 바탕)</b>이 이미 있어서, 문제를 옮겨 쓰거나 쪽을 새로 만들 필요 없이 바로 판서를 시작할 수 있습니다.</p>
+
+  <div class="cols" style="gap:3mm;align-items:center">
+    <div class="fig">
+      <svg viewBox="0 0 150 200" width="46%">
+        <rect x="6" y="4" width="138" height="192" rx="3" fill="#fff" stroke="#C9D8E2"/>
+        <g fill="#D9E3EA"><rect x="16" y="14" width="70" height="4" rx="2"/><rect x="16" y="24" width="118" height="3" rx="1.5"/><rect x="16" y="32" width="112" height="3" rx="1.5"/></g>
+        <rect x="14" y="48" width="122" height="62" rx="2" fill="#E6F5FB" stroke="#009CD9" stroke-width="2" stroke-dasharray="6 3"/>
+        <g fill="#8aa0b0"><rect x="22" y="56" width="104" height="3" rx="1.5"/><rect x="22" y="64" width="90" height="3" rx="1.5"/><rect x="22" y="72" width="100" height="3" rx="1.5"/></g>
+        <path d="M30 102 Q60 76 96 100" fill="none" stroke="#8aa0b0" stroke-width="2"/>
+        <rect x="100" y="38" width="36" height="12" rx="6" fill="#E8710A"/><text x="118" y="47" font-size="7" fill="#fff" text-anchor="middle" font-weight="700">스크랩 #3</text>
+        <g fill="#D9E3EA"><rect x="16" y="126" width="118" height="3" rx="1.5"/><rect x="16" y="134" width="108" height="3" rx="1.5"/><rect x="16" y="150" width="118" height="3" rx="1.5"/><rect x="16" y="158" width="100" height="3" rx="1.5"/></g>
+        <text x="75" y="186" font-size="8.5" text-anchor="middle" fill="#0A5F86" font-weight="700">끌어서 문제 영역 선택</text>
+      </svg>
+      <div class="cap"><b>① 문제 영역을 끌어 고름</b></div>
+    </div>
+    <div style="font-size:26pt;color:var(--brand);flex:none;width:8mm;text-align:center">➜</div>
+    <div class="fig">
+      <svg viewBox="0 0 150 200" width="46%">
+        <rect x="6" y="4" width="138" height="192" rx="3" fill="#fff" stroke="#C9D8E2"/>
+        <rect x="14" y="12" width="122" height="62" rx="2" fill="#E6F5FB" stroke="#B9DDEB"/>
+        <g fill="#8aa0b0"><rect x="22" y="20" width="104" height="3" rx="1.5"/><rect x="22" y="28" width="90" height="3" rx="1.5"/><rect x="22" y="36" width="100" height="3" rx="1.5"/></g>
+        <path d="M30 66 Q60 40 96 64" fill="none" stroke="#8aa0b0" stroke-width="2"/>
+        <rect x="16" y="80" width="42" height="9" rx="4.5" fill="#E8710A"/><text x="37" y="87" font-size="6.5" fill="#fff" text-anchor="middle" font-weight="700">원문 보기 ›</text>
+        <text x="134" y="86" font-size="7.4" fill="#E8710A" text-anchor="end" font-weight="700">★★★ #극값 #미분</text>
+        <g stroke="#CFE0EA" stroke-width="1"><path d="M10 100H140M10 114H140M10 128H140M10 142H140M10 156H140M10 170H140M10 184H140"/></g>
+        <path d="M24 108 Q46 98 70 110 T116 108" fill="none" stroke="#009CD9" stroke-width="2.4" stroke-linecap="round"/>
+        <path d="M26 130 L96 130 M26 150 Q50 140 76 152" fill="none" stroke="#009CD9" stroke-width="2.4" stroke-linecap="round"/>
+        <text x="75" y="193" font-size="7.5" text-anchor="middle" fill="#0A5F86" font-weight="700" opacity="0">.</text>
+      </svg>
+      <div class="cap"><b>② 스크랩 쪽 — 문제 아래가 풀이 칸</b></div>
+    </div>
+  </div>
+
+  <h3>스크랩하는 방법</h3>
+  <ol class="steps">
+    <li>위쪽 줄 <b>스크랩 ▾ → 스크랩하기(영역 선택)</b>를 누르고, 문제 영역을 <b>끌어서</b> 고릅니다.</li>
+    <li>스크랩하기 창에서 정리합니다.
+      <ul style="margin-top:1mm">
+        <li><b>복습하기</b> 체크(기본 꺼짐) — 복습으로 정한 것만 복습 목록·통계에 올라갑니다.</li>
+        <li><b>기호</b> ✕ △ □ ★1~★5 · <b>해시태그</b>(#미분 #킬러) · <b>제목</b></li>
+        <li><b>스크랩 쪽 배치</b>: <b>한 문제 한 쪽</b> / <b>반 쪽(한 쪽에 두 문제)</b></li>
+        <li><b>풀이 칸 바탕</b>: 줄 · 모눈 · 흰 바탕 등</li>
+      </ul></li>
+    <li>[스크랩]을 누르면 문서 <b>맨 뒤 스크랩 쪽</b>에 문제 그림(PDF 내용 + 내 필기 그대로)이 담기고, 원문 쪽에는 <b>스크랩 #번호</b> 배지가 붙습니다.</li>
+  </ol>
+
+  <div class="grid2">
+    <div class="card"><h4>쪽 바로 이동</h4><p>원문 쪽의 <b>배지</b>나 스크랩 쪽의 <b>원문 보기 ›</b>를 손가락으로 <b>톡</b> 누르면 어떤 도구에서도 바로 이동합니다(점이 찍히지 않음). 그 위에서 선을 그으면 이동하지 않고 필기가 됩니다.</p></div>
+    <div class="card"><h4>스크랩 목록 · 분류</h4><p><b>스크랩 ▾ → 스크랩 목록 · 분류</b>에서 기호·해시태그·검색어로 거르고, 줄을 누르면 그 문제로 이동. 나중에 <b>수정</b>으로 기호·태그·복습 여부를 바꿉니다.</p></div>
+    <div class="card"><h4>문제지 PDF 만들기</h4><p>고른 스크랩을 <b>하나의 문제지 PDF</b>로 만들어 별도 파일로 보관·인쇄·공유합니다. “이번 주 킬러 문제 모음”을 한 번에 만들 수 있습니다.</p></div>
+    <div class="card"><h4>복습 · 통계</h4><p>복습으로 정한 스크랩만 <b>오늘 복습</b>으로 나오고, 정답/오답을 채점하면 기호별·태그별 정답률을 보여 줍니다(약한 곳부터).</p></div>
+  </div>
+
+  <div class="tip"><b>활용 팁</b> 수업 전 오늘 풀 문제만 스크랩 → 수업 때 <b>분할 보기</b>로 한 칸에 스크랩 쪽을 띄워 판서 → 수업 후 <b>문제지 PDF</b>로 내보내 배포.</div>
+  <div class="foot"><span><b>DSnote</b> 수학 선생님 사용 안내서</span><span>8</span></div>
+</section>
+
+<!-- ================= 9. 더 많은 기능 ================= -->
+<section class="page">
+  <div class="hd"><div class="num">+</div><h2>수업에 더 쓸 수 있는 기능<small>판서 · 발표 · 자료 준비 · 정리까지</small></h2></div>
+
+  <h3 style="margin-top:0">판서와 발표</h3>
+  <div class="grid3">
+    <div class="card"><h4>펜 6종 · 손떨림 보정</h4><p>사인펜·볼펜·만년필·붓펜·연필·캘리그래피. 큰 화면에서 선이 흔들리면 손떨림 보정 4단계로 부드럽게.</p></div>
+    <div class="card"><h4>레이저 포인터</h4><p>PDF에 흔적을 남기지 않고 잠깐 가리키기. 사라지는 시간(1~5초)과 색·굵기 선택.</p></div>
+    <div class="card"><h4>자 · 눈금자 · 각도기</h4><p>화면에 자를 올려 곧은 선을 긋고, 길이·각도를 숫자로 확인. 두 손가락으로 회전. 필기에 남지 않는 도구입니다.</p></div>
+    <div class="card"><h4>형광펜 · 글자 형광펜</h4><p>자유 형광펜, 직선(줄자) 형광펜, 그리고 옵션에서 켜면 <b>글자 단위</b> 형광펜·밑줄·취소선(글자가 있는 PDF).</p></div>
+    <div class="card"><h4>테이프 — 정답 가리기</h4><p>정답·풀이에 테이프를 붙여 가렸다가 <b>눌러서 한 곳씩 공개</b>. 직선 보정·글자 크기 맞춤, 무늬 5종.</p></div>
+    <div class="card"><h4>타이머</h4><p>⋮ 메뉴 ▸ 타이머. <b>카운트다운(시험·활동)</b>과 스톱워치, 문제별 시간(랩) 기록. 10분·1분 전 알림.</p></div>
+  </div>
+
+  <h3>자료 준비와 수업 흐름</h3>
+  <div class="grid3">
+    <div class="card"><h4>다양한 파일 열기</h4><p>PDF뿐 아니라 <b>한글(HWP) · PPT · 워드 · TXT · 그림</b>을 기기 안에서 변환해 열고, 워드 수식도 그대로 읽습니다.</p></div>
+    <div class="card"><h4>글 · 표 · 포스트잇</h4><p>T 도구로 글 상자(크기·색·번호/점 목록), <b>표 넣기</b>, 쪽에 붙이는 <b>포스트잇 메모</b>(접어 두기).</p></div>
+    <div class="card"><h4>빈 쪽 · 좌표평면</h4><p>흰 바탕·모눈·줄·점 격자·<b>좌표평면</b> 쪽을 넣고, 마지막 쪽에서 위로 <b>끌어 올리면 빈 쪽 자동 추가</b>.</p></div>
+    <div class="card"><h4>페이지 관리 · 한눈에</h4><p>썸네일로 쪽 순서 바꾸기·복사·삭제·회전, <b>북마크</b>, 글자 찾기. 문서 목차(제목)로 이동도 가능.</p></div>
+    <div class="card"><h4>양쪽 보기 · 읽기 모드</h4><p>가로 화면에서 <b>두 쪽씩</b> 보기. 읽기 모드는 판서를 숨기거나 손이 닿아도 필기되지 않게 보호.</p></div>
+    <div class="card"><h4>이어 보기</h4><p>문서를 다시 열면 <b>마지막 보던 쪽</b>에서 시작. 최근 파일에 “N쪽에서 이어 보기” 표시.</p></div>
+  </div>
+
+  <h3>전자칠판 · 정리와 보관</h3>
+  <div class="grid3">
+    <div class="card"><h4>툴바 위치 · 보일 도구</h4><p>툴바를 <b>위·아래·좌·우</b>로 끌어 붙이고, 안 쓰는 도구는 숨깁니다. 아이콘 크기 소/중/대. 큰 칠판 두 손가락 스크롤도 안정적.</p></div>
+    <div class="card"><h4>다른 앱 화면 가져오기</h4><p>영상·웹·다른 앱 화면을 한 장 캡처해 쪽으로 가져와 위에 판서. 필요한 부분만 골라 복사도 가능.</p></div>
+    <div class="card"><h4>즐겨찾기 · 잠금 · 복구</h4><p>수업·반별 <b>즐겨찾기 폴더</b>(색·무늬·직접 정한 순서), 앱 안 잠금, 저장하지 않은 필기 <b>자동 저장·복구</b>, 이미지/PDF로 저장·공유.</p></div>
+  </div>
+
+  <div class="tip"><b>한 가지 더</b> 필기 <b>검색</b>(손글씨로 쓴 내용 찾기)은 처음 한 번 인터넷으로 글자 인식 데이터(약 50MB)를 받은 뒤부터는 오프라인으로 됩니다. 글자 형광펜은 스캔한 PDF처럼 글자 층이 없는 문서에서는 쓸 수 없습니다.</div>
+  <div class="foot"><span><b>DSnote</b> 수학 선생님 사용 안내서</span><span>9</span></div>
+</section>
+
+<!-- ================= 10. 수업 흐름 ================= -->
+<section class="page">
+  <div class="hd"><div class="num">✓</div><h2>수업 한 시간 이렇게 써 보세요<small>준비 → 수업 → 정리</small></h2></div>
+
+  <div class="cols" style="gap:3mm;align-items:stretch">
+    <div class="card" style="border-top:1.4mm solid var(--brand)">
+      <h4 style="font-size:12pt">준비 (수업 전)</h4>
+      <ol class="steps" style="margin-top:2mm">
+        <li>교재·시험지 PDF(또는 한글·PPT)를 엽니다.</li>
+        <li>오늘 풀 문제를 <b>스크랩</b>으로 모읍니다 — 기호·태그로 분류, 풀이 칸 바탕은 <b>모눈</b>.</li>
+        <li>정답·풀이는 <b>테이프</b>로 가려 둡니다.</li>
+        <li>필요하면 <b>삽입 ▸ 빈 쪽 ▸ 좌표평면</b> 쪽을 넣어 둡니다.</li>
+      </ol>
+    </div>
+    <div class="card" style="border-top:1.4mm solid var(--green)">
+      <h4 style="font-size:12pt">수업 (판서)</h4>
+      <ol class="steps" style="margin-top:2mm">
+        <li><b>분할 보기</b>로 개념(공식)과 문제를 나란히 띄웁니다.</li>
+        <li><b>보정 펜</b>으로 그래프를 그리고, <b>올가미 ▸ 대칭</b>으로 접습니다.</li>
+        <li>영역은 <b>채우기</b>로 색칠해 강조합니다.</li>
+        <li>틀리면 <b>비벼서 · 손바닥으로</b> 지우고 이어 씁니다.</li>
+        <li>학생 발표는 두 칸에 문제를 하나씩 띄워 동시에 진행합니다.</li>
+      </ol>
+    </div>
+    <div class="card" style="border-top:1.4mm solid var(--acc)">
+      <h4 style="font-size:12pt">정리 (수업 후)</h4>
+      <ol class="steps" style="margin-top:2mm">
+        <li><b>저장</b>하면 필기가 PDF에 들어갑니다.</li>
+        <li>다른 이름으로 저장 / 이미지로 저장 / 공유로 학생에게 전달.</li>
+        <li>스크랩에서 <b>문제지 PDF</b>를 만들어 숙제·복습지로.</li>
+        <li>어려웠던 문제는 <b>복습하기</b>로 정해 두면 일정에 맞춰 다시 나옵니다.</li>
+      </ol>
+    </div>
+  </div>
+
+  <h3>자주 묻는 질문</h3>
+  <table>
+    <tr><th style="width:36%">질문</th><th>답</th></tr>
+    <tr><td>손으로 쓰다 손바닥이 닿으면 지워지나요?</td><td>손바닥 지우기는 <b>손가락으로 쓰기를 켠 경우에만</b> 동작합니다. 펜만 쓰는 선생님은 손가락 필기를 끄면 손바닥을 짚고 써도 안전합니다.</td></tr>
+    <tr><td>비벼 지우다 글씨까지 지워지면?</td><td>실행 취소 한 번이면 복원됩니다. 옵션 줄에서 <b>긁어서 지우기</b>를 끌 수도 있습니다.</td></tr>
+    <tr><td>보정 펜이 다른 도형으로 인식했어요.</td><td>보정 펜은 <b>도형 줄에서 고른 종류</b>로 맞춥니다. 실행 취소 후 원하는 종류가 선택돼 있는지 확인하고 <b>한 획으로</b> 다시 그리세요.</td></tr>
+    <tr><td>색칠이 안 돼요(채울 수 없음).</td><td>도형이 닫혀 있는지 확인하세요. 틈이 있으면 틈 허용(0.5/1.5/3pt)을 올리거나 <b>자유 영역</b>으로 둘러 칠합니다.</td></tr>
+    <tr><td>스크랩한 문제는 어디에 있나요?</td><td>같은 문서의 <b>맨 뒤 쪽들</b>입니다. 목록(스크랩 ▾)으로 찾아가거나 분할 보기 한 칸에 띄워 두세요. 별도 파일이 필요하면 <b>문제지 PDF 만들기</b>를 쓰세요.</td></tr>
+    <tr><td>필기가 다른 PDF 앱에서도 보이나요?</td><td>필기·채우기·표·글 상자가 PDF 주석으로 저장되어 다른 PDF 앱에서도 보입니다(일부 앱은 연필 옅기·무늬가 다르게 보일 수 있음).</td></tr>
+  </table>
+
+  <h3 style="margin-top:3mm">도움이 필요하면</h3>
+  <p>⋮ 메뉴 ▸ <b>앱 정보 · 업데이트</b> → <b>건의 · 오류 신고</b>에서 종류를 고르고 글을 쓴 뒤 보내기만 누르면 됩니다(로그인·메일 앱 불필요, 문서 내용·파일 이름은 보내지 않음). 새 기능 건의도 같은 곳에서 받습니다.</p>
+
+  <div style="margin-top:2mm;background:linear-gradient(135deg,#009CD9,#0A5F86);color:#fff;border-radius:3mm;padding:3.5mm 6mm;display:flex;align-items:center;justify-content:space-between;gap:4mm">
+    <div><div style="font-size:15pt;font-weight:800">DSnote와 함께하는 수학 수업</div>
+    <div style="font-size:10pt;opacity:.92;margin-top:1mm">쓰고 · 지우고 · 그리고 · 접고 · 칠하고 · 모으기까지, 한 앱에서.</div></div>
+    <div style="font-size:9pt;opacity:.9;text-align:right;white-space:nowrap">DSnote 1.0.6<br>이 안내서는 앱의 현재 기능 기준입니다</div>
+  </div>
+  <div class="foot"><span><b>DSnote</b> 수학 선생님 사용 안내서</span><span>10</span></div>
+</section>
+
+</body>
+</html>

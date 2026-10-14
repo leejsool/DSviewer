@@ -14,6 +14,7 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PointF
 import android.graphics.RectF
+import android.os.SystemClock
 import android.util.AttributeSet
 import android.util.Log
 import android.util.LruCache
@@ -234,6 +235,20 @@ class DocumentView @JvmOverloads constructor(
             field = v
             relayout()
         }
+    /**
+     * 발표 중: 손가락으로 화면 왼쪽·오른쪽 가장자리를 톡 치면 이전·다음 쪽으로 넘어간다 (펜은 필기·레이저).
+     * 가로 넘김·전체 화면은 부르는 쪽(ViewerActivity)이 따로 켠다
+     */
+    var presenting = false
+
+    /** 발표를 켜고 끄는 사이 화면 높이가 바뀌어도 쪽 크기를 새 높이에 맞추게 하는 때 (uptimeMillis) */
+    private var refitUntil = 0L
+
+    /** 툴바·시스템 줄이 나타나거나 사라져 높이가 바뀔 것이므로 잠시 동안 쪽 크기를 다시 맞춘다 */
+    fun refitSoon() {
+        refitUntil = SystemClock.uptimeMillis() + REFIT_WINDOW_MS
+    }
+
     /** 지금 두 쪽씩 놓여 있는지 */
     private val spread get() = pageLayout.spread
     /** 글자 찾기 결과: 쪽마다 강조할 상자 (쪽 좌표) */
@@ -714,7 +729,7 @@ class DocumentView @JvmOverloads constructor(
         if (pageLayout.horizontal) {
             // 가로 넘김은 쪽 맞춤 배율이 너비·높이에 다 달려 있어 너비가 바뀔 때(회전·분할 보기)만 다시 맞춘다.
             // 높이만 바뀌면(툴바·읽기 모드·화면 키보드) 쪽 크기는 그대로 두어 화면이 출렁이지 않게
-            if (oldw != w) relayout() else {
+            if (oldw != w || SystemClock.uptimeMillis() < refitUntil) relayout() else {
                 clamp()
                 invalidate()
             }
@@ -1504,13 +1519,36 @@ class DocumentView @JvmOverloads constructor(
             return true
         }
 
+        /** 발표 중 손가락으로 왼쪽·오른쪽 끝을 톡 쳤으면 -1(이전) / +1(다음), 아니면 0 */
+        private fun edgeDir(e: MotionEvent): Int {
+            if (!presenting || width == 0 || e.getToolType(0) != MotionEvent.TOOL_TYPE_FINGER) return 0
+            val f = e.x / width
+            return if (f < EDGE_TAP_FRAC) -1 else if (f > 1f - EDGE_TAP_FRAC) 1 else 0
+        }
+
+        // 발표 중 가장자리 톡: 두 번 치기를 기다리지 않고 바로 넘긴다
+        override fun onSingleTapUp(e: MotionEvent): Boolean {
+            val dir = edgeDir(e)
+            if (dir == 0) return false
+            pageStep(dir)
+            return true
+        }
+
         override fun onDoubleTap(e: MotionEvent): Boolean {
+            val dir = edgeDir(e)
+            if (dir != 0) {
+                // 연달아 두 번 치면 두 쪽 (확대하지 않는다)
+                pageStep(dir)
+                return true
+            }
             val target = ViewportMath.doubleTapTarget(zoom)
             animateZoom(target, e.x, e.y)
             return true
         }
 
         override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+            // 발표 중 가장자리 톡은 위(onSingleTapUp)에서 이미 처리했다
+            if (edgeDir(e) != 0) return true
             // 글 도구: 손가락으로 톡 눌러도 글을 넣거나 고친다 (손가락 필기를 꺼 두었을 때)
             if (tool == Tool.TEXT && !readOnly) hitPage(e.x, e.y)?.let { tapText(it.first, it.second, it.third) }
             // 칠하기: 손가락으로 톡 눌러도 칠한다
@@ -2246,7 +2284,9 @@ class DocumentView @JvmOverloads constructor(
         }
         val filter = EraseRules.Filter(tapesOnly, fillsOnly, hlOnly)
         // 획마다 닿았는지·가렸는지는 규칙이 필요로 할 때만 잰다 (람다)
-        val targets = list.map { st ->
+        // 지우개 반지름 밖에 있는 획은 닿지도 가리지도 못하므로 상자로 먼저 걸러 낸다 (움직일 때마다 모든 획을 훑지 않게)
+        val targets = list.mapNotNull { st ->
+            if (!st.mayTouch(px - r, py - r, px + r, py + r)) return@mapNotNull null
             EraseRules.Target(
                 id = st, isBox = st.isBox, isNote = st.note != null, isTape = st.tape != null, isFill = st.fill != null,
                 isHighlighter = st.tool == Tool.HIGHLIGHTER, revealed = st.revealed,
@@ -2421,11 +2461,16 @@ class DocumentView @JvmOverloads constructor(
         }
         // 정말 긁었으면 아래 글씨를 여러 번 가로지른다. 옆 글자에 살짝 닿은 것 ('ㅗㅇ'을 이어 쓰다 'ㅇ'에 닿음)은 아님
         if (crossed < SCRIBBLE_CROSSINGS) return false
+        // 덜 지워져 남은 부스러기 (짧고 다른 필기와 떨어진 조각)는 마저 지운다
+        val cutSet = cuts.map { it.second }.toSet()
+        val others = list.filter { it !in cutSet && !it.isBox && it.tape == null && it.fill == null && it.note == null }
+        val stray = strayPieces(cuts.flatMap { it.third }, others, density / scale)
         for ((k, s, rest) in cuts) {
+            val keep = if (stray.isEmpty()) rest else rest.filter { it !in stray }
             list.removeAt(k)
-            list.addAll(k, rest)
+            list.addAll(k, keep)
             gone.add(page to s)
-            rest.forEach { added.add(page to it) }
+            keep.forEach { added.add(page to it) }
         }
         inkDoc.erased(gone, added)
         performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
@@ -3056,6 +3101,10 @@ class DocumentView @JvmOverloads constructor(
         private const val SNAP_ZOOM = 1.05f
         /** 가로 넘김의 쪽 맞추기 애니메이션 시간 (ms) */
         private const val FLIP_MS = 260
+        /** 발표 중 화면 너비의 이만큼(왼쪽·오른쪽 끝)을 톡 치면 쪽이 넘어간다 */
+        private const val EDGE_TAP_FRAC = 0.16f
+        /** 발표를 켜고 끌 때 높이가 바뀌면 쪽 크기를 다시 맞추는 시간 (ms) */
+        private const val REFIT_WINDOW_MS = 1500L
         private const val SEL_COLOR = 0xFF1E6FD9.toInt()
         /** 크기 조절 손잡이 반지름(그리기)과 누르는 범위 */
         private const val HANDLE_DP = 7f

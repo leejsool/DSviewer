@@ -196,8 +196,8 @@ internal class ToolbarController(
 
     /** 툴바 도구 처음 차례와 이름 */
     private val defaultToolNames = listOf(
-        Tool.PEN to "펜", Tool.SHAPE to "보정 펜", Tool.HIGHLIGHTER to "형광펜", Tool.FILL to "채우기", Tool.TAPE to "테이프",
-        Tool.TEXT to "글 넣기", Tool.ERASER to "지우개", Tool.LASSO to "선택", Tool.LASER to "레이저 포인터",
+        Tool.PEN to "펜", Tool.SHAPE to "보정 펜", Tool.ERASER to "지우개", Tool.HIGHLIGHTER to "형광펜", Tool.FILL to "채우기",
+        Tool.TAPE to "테이프", Tool.TEXT to "글 넣기", Tool.LASSO to "선택", Tool.LASER to "레이저 포인터",
     )
 
     /** 툴바 도구 차례와 이름 (보이기·숨기기 창). 옵션에서 끌어 바꾼 차례(prefs toolOrder)를 따른다 */

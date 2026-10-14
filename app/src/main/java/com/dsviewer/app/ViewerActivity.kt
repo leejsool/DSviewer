@@ -89,6 +89,13 @@ class ViewerActivity : AppCompatActivity() {
     /** 전체 화면: 탭 줄·상태 표시줄·페이지 관리 창을 숨기고 툴바만 남긴다 */
     private var fullscreen = false
 
+    /** 발표 중: 가로 넘김 + 전체 화면 + 레이저, 가장자리 톡으로 쪽 넘기기. 끝낼 때 되돌릴 값은 [presentSaved] */
+    private var presenting = false
+    private var presentSaved: PresentSaved? = null
+    private lateinit var presentToolsButton: ImageButton
+
+    private class PresentSaved(val tool: Tool, val fingerDrawing: Boolean, val timerStarted: Boolean)
+
     private val docs = ArrayList<DocTab>()
     private var current: DocTab? = null
     private val ink get() = current?.ink
@@ -581,6 +588,13 @@ class ViewerActivity : AppCompatActivity() {
     private fun flashPageLabel() {
         pageLabel.removeCallbacks(hidePageLabel)
         pageLabel.animate().cancel()
+        if (presenting) {
+            // 발표 중: 옵션을 켰으면 쪽 번호를 내내 보이고, 아니면 청중 화면이 깔끔하도록 아예 숨긴다
+            val show = prefs.getBoolean(KEY_PRESENT_PAGE, false) && current?.pdf != null
+            pageLabel.visibility = if (show) View.VISIBLE else View.GONE
+            pageLabel.alpha = 1f
+            return
+        }
         pageLabel.visibility = View.VISIBLE
         pageLabel.alpha = 1f
         pageLabel.postDelayed(hidePageLabel, PAGE_LABEL_SHOW_MS)
@@ -902,6 +916,8 @@ class ViewerActivity : AppCompatActivity() {
         fullscreenButton.setOnClickListener { setFullscreen(true) }
         exitFullscreenButton = findViewById(R.id.exitFullscreen)
         exitFullscreenButton.setOnClickListener { setFullscreen(false) }
+        presentToolsButton = findViewById(R.id.presentTools)
+        presentToolsButton.setOnClickListener { togglePresentTools() }
         updateActions()
     }
 
@@ -964,6 +980,7 @@ class ViewerActivity : AppCompatActivity() {
             readMode,
         )
         add(6, "전체 화면", R.drawable.ic_fullscreen)
+        add(7, "발표 시작", R.drawable.ic_present, enabled = ink != null)
         popup.setForceShowIcon(true)
         popup.setOnMenuItemClickListener { item ->
             when (item.itemId) {
@@ -973,6 +990,7 @@ class ViewerActivity : AppCompatActivity() {
                 4 -> toggleOverview()
                 5 -> setViewMode(viewMode.next)
                 6 -> setFullscreen(true)
+                7 -> startPresentation()
             }
             true
         }
@@ -1507,6 +1525,10 @@ class ViewerActivity : AppCompatActivity() {
     private fun setFullscreen(on: Boolean) {
         if (fullscreen == on) return
         fullscreen = on
+        // 전체 화면을 끝내면 발표도 끝난다 (오른쪽 위 단추·뒤로 가기 모두)
+        if (!on) endPresentation()
+        // 오른쪽 위 '전체 화면 끝내기' 단추와 타이머 칩이 겹치지 않게
+        timer.setEndInset(if (on) EXIT_BUTTON_INSET_DP else 0)
         overview.hide()
         findViewById<View>(R.id.tabRow).visibility = if (on) View.GONE else View.VISIBLE
         exitFullscreenButton.visibility = if (on) View.VISIBLE else View.GONE
@@ -1518,6 +1540,72 @@ class ViewerActivity : AppCompatActivity() {
             ctl.hide(WindowInsetsCompat.Type.systemBars())
         } else ctl.show(WindowInsetsCompat.Type.systemBars())
         syncPagePanel()
+    }
+
+    // ================= 발표 =================
+
+    /**
+     * 발표 시작: 가로 넘김(한 쪽씩 화면에 꼭 맞게) + 전체 화면 + 레이저 포인터, 툴바는 숨긴다.
+     * 손가락으로 왼쪽·오른쪽 끝을 톡 치면 쪽이 넘어가고 (키보드·페달도 그대로), 펜으로 쓴 필기는 문서에 남는다.
+     * 발표 타이머·쪽 번호는 옵션에서 고른 대로. 전체 화면을 끝내면 발표도 끝나며 모두 원래대로 돌아간다
+     */
+    private fun startPresentation() {
+        if (presenting || ink == null) return
+        if (readMode) setViewMode(ViewMode.WRITE)
+        textEditor.commit()
+        tools.hideOptionBar()
+        tools.closeFlyout()
+        docView.clearSelection()
+        // 발표 중에는 펜만 쓰고 손가락은 쪽 넘기기(가장자리 톡)·이동·확대에 쓴다
+        val timerStarted = prefs.getBoolean(KEY_PRESENT_TIMER, false) && timer.startForPresentation()
+        presentSaved = PresentSaved(docView.tool, docView.fingerDrawing, timerStarted)
+        for (p in panes) {
+            p.view.refitSoon()
+            p.view.horizontal = true
+            p.view.presenting = true
+        }
+        docView.fingerDrawing = false
+        tools.selectTool(Tool.LASER)
+        findViewById<View>(R.id.toolbar).visibility = View.GONE
+        presentToolsButton.visibility = View.VISIBLE
+        setFullscreen(true)
+        timer.setEndInset(PRESENT_BUTTONS_INSET_DP)
+        presenting = true
+        flashPageLabel()
+        toast("발표 시작: 화면 왼쪽·오른쪽 끝을 톡 치면 쪽이 넘어갑니다. 펜 모양 단추로 도구를 꺼낼 수 있어요.")
+    }
+
+    /** 발표를 끝내고 시작 전 모습으로 되돌린다 (이미 끝났으면 아무것도 안 함) */
+    private fun endPresentation() {
+        if (!presenting) return
+        presenting = false
+        val saved = presentSaved
+        presentSaved = null
+        for (p in panes) {
+            p.view.refitSoon()
+            p.view.presenting = false
+            p.view.horizontal = prefs.getBoolean("horizontalFlow", false)
+        }
+        presentToolsButton.visibility = View.GONE
+        findViewById<View>(R.id.toolbar).visibility = View.VISIBLE
+        if (saved != null) {
+            docView.fingerDrawing = saved.fingerDrawing
+            tools.selectTool(saved.tool)
+            if (saved.timerStarted) timer.finishPresentation()
+        }
+        flashPageLabel()
+    }
+
+    /** 발표 중 도구 줄 보이기·숨기기 (숨기면 열려 있던 옵션 줄도 접는다) */
+    private fun togglePresentTools() {
+        val bar = findViewById<View>(R.id.toolbar)
+        val show = bar.visibility != View.VISIBLE
+        if (!show) {
+            tools.hideOptionBar()
+            tools.closeFlyout()
+        }
+        for (p in panes) p.view.refitSoon()
+        bar.visibility = if (show) View.VISIBLE else View.GONE
     }
 
     private fun View.setEnabledAlpha(enabled: Boolean) {
@@ -2789,6 +2877,15 @@ class ViewerActivity : AppCompatActivity() {
                     prefs.edit().putBoolean("pageKeys", on).apply()
                     true
                 }, "블루투스 키보드나 페이지 터너 페달의 ←/→, PageUp/PageDown, Space 키로 다음·이전 쪽으로 넘깁니다. (Shift+Space는 이전 쪽, 글을 치는 중에는 쓰지 않습니다)"),
+                OptionItem(icon(R.drawable.ic_timer_play), "발표 타이머", { prefs.getBoolean(KEY_PRESENT_TIMER, false) }, { on ->
+                    prefs.edit().putBoolean(KEY_PRESENT_TIMER, on).apply()
+                    true
+                }, "켜면 ‘보기 ▾ ▸ 발표 시작’을 누를 때 경과 시간을 재는 타이머가 함께 시작되고, 발표를 끝내면 걸린 시간을 알려 줍니다. (이미 타이머가 돌고 있으면 그대로 둡니다)"),
+                OptionItem(icon(R.drawable.ic_page_panel), "발표 중 쪽 번호 표시", { prefs.getBoolean(KEY_PRESENT_PAGE, false) }, { on ->
+                    prefs.edit().putBoolean(KEY_PRESENT_PAGE, on).apply()
+                    if (presenting) flashPageLabel()
+                    true
+                }, "켜면 발표 중 화면 아래에 ‘3 / 20’ 같은 쪽 번호를 계속 보여 줍니다. 끄면 발표 중에는 쪽 번호를 띄우지 않습니다."),
                 OptionItem(icon(R.drawable.ic_text_underline), "글자 기반 주석", { tools.textMarkupOn() }, { on ->
                     prefs.edit().putBoolean("textMarkup", on).apply()
                     tools.onTextMarkupChanged()
@@ -2828,7 +2925,7 @@ class ViewerActivity : AppCompatActivity() {
                 p.view.penButtonAction = PenInputRules.ButtonAction.ERASER
                 p.view.penTilt = true
             }
-            prefs.edit().remove("penButton").remove("penTilt").remove("textMarkup").remove("textMark").remove("pageKeys").apply()
+            prefs.edit().remove("penButton").remove("penTilt").remove("textMarkup").remove("textMark").remove("pageKeys").remove(KEY_PRESENT_TIMER).remove(KEY_PRESENT_PAGE).apply()
             setHorizontalFlow(false)
             tools.onTextMarkupChanged()
             for (p in panes) p.view.textMark = TextMark.NONE
@@ -2875,6 +2972,14 @@ class ViewerActivity : AppCompatActivity() {
         private const val PARALLEL_EDIT_MAX_BYTES = 40L shl 20
         /** 넘기지 않은 채 이만큼(ms) 지나면 쪽 번호가 흐려지며 사라진다 */
         private const val PAGE_LABEL_SHOW_MS = 2500L
+
+        /** 발표 옵션 (둘 다 기본은 끔) */
+        private const val KEY_PRESENT_TIMER = "presentTimer"
+        private const val KEY_PRESENT_PAGE = "presentPageNumber"
+
+        /** 전체 화면 끝내기 단추(40dp) / 발표 중 도구 단추까지 둘(40dp×2) 옆으로 타이머 칩을 비키는 거리 (dp) */
+        private const val EXIT_BUTTON_INSET_DP = 52
+        private const val PRESENT_BUTTONS_INSET_DP = 100
         private const val PAGE_LABEL_FADE_MS = 400L
         const val EXTRA_WRITABLE = "writable"
         /** 앱의 파일 탐색기에서 연 문서 */

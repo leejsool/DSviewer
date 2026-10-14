@@ -75,6 +75,13 @@ class ScribbleTest {
     }
 
     @Test
+    fun dotWobbleIsNotScribble() {
+        // 점을 찍다 작게 오가거나 떨린 획 (6dp 안팎)은 긁기가 아니다
+        assertNull(ScribbleRegion.detect(scribble(6f, 8, 1f, 0f, 0f), 1f))
+        assertNull(ScribbleRegion.detect(scribble(7f, 8, 1f, 0f, 0f, vertical = true), 1f))
+    }
+
+    @Test
     fun waveIsNotScribble() {
         val pts = (0..200).map { x -> x.toFloat() to (10 * sin(x / 8.0)).toFloat() }
         assertNull(ScribbleRegion.detect(stroke(pts), 1f))
@@ -91,6 +98,20 @@ class ScribbleTest {
         // 멀리 있는 선은 그대로
         val far = stroke(listOf(-60f to 300f, 220f to 300f))
         assertNull(far.cutWhere(0.75f) { x, y -> region.contains(x, y, far.halfWidth) })
+    }
+
+    @Test
+    fun smallIsolatedLeftoverIsStray() {
+        val tiny = stroke(listOf(0f to 0f, 6f to 0f))
+        val long = stroke(listOf(0f to 40f, 60f to 40f))
+        val neighbor = stroke(listOf(0f to 6f, 6f to 6f))
+        val far = stroke(listOf(200f to 200f, 260f to 200f))
+        // 떨어져 있고 짧다: 부스러기
+        assertEquals(setOf(tiny), strayPieces(listOf(tiny, long), listOf(far), 1f))
+        // 길게 남은 것은 그대로
+        assertTrue(long !in strayPieces(listOf(tiny, long), listOf(far), 1f))
+        // 이웃 필기가 가까이 있으면 부스러기가 아니다
+        assertTrue(strayPieces(listOf(tiny), listOf(neighbor), 1f).isEmpty())
     }
 
     /** 'ㅗㅇ'을 한 획으로: ㅗ 세로, 가로(왼쪽으로 갔다 오른쪽으로), 아래 ㅇ 한 바퀴 */

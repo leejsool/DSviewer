@@ -183,15 +183,45 @@ internal class TimerController(
         }
     }
 
-    private fun start(t: StudyTimer) {
+    private fun start(t: StudyTimer, message: String? = null) {
         t.start(System.currentTimeMillis())
         timer = t
         showChip()
         refresh()
         scheduleTick()
         save()
-        toast(if (t.mode == TimerMode.COUNTDOWN) "시험 타이머를 시작했어요" else "풀이 시간을 재기 시작했어요")
+        toast(message ?: if (t.mode == TimerMode.COUNTDOWN) "시험 타이머를 시작했어요" else "풀이 시간을 재기 시작했어요")
     }
+
+    // ================= 발표 =================
+
+    /**
+     * 발표를 시작할 때: 이미 도는 타이머가 없으면 경과 시간을 재는 초시계를 시작한다. 시작했으면 true
+     * (이미 도는 타이머는 건드리지 않는다)
+     */
+    fun startForPresentation(): Boolean {
+        if (timer != null) return false
+        start(StudyTimer(TimerMode.STOPWATCH, 0L, false), "발표 시간을 재기 시작했어요")
+        return true
+    }
+
+    /** 발표를 끝낼 때: [startForPresentation]이 시작한 초시계를 끝낸다 (걸린 시간을 알려 준다) */
+    fun finishPresentation() {
+        if (timer != null) finishTimer()
+    }
+
+    /**
+     * 칩을 오른쪽 위 모서리에서 [inset]dp만큼 왼쪽으로 비켜 놓는다 (전체 화면 끝내기·발표 단추와 겹치지 않게)
+     */
+    fun setEndInset(inset: Int) {
+        endInset = dp(inset)
+        val c = chip ?: return
+        (c.layoutParams as FrameLayout.LayoutParams).marginEnd = dp(16) + endInset
+        c.translationX = 0f
+        c.requestLayout()
+    }
+
+    private var endInset = 0
 
     // ================= 칩 =================
 
@@ -223,7 +253,7 @@ internal class TimerController(
             c.addView(pauseButton)
             c.addView(nextButton)
             frame.addView(c, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END).apply {
-                marginEnd = dp(16)
+                marginEnd = dp(16) + endInset
                 topMargin = dp(12)
             })
             chip = c

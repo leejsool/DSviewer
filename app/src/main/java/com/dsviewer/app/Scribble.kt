@@ -57,6 +57,10 @@ class ScribbleRegion private constructor(
         private const val MIN_RATIO = 0.4f
         /** 한 번 오가는 길이가 곧은 거리의 이만큼보다 길면 (동그라미처럼 돈 것) 긁기가 아니다 */
         private const val MAX_BEND = 1.4f
+        /** 한 번 오가는 곧은 거리(가운데값)가 적어도 이만큼(dp) 되어야. 이보다 작은 맴돌기는 점 */
+        private const val MIN_CHORD_DP = 8f
+        /** 긁은 획이 덮은 상자의 대각선이 적어도 이만큼(dp) 되어야 */
+        private const val MIN_EXTENT_DP = 14f
 
         /**
          * 획이 마구 긁은 모양이면 그 영역, 아니면 null. [unit]은 1dp가 쪽 좌표로 얼마인지.
@@ -109,8 +113,14 @@ class ScribbleRegion private constructor(
                 for (i in a + 1..b) path += hypot(st.x(i) - st.x(i - 1), st.y(i) - st.y(i - 1))
                 bends[k] = if (chords[k] > 0f) path / chords[k] else 99f
             }
-            // 점을 콕콕 찍은 것은 긁기가 아니다
-            if (chords.sorted()[n / 2] < 5f * unit) return null
+            // 점을 콕콕 찍은 것은 긁기가 아니다 (점 찍다 손이 떨리거나 작게 맴돈 것까지 거른다)
+            if (chords.sorted()[n / 2] < MIN_CHORD_DP * unit) return null
+            var l = st.x(0); var r = l; var t = st.y(0); var b = t
+            for (i in 1 until st.count) {
+                l = minOf(l, st.x(i)); r = maxOf(r, st.x(i))
+                t = minOf(t, st.y(i)); b = maxOf(b, st.y(i))
+            }
+            if (hypot(r - l, b - t) < MIN_EXTENT_DP * unit) return null
             // 긁기는 거의 같은 자리를 비슷한 길이로 정반대로 오간다. 이어진 두 번이 그런지 센다
             // (한 획으로 이어 쓴 글자 'ㅗㅇ'·동그라미 치기는 방향·길이가 들쭉날쭉하다)
             var good = 0
@@ -179,6 +189,64 @@ fun Stroke.cutWhere(step: Float, inside: (Float, Float) -> Boolean): List<Stroke
     }
     cur?.let { if (it.count >= 2 && it.length() >= max(0.5f, width * 0.3f)) pieces.add(it) }
     return if (hit) pieces else null
+}
+
+/** 긁고 남은 조각이 이보다 짧으면(dp) 덜 지워진 부스러기 후보 */
+private const val STRAY_LEN_DP = 12f
+/** 부스러기는 다른 필기와 이만큼(dp) 떨어져 있어야 */
+private const val STRAY_GAP_DP = 8f
+
+/**
+ * 긁고 남은 조각 [pieces] 가운데 덜 지워진 부스러기: 짧고(양이 적고) 다른 필기 [others]·다른 조각과 떨어져 있는 것.
+ * 이웃 글씨에 붙어 있거나 길게 남은 것은 부스러기가 아니다. [unit]은 1dp가 쪽 좌표로 얼마인지
+ */
+fun strayPieces(pieces: List<Stroke>, others: List<Stroke>, unit: Float): Set<Stroke> {
+    val cand = pieces.filter { it.count >= 2 && it.length() < STRAY_LEN_DP * unit }
+    if (cand.isEmpty()) return emptySet()
+    val gap = STRAY_GAP_DP * unit
+    val out = HashSet<Stroke>()
+    for (c in cand) {
+        var l = c.x(0); var r = l; var t = c.y(0); var b = t
+        for (i in 1 until c.count) {
+            l = minOf(l, c.x(i)); r = maxOf(r, c.x(i))
+            t = minOf(t, c.y(i)); b = maxOf(b, c.y(i))
+        }
+        val reach = gap + c.halfWidth
+        var near = false
+        for (o in others.asSequence() + pieces.asSequence().filter { it !== c }) {
+            if (o.count < 1) continue
+            val rr = reach + o.halfWidth
+            val rr2 = rr * rr
+            var ol = o.x(0); var oR = ol; var ot = o.y(0); var ob = ot
+            for (i in 1 until o.count) {
+                ol = minOf(ol, o.x(i)); oR = maxOf(oR, o.x(i))
+                ot = minOf(ot, o.y(i)); ob = maxOf(ob, o.y(i))
+            }
+            if (ol > r + rr || oR < l - rr || ot > b + rr || ob < t - rr) continue
+            for (i in 0 until c.count) {
+                val px = c.x(i); val py = c.y(i)
+                if (o.count == 1) {
+                    if ((px - o.x(0)).let { it * it } + (py - o.y(0)).let { it * it } <= rr2) { near = true; break }
+                } else for (j in 1 until o.count) {
+                    if (segDist2(px, py, o.x(j - 1), o.y(j - 1), o.x(j), o.y(j)) <= rr2) { near = true; break }
+                }
+                if (near) break
+            }
+            if (near) break
+        }
+        if (!near) out.add(c)
+    }
+    return out
+}
+
+private fun segDist2(px: Float, py: Float, ax: Float, ay: Float, bx: Float, by: Float): Float {
+    val vx = bx - ax
+    val vy = by - ay
+    val len2 = vx * vx + vy * vy
+    val t = if (len2 == 0f) 0f else (((px - ax) * vx + (py - ay) * vy) / len2).coerceIn(0f, 1f)
+    val dx = px - (ax + t * vx)
+    val dy = py - (ay + t * vy)
+    return dx * dx + dy * dy
 }
 
 /** 두 획이 서로 가로지르는 횟수 ([limit]에 이르면 그만 셈) */
