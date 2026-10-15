@@ -375,9 +375,11 @@ internal class ToolbarController(
         docView.palmErase = prefs.getBoolean("palmErase", true)
         val buttonAction = PenInputRules.ButtonAction.named(prefs.getString("penButton", null))
         val tilt = prefs.getBoolean("penTilt", true)
+        val holdShape = prefs.getBoolean("holdShape", true)
         for (v in allViews()) {
             v.penButtonAction = buttonAction
             v.penTilt = tilt
+            v.holdShape = holdShape
         }
         docView.noteColor = prefs.getInt("noteColor", StickyNote.COLORS[0])
     }

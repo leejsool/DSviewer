@@ -183,6 +183,15 @@ class DocumentView @JvmOverloads constructor(
     var scribbleErase = true
     /** 손가락 필기 중 손바닥처럼 넓게 닿아 문지르면 영역 지우개 */
     var palmErase = true
+    /** 일반 펜으로 직선·원·삼각형·사각형·별을 그리고 꾹 누르고 있으면 반듯한 도형으로 맞춘다 */
+    var holdShape = true
+    /** 꾹 누른 획을 맞춘 도형 (손을 떼면 획 대신 이것을 남기고, 다시 움직이면 버린다) */
+    private var holdFitted: List<Stroke>? = null
+    /** 꾹 누르기를 기다리는 중 (이번 획이 일반 펜 획) */
+    private var holdArmed = false
+    private var holdSx = 0f
+    private var holdSy = 0f
+    private val holdRun = Runnable { snapHeldStroke() }
     /** 읽기 모드: 펜도 손가락처럼 넘기고 확대만 한다 (필기·지우기·선택 없음) */
     var readOnly = false
         set(v) {
@@ -548,7 +557,7 @@ class DocumentView @JvmOverloads constructor(
         penColor = o.penColor; penWidth = o.penWidth; penStyle = o.penStyle; penSmoothing = o.penSmoothing
         hlColor = o.hlColor; hlWidth = o.hlWidth; hlStraight = o.hlStraight; textMark = o.textMark
         eraserRadiusDp = o.eraserRadiusDp; eraserMode = o.eraserMode; eraseHlOnly = o.eraseHlOnly
-        scribbleErase = o.scribbleErase; palmErase = o.palmErase; fingerDrawing = o.fingerDrawing; horizontal = o.horizontal
+        scribbleErase = o.scribbleErase; holdShape = o.holdShape; palmErase = o.palmErase; fingerDrawing = o.fingerDrawing; horizontal = o.horizontal
         laserColor = o.laserColor; laserWidthDp = o.laserWidthDp; laserFadeMs = o.laserFadeMs
         shapeKind = o.shapeKind; shapeGuide = o.shapeGuide; shapeDashed = o.shapeDashed
         tapeColor = o.tapeColor; tapeWidth = o.tapeWidth; tapePattern = o.tapePattern; tapeRect = o.tapeRect
@@ -978,7 +987,7 @@ class DocumentView @JvmOverloads constructor(
                     // 보정 펜: 내 획은 흐리게, 맞춘 도형은 조금 더 진하게 미리 보기
                     drawStroke(canvas, it, 0.3f)
                     shapePreview?.forEach { sp -> drawStroke(canvas, sp, 0.6f) }
-                } else drawStroke(canvas, it)
+                } else holdFitted?.let { held -> held.forEach { sp -> drawStroke(canvas, sp) } } ?: drawStroke(canvas, it)
             }
             // 자는 붙여넣은 그림·필기보다 늘 맨 위에 (그은 선은 자 가장자리 바로 바깥에 놓여 자에 가려지지 않는다)
             ruler.draw(canvas, i)
@@ -1933,6 +1942,7 @@ class DocumentView @JvmOverloads constructor(
         shapeGen++
         shapePending = false
         shapePreview = null
+        cancelHold()
         curStroke = null
         curPage = -1
         tapCandidate = false
@@ -2005,6 +2015,7 @@ class DocumentView @JvmOverloads constructor(
         zoomAnimator?.cancel()
         shapeGen++
         shapePending = false
+        cancelHold()
         lastSx = sx
         lastSy = sy
         erased.clear()
@@ -2068,6 +2079,8 @@ class DocumentView @JvmOverloads constructor(
             if (tool == Tool.PEN) {
                 penInput.begin(penStyle, penWidth, penSmoothing, hx, hy, p, t, curTilt)
                 st.add(penInput.x, penInput.y, penInput.p)
+                // 자를 따라 긋는 획이 아니면 꾹 누르기를 기다린다
+                if (holdShape && snap == null) armHold(sx, sy)
             } else if (tool == Tool.FILL) {
                 penInput.begin(PenStyle.FELT, 1f, fillSmoothing, hit.second, hit.third, p, t)
                 st.add(penInput.x, penInput.y, 0f)
@@ -2151,6 +2164,14 @@ class DocumentView @JvmOverloads constructor(
             return
         }
         val st = curStroke ?: return
+        // 꾹 누르는 중에 (손떨림이 아니게) 움직이면 맞춘 도형을 버리고 다시 보통 필기, 멈추기를 다시 기다린다
+        if (holdArmed && hypot(sx - holdSx, sy - holdSy) > HOLD_SLOP_DP * density) {
+            if (holdFitted != null) {
+                holdFitted = null
+                invalidate()
+            }
+            armHold(sx, sy)
+        }
         val px = toPageX(curPage, sx)
         val py = toPageY(curPage, sy)
         val snap = rulerSnap
@@ -2214,6 +2235,33 @@ class DocumentView @JvmOverloads constructor(
         lastSx = sx
         lastSy = sy
         if (tool == Tool.SHAPE) requestShapePreview()
+        invalidate()
+    }
+
+    /** 이 자리([sx], [sy])에서 펜을 멈추고 있는지 [HOLD_MS] 동안 지켜본다 (이미 기다리던 것은 다시 센다) */
+    private fun armHold(sx: Float, sy: Float) {
+        holdArmed = true
+        holdSx = sx
+        holdSy = sy
+        removeCallbacks(holdRun)
+        postDelayed(holdRun, HOLD_MS)
+    }
+
+    private fun cancelHold() {
+        removeCallbacks(holdRun)
+        holdArmed = false
+        holdFitted = null
+    }
+
+    /** 펜을 멈춘 채 [HOLD_MS]가 지났다: 그린 획이 직선·원·삼각형·사각형·별 같으면 그 도형으로 맞춰 보여 준다 (손을 떼면 확정) */
+    private fun snapHeldStroke() {
+        val st = curStroke ?: return
+        if (!holdArmed || tool != Tool.PEN || st.tool != Tool.PEN || penErasing || curPage < 0 || st.count < 3) return
+        val r = try {
+            ShapeRecognizer.recognize(st, HOLD_MIN_DP * density / scale)
+        } catch (e: Exception) { null } ?: return
+        holdFitted = ShapeStrokes.build(st, r.fitted, ShapeKind.LINE, GuideStyle.NONE, false, penStyle)
+        performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
         invalidate()
     }
 
@@ -2325,6 +2373,9 @@ class DocumentView @JvmOverloads constructor(
         // 아직 맞추는 중인 미리 보기는 버린다
         shapeGen++
         shapePending = false
+        // 꾹 눌러 맞춘 도형이 있으면 아래에서 획 대신 남긴다
+        val held = holdFitted
+        cancelHold()
         if (textPressing) {
             textPressing = false
             val hit = textTap
@@ -2390,7 +2441,10 @@ class DocumentView @JvmOverloads constructor(
             } else {
                 val st = curStroke
                 if (st != null && commit) {
-                    if (tool == Tool.SHAPE) {
+                    if (held != null && st.tool == Tool.PEN) {
+                        // 일반 펜을 꾹 누른 채 손을 뗌: 흐린 획 대신 맞춘 도형을 남긴다
+                        inkDoc.addAll(curPage, held)
+                    } else if (tool == Tool.SHAPE) {
                         // 보정 펜: 흐린 획 대신 맞춘 도형을 남긴다
                         val fitted = fitShape(st)
                         if (fitted != null) inkDoc.addAll(curPage, fitted)
@@ -3120,6 +3174,12 @@ class DocumentView @JvmOverloads constructor(
             MotionEvent.BUTTON_STYLUS_PRIMARY or MotionEvent.BUTTON_STYLUS_SECONDARY or MotionEvent.BUTTON_SECONDARY
         /** 테이프를 톡 누른 것으로 보는 시간 (ms) */
         private const val TAP_MS = 500L
+        /** 일반 펜 도형 보정: 이 시간(ms) 동안 멈추고 있으면 맞춘다 */
+        private const val HOLD_MS = 600L
+        /** 멈추고 있다고 보는 흔들림 범위 (dp) */
+        private const val HOLD_SLOP_DP = 6f
+        /** 이보다 작게 그린 획(화면 대각선, dp)은 글씨·점으로 보고 도형으로 맞추지 않는다 */
+        private const val HOLD_MIN_DP = 36f
         /** 긁어서 지우기: 긁은 선이 아래 필기를 적어도 이만큼 가로질러야 지운다 */
         private const val SCRIBBLE_CROSSINGS = 3
         /** 회전 손잡이 반지름과 상자에서 떨어진 거리 */

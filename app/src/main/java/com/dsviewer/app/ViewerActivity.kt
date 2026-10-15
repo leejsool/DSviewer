@@ -2676,8 +2676,12 @@ class ViewerActivity : AppCompatActivity() {
         if (focused !== keep) keep.view.copyToolsFrom(focused.view)
         drop.view.clearSelection()
         drop.view.clearLaser()
-        if (drop.tab !== keep.tab) drop.tab?.viewState = drop.view.viewState()
-        else keep.tab?.splitViewState = drop.view.viewState()
+        // 같은 문서를 두 칸에 띄웠었다면 닫는 칸이 보던 자리를 기억해 두었다가, 다시 나눌 때 둘째 칸이 거기서 열게 한다
+        // (남는 칸이 첫 칸으로 옮겨 오면서 showIn이 이 기억을 지우므로 아래에서 다시 넣는다)
+        val sameDoc = drop.tab === keep.tab
+        val dropState = drop.view.viewState()
+        if (!sameDoc) drop.tab?.viewState = dropState
+        else keep.tab?.splitViewState = dropState
         drop.view.clearDocument()
         drop.tab = null
         split = false
@@ -2692,6 +2696,7 @@ class ViewerActivity : AppCompatActivity() {
             a.tab = t
             if (t != null) showIn(a, t)
         }
+        if (sameDoc) a.tab?.splitViewState = dropState
         focused = a
         textEditor.rebind(a.host, a.view)
         noteEditor.rebind(a.host, a.view)
@@ -2863,6 +2868,11 @@ class ViewerActivity : AppCompatActivity() {
                     prefs.edit().putBoolean("scribbleErase", on).apply()
                     true
                 }, "펜으로 좌우나 위아래로 마구 긁으면 긁은 자리가 지워집니다."),
+                OptionItem(icon(R.drawable.ic_hold_shape), "꾹 눌러 도형 보정", { docView.holdShape }, { on ->
+                    for (p in panes) p.view.holdShape = on
+                    prefs.edit().putBoolean("holdShape", on).apply()
+                    true
+                }, "펜으로 직선·원·삼각형·사각형·별을 그린 뒤 손을 떼지 말고 잠깐 멈추면 반듯한 도형으로 고쳐 줍니다. (그대로 떼면 확정, 다시 움직이면 원래 획으로)"),
                 OptionItem(icon(R.drawable.ic_palm_erase), "손바닥 지우기", { docView.palmErase }, { on ->
                     docView.palmErase = on
                     prefs.edit().putBoolean("palmErase", on).apply()
@@ -2924,8 +2934,9 @@ class ViewerActivity : AppCompatActivity() {
             for (p in panes) {
                 p.view.penButtonAction = PenInputRules.ButtonAction.ERASER
                 p.view.penTilt = true
+                p.view.holdShape = true
             }
-            prefs.edit().remove("penButton").remove("penTilt").remove("textMarkup").remove("textMark").remove("pageKeys").remove(KEY_PRESENT_TIMER).remove(KEY_PRESENT_PAGE).apply()
+            prefs.edit().remove("holdShape").remove("penButton").remove("penTilt").remove("textMarkup").remove("textMark").remove("pageKeys").remove(KEY_PRESENT_TIMER).remove(KEY_PRESENT_PAGE).apply()
             setHorizontalFlow(false)
             tools.onTextMarkupChanged()
             for (p in panes) p.view.textMark = TextMark.NONE

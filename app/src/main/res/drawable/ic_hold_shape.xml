@@ -1,0 +1,12 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- 꾹 눌러 도형 보정: 떨리게 그린 동그라미(흐리게)를 반듯한 동그라미로 -->
+    <path android:strokeColor="?attr/colorControlNormal" android:strokeWidth="1.1"
+        android:strokeAlpha="0.5" android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M4.2,9.5c0.8,-2.6 3.4,-4.4 6.2,-4.2c2.2,0.2 3.6,1.4 4.4,3.2c0.8,2.2 0.2,4.6 -1.6,6c-1.8,1.4 -4.8,1.6 -6.6,0.2c-1.6,-1.2 -2.6,-3 -2.4,-5.2z" />
+    <path android:strokeColor="?attr/colorControlNormal" android:strokeWidth="1.6"
+        android:pathData="M12,3.5a8,8 0,1 0,0.001 0z" />
+    <path android:fillColor="?attr/colorControlNormal"
+        android:pathData="M18.5,17a2.5,2.5 0,1 1,0 5a2.5,2.5 0,1 1,0 -5z" />
+</vector>

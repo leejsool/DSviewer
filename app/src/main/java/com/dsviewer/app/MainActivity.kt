@@ -494,10 +494,19 @@ class MainActivity : AppCompatActivity() {
         val sub = if (showPath) "${e.file.parentFile?.let(::shortPath) ?: ""} · $info" else info
         val uri = Uri.fromFile(e.file)
         val item = rec[uri.toString()]
-        // 즐겨찾기한 문서는 별 표시만 (누르는 별은 최근 파일·즐겨찾기 탭에)
+        // 모든 문서·폴더 탭에서도 별을 눌러 즐겨찾기를 넣고 뺀다 (목록에 없던 문서는 기록을 새로 만든다)
         return Row(
             e.name, sub, Kind.DOC, { unlockThen(uri.toString()) { openFile(e.file) } },
-            star = if (item?.star == true) true else null,
+            star = item?.star == true,
+            onStar = {
+                val cur = Recents.get(this, uri.toString())
+                if (cur != null) toggleStar(cur)
+                else {
+                    Recents.add(this, uri.toString(), e.name)
+                    Recents.setStar(this, uri.toString(), true)
+                    refresh()
+                }
+            },
             docUri = uri.toString(), locked = uri.toString() in locked,
             thumb = Thumbs.Source(uri, e.name, item?.thumbPage ?: 0, item?.thumbFile),
             short = date(e.time), opened = item?.time ?: 0L, modified = e.time, size = e.size,

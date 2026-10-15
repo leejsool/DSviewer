@@ -381,7 +381,7 @@ object ShapeFit {
     }
 
     /** 원: x²+y²+Dx+Ey+F=0 을 최소제곱으로 (Kasa) */
-    private fun circle(p: Pair<DoubleArray, DoubleArray>): FloatArray? {
+    internal fun circle(p: Pair<DoubleArray, DoubleArray>): FloatArray? {
         val (xs, ys) = p
         val mx = xs.average(); val my = ys.average()
         val a = Array(3) { DoubleArray(3) }
@@ -413,7 +413,7 @@ object ShapeFit {
      * 타원: 길이 가중 공분산으로 기울기를 정하고, 그 방향으로 돌린 좌표에서
      * A u² + C v² + D u + E v = 1 을 최소제곱. 기울기가 0°/90° 근처(6° 안)면 딱 맞춘다.
      */
-    private fun ellipse(p: Pair<DoubleArray, DoubleArray>): FloatArray? {
+    internal fun ellipse(p: Pair<DoubleArray, DoubleArray>): FloatArray? {
         val (xs, ys) = p
         val mx = xs.average(); val my = ys.average()
         var sxx = 0.0; var syy = 0.0; var sxy = 0.0
