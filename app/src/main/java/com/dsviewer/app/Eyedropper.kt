@@ -51,10 +51,18 @@ internal object Eyedropper {
     private fun show(activity: Activity, bmp: Bitmap, onPick: (Int) -> Unit) {
         val decor = activity.window.decorView as? ViewGroup ?: return
         val root = FrameLayout(activity)
-        fun close() { decor.removeView(root) }
+        // 뷰를 떼면 그 뷰에 취소 이벤트가 되돌아와 다시 닫으려 하므로, 한 번만 닫고 터치 처리가 끝난 뒤에 뗀다
+        var closed = false
+        fun close() {
+            if (closed) return
+            closed = true
+            decor.post { decor.removeView(root) }
+        }
         val pick = EyedropperView(activity, bmp) { color ->
-            close()
-            if (color != null) onPick(color)
+            if (!closed) {
+                close()
+                if (color != null) onPick(color)
+            }
         }
         root.addView(pick, FrameLayout.LayoutParams(-1, -1))
 
