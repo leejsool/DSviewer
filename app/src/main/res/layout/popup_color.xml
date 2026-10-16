@@ -38,6 +38,15 @@
                     android:text="색 고르기"
                     android:textAppearance="?attr/textAppearanceTitleMedium" />
 
+                <ImageButton
+                    android:id="@+id/eyedropper"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:layout_marginEnd="8dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="스포이트: 화면에서 색 집기"
+                    android:src="@drawable/ic_eyedropper" />
+
                 <com.google.android.material.button.MaterialButtonToggleGroup
                     android:id="@+id/modeGroup"
                     android:layout_width="wrap_content"

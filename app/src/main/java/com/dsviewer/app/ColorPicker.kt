@@ -273,6 +273,12 @@ class ColorPickerPopup(
             false
         }
 
+        // 스포이트: 창을 접고 화면의 색을 집는다 (집으면 그 색을 고른 것으로)
+        view.findViewById<View>(R.id.eyedropper).setOnClickListener {
+            popup.dismiss()
+            Eyedropper.start(activity) { onPick(it, true) }
+        }
+
         val modes: MaterialButtonToggleGroup = view.findViewById(R.id.modeGroup)
         modes.check(if (lastCustom) R.id.modeCustom else R.id.modePalette)
         showMode(lastCustom)

@@ -634,6 +634,8 @@ class ViewerActivity : AppCompatActivity() {
         val wasCurrent = current === t
         val shownPanes = panesOf(t)
         val pane = shownPanes.firstOrNull { it === focused } ?: shownPanes.firstOrNull()
+        // 같은 문서를 두 칸에 띄운 채 닫으면 둘째 칸이 보던 자리를, 아니면 앞서 나눠 보기를 끌 때 적어 둔 자리를 남긴다
+        rememberSplitPosition(t, if (shownPanes.size > 1) shownPanes.last().view.viewState() else t.splitViewState)
         if (wasCurrent) {
             overview.hide()
             current = null
@@ -2562,7 +2564,14 @@ class ViewerActivity : AppCompatActivity() {
      * 아니면 탭이 기억해 둔 자리
      */
     private fun sharedState(pane: ViewerPane, t: DocTab): DocumentView.ViewState? =
-        panes.firstOrNull { it !== pane && it.shown && it.tab === t }?.let { t.splitViewState ?: it.view.viewState() } ?: t.viewState
+        panes.firstOrNull { it !== pane && it.shown && it.tab === t }
+            ?.let { t.splitViewState ?: SplitPositions.get(this, t.uri.toString()) ?: it.view.viewState() }
+            ?: t.viewState
+
+    /** 같은 문서의 둘째 칸이 보던 자리를 문서별로 적어 둔다 (문서를 닫았다 다시 열어도 다시 나눠 볼 때 거기서 시작) */
+    private fun rememberSplitPosition(t: DocTab, state: DocumentView.ViewState?) {
+        if (state != null && t.review == null) SplitPositions.put(this, t.uri.toString(), state)
+    }
 
     /** [t]를 [pane]에 띄운다 (아직 다 안 열렸으면 빈 화면). 고른 칸이나 탭 줄·쪽 관리 창은 건드리지 않는다 */
     private fun showIn(pane: ViewerPane, t: DocTab) {
@@ -2681,7 +2690,7 @@ class ViewerActivity : AppCompatActivity() {
         val sameDoc = drop.tab === keep.tab
         val dropState = drop.view.viewState()
         if (!sameDoc) drop.tab?.viewState = dropState
-        else keep.tab?.splitViewState = dropState
+        else keep.tab?.let { it.splitViewState = dropState; rememberSplitPosition(it, dropState) }
         drop.view.clearDocument()
         drop.tab = null
         split = false
@@ -2696,7 +2705,7 @@ class ViewerActivity : AppCompatActivity() {
             a.tab = t
             if (t != null) showIn(a, t)
         }
-        if (sameDoc) a.tab?.splitViewState = dropState
+        if (sameDoc) a.tab?.let { it.splitViewState = dropState; rememberSplitPosition(it, dropState) }
         focused = a
         textEditor.rebind(a.host, a.view)
         noteEditor.rebind(a.host, a.view)
