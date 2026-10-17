@@ -81,6 +81,23 @@ class ScribbleTest {
         assertNull(ScribbleRegion.detect(scribble(7f, 8, 1f, 0f, 0f, vertical = true), 1f))
     }
 
+    /** [src]와 같은 자취를 굵기 [width]로 다시 그린 획 */
+    private fun withWidth(src: Stroke, width: Float): Stroke {
+        val st = Stroke(Tool.PEN, 0xFF000000.toInt(), width)
+        for (i in 0 until src.count) st.add(src.x(i), src.y(i), src.p(i))
+        return st
+    }
+
+    @Test
+    fun thickPenBlobDotIsNotScribble() {
+        // 전자칠판: 굵은 펜(굵기 4)으로 점을 비벼 크게 찍은 것(굵기의 8배 안)은 dp로는 긁기만 해도 긁기가 아니다
+        val blob = scribble(24f, 8, 2f, 0f, 0f)
+        assertNotNull("같은 자취를 가는 펜으로 긁으면 긁기", ScribbleRegion.detect(withWidth(blob, 2f), 1f))
+        assertNull(ScribbleRegion.detect(withWidth(blob, 4f), 1f))
+        // 같은 굵은 펜이라도 굵기보다 훨씬 넓게 긁으면 긁기
+        assertNotNull(ScribbleRegion.detect(withWidth(scribble(160f, 8, 5f, 18f, 12f), 4f), 1f))
+    }
+
     @Test
     fun waveIsNotScribble() {
         val pts = (0..200).map { x -> x.toFloat() to (10 * sin(x / 8.0)).toFloat() }

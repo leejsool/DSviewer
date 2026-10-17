@@ -61,6 +61,9 @@ class ScribbleRegion private constructor(
         private const val MIN_CHORD_DP = 8f
         /** 긁은 획이 덮은 상자의 대각선이 적어도 이만큼(dp) 되어야 */
         private const val MIN_EXTENT_DP = 14f
+        /** 같은 기준을 펜 굵기의 배수로도 (굵은 펜으로 점을 비벼 찍은 것은 굵기의 몇 배 안에 든다) */
+        private const val MIN_CHORD_WIDTHS = 3f
+        private const val MIN_EXTENT_WIDTHS = 8f
 
         /**
          * 획이 마구 긁은 모양이면 그 영역, 아니면 null. [unit]은 1dp가 쪽 좌표로 얼마인지.
@@ -113,14 +116,16 @@ class ScribbleRegion private constructor(
                 for (i in a + 1..b) path += hypot(st.x(i) - st.x(i - 1), st.y(i) - st.y(i - 1))
                 bends[k] = if (chords[k] > 0f) path / chords[k] else 99f
             }
-            // 점을 콕콕 찍은 것은 긁기가 아니다 (점 찍다 손이 떨리거나 작게 맴돈 것까지 거른다)
-            if (chords.sorted()[n / 2] < MIN_CHORD_DP * unit) return null
+            // 점을 콕콕 찍은 것은 긁기가 아니다 (점 찍다 손이 떨리거나 작게 맴돈 것까지 거른다).
+            // 전자칠판처럼 큰 화면에서는 굵은 펜으로 점을 비벼 크게 찍는데, dp만으로는 그것이 긁기만큼 커 보인다.
+            // 점은 펜 굵기의 몇 배를 넘지 못하므로 크기를 펜 굵기와도 견준다
+            if (chords.sorted()[n / 2] < max(MIN_CHORD_DP * unit, MIN_CHORD_WIDTHS * st.width)) return null
             var l = st.x(0); var r = l; var t = st.y(0); var b = t
             for (i in 1 until st.count) {
                 l = minOf(l, st.x(i)); r = maxOf(r, st.x(i))
                 t = minOf(t, st.y(i)); b = maxOf(b, st.y(i))
             }
-            if (hypot(r - l, b - t) < MIN_EXTENT_DP * unit) return null
+            if (hypot(r - l, b - t) < max(MIN_EXTENT_DP * unit, MIN_EXTENT_WIDTHS * st.width)) return null
             // 긁기는 거의 같은 자리를 비슷한 길이로 정반대로 오간다. 이어진 두 번이 그런지 센다
             // (한 획으로 이어 쓴 글자 'ㅗㅇ'·동그라미 치기는 방향·길이가 들쭉날쭉하다)
             var good = 0
