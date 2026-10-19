@@ -27,6 +27,8 @@ internal class DocTab(var uri: Uri, var canOverwrite: Boolean, var isNewNote: Bo
     var outline: Pair<File, List<PdfOutlineItem>>? = null
     /** 자동 저장 진행 상태 */
     val draft = DraftState()
+    /** 옵션 '자동으로 덮어쓰기 저장'이 원본 파일에 쓰는 중 */
+    var overwriting = false
     /** 복구하는 탭: 문서 대신 이 자동 저장본을 열고(필기가 저장 안 된 상태로), 다 열면 비운다 */
     var draftFile: File? = null
     /** 가벼운 자동 저장본이면 [draftFile]은 필기만 담은 파일이고, 문서 자체는 이 사본 (아니면 null) */

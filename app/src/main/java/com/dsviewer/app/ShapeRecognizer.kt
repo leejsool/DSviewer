@@ -24,7 +24,7 @@ import kotlin.math.sqrt
 internal object ShapeRecognizer {
 
     /** 알아본 도형: 이름과 맞춘 선 */
-    class Result(val label: String, val fitted: Fitted)
+    class Result(val label: String, val fitted: Fitted, val drawn: DoubleArray? = null)
 
     private const val DEG = PI / 180
 
@@ -40,23 +40,119 @@ internal object ShapeRecognizer {
         val gap = hypot(xs[n - 1] - xs[0], ys[n - 1] - ys[0])
         return when {
             gap >= diag * 0.9 -> straight(p)
-            gap <= diag * 0.3 -> closed(p, diag)
+            gap <= diag * 0.3 -> anchored(closed(trimOverlap(p, diag), diag), xs[0], ys[0], diag)
             else -> null
         }
     }
 
+    /**
+     * 삼각형·사각형은 시작점을 움직이지 않는다: 시작점에 가장 가까운 꼭짓점을 시작점에 정확히 놓는다
+     * (시작점이 그 꼭짓점에 붙은 짧은 변의 4분의 1 안이면. 모서리를 둥글게 시작해도 그 모서리로 본다).
+     * 도형 전체를 그냥 옮기면 정확히 그린 다른 꼭짓점들이 같이 밀리므로, 시작점을 기준으로 도형을 돌리고 키우는 것(닮음 변환)으로
+     * 나머지 꼭짓점이 그린 자리([Result.drawn])에 최소제곱으로 가장 가깝게 오도록 한다. 닮음 변환이라 직각·같은 변·평행 같은
+     * 도형의 조건은 그대로다. 닮음 변환으로 맞출 수 없거나 시작점이 변 가운데쯤이면 도형을 옮겨서라도 시작점이 도형 위에 오게 한다.
+     */
+    private fun anchored(r: Result?, sx: Double, sy: Double, diag: Double): Result? {
+        val drawn = r?.drawn ?: return r  // 별은 꼭지를 위로 세워 맞춘 자리를 지킨다 (그린 꼭짓점을 따로 두지 않는다)
+        val c = r.fitted.curves.single()
+        val m = c.size / 2 - 1  // 마지막 점은 첫 점의 되풀이
+        if (drawn.size / 2 != m) return r
+        fun shifted(dx: Double, dy: Double) = Result(r.label, Fitted(listOf(FloatArray(c.size) { (c[it] + if (it % 2 == 0) dx else dy).toFloat() })), drawn)
+        var pin = -1
+        var pinD = Double.MAX_VALUE
+        for (i in 0 until m) {
+            val d = hypot(c[i * 2] - sx, c[i * 2 + 1] - sy)
+            if (d < pinD) { pinD = d; pin = i }
+        }
+        if (pin < 0) return r
+        fun edge(a: Int, b: Int) = hypot((c[b * 2] - c[a * 2]).toDouble(), (c[b * 2 + 1] - c[a * 2 + 1]).toDouble())
+        val shortEdge = minOf(edge(pin, (pin + 1) % m), edge(pin, (pin + m - 1) % m))
+        if (pinD > shortEdge * 0.25) {
+            // 변 가운데쯤에서 시작: 시작점에 가장 가까운 변 위의 점이 시작점이 되도록 도형을 옮긴다
+            var bx = 0.0; var by = 0.0; var bd = Double.MAX_VALUE
+            for (i in 0 until m) {
+                val j = i + 1
+                val ex = (c[j * 2] - c[i * 2]).toDouble(); val ey = (c[j * 2 + 1] - c[i * 2 + 1]).toDouble()
+                val l2 = ex * ex + ey * ey
+                val t = if (l2 < 1e-12) 0.0 else (((sx - c[i * 2]) * ex + (sy - c[i * 2 + 1]) * ey) / l2).coerceIn(0.0, 1.0)
+                val qx = c[i * 2] + ex * t; val qy = c[i * 2 + 1] + ey * t
+                val d = hypot(qx - sx, qy - sy)
+                if (d < bd) { bd = d; bx = qx; by = qy }
+            }
+            return shifted(sx - bx, sy - by)
+        }
+        // 도형의 꼭짓점이 그린 꼭짓점 중 어느 것인지: 돌아가는 방향·시작 번호를 바꿔 가며 거리 합이 가장 작은 짝
+        var match = IntArray(m) { it }
+        var matchCost = Double.MAX_VALUE
+        for (dir in intArrayOf(1, -1)) for (sh in 0 until m) {
+            val map = IntArray(m) { ((dir * it + sh) % m + m) % m }
+            var cost = 0.0
+            for (i in 0 until m) cost += (c[i * 2] - drawn[map[i] * 2]).let { it * it } + (c[i * 2 + 1] - drawn[map[i] * 2 + 1]).let { it * it }
+            if (cost < matchCost) { matchCost = cost; match = map }
+        }
+        // S 기준 w = Σ conj(a)·b / Σ|a|² (a: 도형의 꼭짓점, b: 그린 꼭짓점의 시작점 기준 위치) → S + w·a
+        var wr = 0.0; var wi = 0.0; var den = 0.0
+        for (i in 0 until m) {
+            if (i == pin) continue
+            val ax = c[i * 2] - c[pin * 2].toDouble(); val ay = c[i * 2 + 1] - c[pin * 2 + 1].toDouble()
+            val bx = drawn[match[i] * 2] - sx; val by = drawn[match[i] * 2 + 1] - sy
+            wr += ax * bx + ay * by; wi += ax * by - ay * bx; den += ax * ax + ay * ay
+        }
+        // 맞출 수 없으면 (꼭짓점이 겹쳐 있거나, 너무 많이 키우고 줄여야 하면) 꼭짓점만 시작점으로 옮긴다
+        if (den < 1e-9) return shifted(sx - c[pin * 2], sy - c[pin * 2 + 1])
+        wr /= den; wi /= den
+        val scale = hypot(wr, wi)
+        if (scale < 0.75 || scale > 1.33) return shifted(sx - c[pin * 2], sy - c[pin * 2 + 1])
+        val out = FloatArray(c.size)
+        for (i in 0..m) {
+            val ax = c[i * 2] - c[pin * 2].toDouble(); val ay = c[i * 2 + 1] - c[pin * 2 + 1].toDouble()
+            out[i * 2] = (sx + wr * ax - wi * ay).toFloat()
+            out[i * 2 + 1] = (sy + wi * ax + wr * ay).toFloat()
+        }
+        return Result(r.label, Fitted(listOf(out)), drawn)
+    }
+
+    /**
+     * 닫힌 도형을 그리다 시작점을 조금 지나쳐 그은 획: 끝점이 앞쪽 획 위에 얹혀 있으면 그 앞부분을 잘라
+     * 끝점에서 시작해 끝점으로 돌아오는 한 바퀴로 만든다 (지나친 부분이 가짜 모서리로 잡히지 않게).
+     */
+    private fun trimOverlap(p: Pair<DoubleArray, DoubleArray>, diag: Double): Pair<DoubleArray, DoubleArray> {
+        val (xs, ys) = p
+        val n = xs.size
+        val ex = xs[n - 1]; val ey = ys[n - 1]
+        var bestJ = 0
+        var bestD = Double.MAX_VALUE
+        for (j in 0 until n / 4) {
+            val d = hypot(xs[j] - ex, ys[j] - ey)
+            if (d < bestD) { bestD = d; bestJ = j }
+        }
+        // 끝점이 앞쪽 획에 3% 안으로 붙어 있고 잘라 낼 만큼(점 3개 넘게) 지나쳤을 때만
+        if (bestJ <= 2 || bestD > diag * 0.03) return p
+        return xs.copyOfRange(bestJ, n) to ys.copyOfRange(bestJ, n)
+    }
+
     // ---------------- 직선 ----------------
 
+    /**
+     * 직선: 그은 시작점과 끝점(펜을 멈춘 자리)을 그대로 잇는다. 선을 그을 때 양 끝은 겨냥한 자리라 거의 정확하기 때문이다.
+     * 수평·수직·45°에 3° 안으로 가까우면 가운데를 축으로 살짝 돌려 딱 맞춘다.
+     */
     private fun straight(p: Pair<DoubleArray, DoubleArray>): Result? {
         val (xs, ys) = p
-        val l = ShapeFit.line(p) ?: return null
-        val x0 = l[0].toDouble(); val y0 = l[1].toDouble()
-        val dx = l[2] - x0; val dy = l[3] - y0
+        val n = xs.size
+        val x0 = xs[0]; val y0 = ys[0]
+        val dx = xs[n - 1] - x0; val dy = ys[n - 1] - y0
         val len = hypot(dx, dy)
-        if (len < 1.0) return null
+        if (len < 3.0) return null
         var worst = 0.0
         for (i in xs.indices) worst = max(worst, abs((xs[i] - x0) * dy - (ys[i] - y0) * dx) / len)
         if (worst > len * 0.06) return null
+        val th = atan2(dy, dx)
+        val k = (th / (PI / 4)).roundToInt()
+        val snapped = if (abs(th - k * (PI / 4)) <= 3 * DEG) k * (PI / 4) else th
+        val mx = (x0 + xs[n - 1]) / 2; val my = (y0 + ys[n - 1]) / 2
+        val hx = cos(snapped) * len / 2; val hy = sin(snapped) * len / 2
+        val l = floatArrayOf((mx - hx).toFloat(), (my - hy).toFloat(), (mx + hx).toFloat(), (my + hy).toFloat())
         return Result("직선", Fitted(listOf(l)))
     }
 
@@ -157,7 +253,7 @@ internal object ShapeRecognizer {
         val ang = DoubleArray(3) { angleAt(v, it) }
         val kind = when {
             ang.all { abs(it - 60 * DEG) < 10 * DEG } -> ShapeKind.TRI_EQUILATERAL
-            ang.any { abs(it - 90 * DEG) < 8 * DEG } -> {
+            ang.any { abs(it - 90 * DEG) < 10 * DEG } -> {
                 val ia = (0..2).minBy { abs(ang[it] - 90 * DEG) }
                 // 직각 꼭짓점에 붙은 두 변이 거의 같으면 직각이등변
                 val s1 = side(v, ia); val s2 = side(v, (ia + 2) % 3)
@@ -166,7 +262,7 @@ internal object ShapeRecognizer {
             else -> ShapeKind.TRIANGLE
         }
         val curve = Polygons.triangle(kind, v, p, quick = true)
-        return if (fits(p.first, p.second, curve, diag)) Result("삼각형", Fitted(listOf(curve))) else null
+        return if (fits(p.first, p.second, curve, diag)) Result("삼각형", Fitted(listOf(curve)), v) else null
     }
 
     private fun quad(p: Pair<DoubleArray, DoubleArray>, diag: Double): Result? {
@@ -177,7 +273,7 @@ internal object ShapeRecognizer {
             if (s.max() / s.min() < 1.15) ShapeKind.SQUARE else ShapeKind.RECTANGLE
         }
         val curve = Polygons.quad(kind, v)
-        return if (fits(p.first, p.second, curve, diag)) Result("사각형", Fitted(listOf(curve))) else null
+        return if (fits(p.first, p.second, curve, diag)) Result("사각형", Fitted(listOf(curve)), v) else null
     }
 
     // ---------------- 별 ----------------

@@ -252,6 +252,79 @@ internal class DocSaver(
         launchSaveAs(suggestedName(t))
     }
 
+    /** 물어보지 않고 원본에 덮어쓸 수 있는 탭인가: 저장하지 않은 필기가 있는 PDF이고, 덮어쓸 파일이 있다 (새 노트·한글 문서·복습 풀이는 아니다) */
+    fun canAutoOverwrite(t: DocTab): Boolean =
+        t.ink?.dirty == true && t.canOverwrite && t.type == DocType.PDF && !t.isNewNote && t.review == null &&
+            t.sourcePdf != null && !t.pagesBusy && !t.overwriting
+
+    /**
+     * 옵션 '자동으로 덮어쓰기 저장': 저장 단추를 누른 것처럼 원본 파일에 덮어쓰되, 아무것도 묻거나 알리지 않는다.
+     * 덮어쓸 수 없는 탭은 건너뛰고, 쓰지 못해도 대화상자를 띄우지 않는다 (그 필기는 자동 저장본에 남아 있다).
+     * 쓰는 사이 필기가 또 바뀌었으면 '저장됨'으로 만들지 않아 다음에 다시 쓴다. 끝나면 [done]에 성공 여부를 알린다
+     */
+    fun autoOverwrite(t: DocTab, showProgress: Boolean = false, done: ((Boolean) -> Unit)? = null) {
+        val inkDoc = t.ink
+        val src = t.sourcePdf
+        if (inkDoc == null || src == null || !canAutoOverwrite(t)) {
+            done?.invoke(false)
+            return
+        }
+        if (showProgress) progress.visibility = View.VISIBLE
+        if (current() === t) textEditor.commit()
+        val target = t.uri
+        val snapshot = inkDoc.snapshot()
+        val marks = inkDoc.bookmarkedPages()
+        val wrongSave = inkDoc.wrongSave()
+        val seen = inkDoc.changeCount
+        t.overwriting = true
+        activity.lifecycleScope.launch {
+            val ok = try {
+                withContext(Dispatchers.IO) { writeOver(src, target, snapshot, marks, wrongSave) }
+                true
+            } catch (e: Throwable) {  // 메모리 부족도 앱을 죽이지 않고 이번만 건너뛴다
+                false
+            }
+            t.overwriting = false
+            if (showProgress) progress.visibility = View.GONE
+            if (ok) {
+                if (target.scheme == "file") target.path?.let { MediaScannerConnection.scanFile(activity, arrayOf(it), null, null) }
+                if (inkDoc.changeCount == seen) {
+                    inkDoc.markSaved()
+                    ReviewIndexStore.update(activity, t.uri.toString(), t.name, inkDoc.allWrongs().map { it.second })
+                }
+            } else {
+                Toast.makeText(activity, "'${t.name}' 자동 저장에 실패했습니다.", Toast.LENGTH_SHORT).show()
+            }
+            done?.invoke(ok)
+        }
+    }
+
+    /**
+     * 필기를 얹은 PDF를 임시 파일에 다 쓴 뒤 [target]에 옮긴다. 파일 주소면 같은 폴더의 임시 파일을 바꿔 끼워서
+     * 쓰는 도중 앱이 꺼져도 원본이 반쯤 쓰인 채로 남지 않게 하고, 그럴 수 없으면 (문서 제공자 주소) 덮어쓴다
+     */
+    private fun writeOver(src: File, target: Uri, snapshot: List<List<Stroke>>, marks: Set<Int>, wrongSave: WrongSave?) {
+        val tmp = FileUtil.tempFile(activity, "out", "pdf")
+        try {
+            PdfInk.save(src, tmp, snapshot, marks, wrongSave)
+            val dest = if (target.scheme == "file") target.path?.let(::File) else null
+            if (dest != null) {
+                val side = File(dest.parentFile, dest.name + ".tmp")
+                try {
+                    tmp.inputStream().use { i -> side.outputStream().use { o -> i.copyTo(o, 1 shl 16) } }
+                    java.nio.file.Files.move(side.toPath(), dest.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+                    return
+                } catch (e: Exception) {
+                    side.delete()  // 같은 폴더에 임시 파일을 못 두면 아래처럼 바로 덮어쓴다
+                }
+            }
+            val out = activity.contentResolver.openOutputStream(target, "wt") ?: error("저장 위치를 열 수 없습니다.")
+            out.use { o -> tmp.inputStream().use { it.copyTo(o, 1 shl 16) } }
+        } finally {
+            tmp.delete()
+        }
+    }
+
     fun saveTo(t: DocTab, target: Uri, overwrite: Boolean) {
         val inkDoc = t.ink ?: return
         val src = t.sourcePdf ?: return

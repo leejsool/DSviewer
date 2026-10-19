@@ -53,6 +53,20 @@ class ShapeRecognizerTest {
         assertEquals("직선", r?.label)
     }
 
+    @Test fun 직선은_그은_시작점과_끝점을_그대로_잇는다() {
+        val c = recognize(stroke(listOf(120.0 to 90.0, 330.0 to 190.0), 0.8))!!.fitted.curves.single()
+        assertEquals(120f, c[0], 2f)
+        assertEquals(90f, c[1], 2f)
+        assertEquals(330f, c[2], 2f)
+        assertEquals(190f, c[3], 2f)
+    }
+
+    @Test fun 시작점에_작은_갈고리가_있어도_직선() {
+        val pts = listOf(100.0 to 106.0, 104.0 to 100.0, 300.0 to 102.0)
+        val c = recognize(stroke(pts, 0.5))!!.fitted.curves.single()
+        assertEquals(300f, c[2], 3f)
+    }
+
     @Test fun 수평에_가까운_직선은_딱_수평() {
         val c = recognize(stroke(listOf(100.0 to 100.0, 300.0 to 104.0), 0.5))!!.fitted.curves.single()
         assertEquals(c[1], c[3], 1e-3f)
@@ -90,6 +104,100 @@ class ShapeRecognizerTest {
         assertEquals("삼각형", r.label)
         val c = r.fitted.curves.single()
         // 세 꼭짓점 중 하나는 두 변이 정확히 수직
+        val cosines = (0..2).map { i ->
+            val o = (i + 1) % 3; val a = i; val b = (i + 2) % 3
+            val ax = c[a * 2] - c[o * 2]; val ay = c[a * 2 + 1] - c[o * 2 + 1]
+            val bx = c[b * 2] - c[o * 2]; val by = c[b * 2 + 1] - c[o * 2 + 1]
+            abs((ax * bx + ay * by) / (hypot(ax, ay) * hypot(bx, by))).toDouble()
+        }
+        assertEquals(0.0, cosines.min(), 0.02)
+    }
+
+    /** 닫힌 곡선의 꼭짓점들 (끝에 한 번 더 붙은 첫 점은 뺀다) */
+    private fun corners(r: ShapeRecognizer.Result): List<Pair<Float, Float>> {
+        val c = r.fitted.curves.single()
+        return (0 until c.size / 2 - 1).map { c[it * 2] to c[it * 2 + 1] }
+    }
+
+    private fun assertHasCorner(cs: List<Pair<Float, Float>>, x: Double, y: Double, tol: Double = 8.0) {
+        val d = cs.minOf { hypot(it.first - x, it.second - y) }
+        assertEquals("꼭짓점 ($x, $y)이 없음: $cs", true, d <= tol)
+    }
+
+    @Test fun 길쭉한_직각삼각형() {
+        for ((w, h) in listOf(400.0 to 200.0, 400.0 to 120.0, 500.0 to 80.0, 600.0 to 60.0)) {
+            val r = recognize(polygon(listOf(100.0 to 100.0, 100.0 to 100.0 + h, 100.0 + w to 100.0 + h), 1.5))
+            assertEquals("삼각형 ${w}x$h", "삼각형", r?.label)
+            val cs = corners(r!!)
+            assertHasCorner(cs, 100.0, 100.0)
+            assertHasCorner(cs, 100.0, 100.0 + h)
+            assertHasCorner(cs, 100.0 + w, 100.0 + h)
+        }
+    }
+
+    @Test fun 손으로_대충_그린_길쭉한_직각삼각형() {
+        val r = recognize(polygon(listOf(100.0 to 100.0, 108.0 to 222.0, 505.0 to 214.0), 1.5))
+        assertEquals("삼각형", r?.label)
+        assertHasCorner(corners(r!!), 505.0, 214.0, 12.0)
+    }
+
+    @Test fun 시작점을_지나쳐_그은_길쭉한_삼각형도() {
+        val r = recognize(polygon(listOf(100.0 to 100.0, 100.0 to 300.0, 500.0 to 300.0), 1.5, overshoot = 25.0))
+        assertEquals("삼각형", r?.label)
+        val cs = corners(r!!)
+        assertHasCorner(cs, 500.0, 300.0)
+        assertHasCorner(cs, 100.0, 100.0)
+    }
+
+    @Test fun 보정한_삼각형과_사각형은_시작점을_움직이지_않는다() {
+        val shapes = listOf(
+            listOf(100.0 to 100.0, 108.0 to 222.0, 505.0 to 214.0),      // 대충 그린 길쭉한 직각삼각형
+            listOf(200.0 to 100.0, 320.0 to 300.0, 90.0 to 280.0),       // 일반 삼각형
+            listOf(100.0 to 100.0, 330.0 to 108.0, 322.0 to 260.0, 96.0 to 252.0),  // 사각형
+            listOf(100.0 to 100.0, 260.0 to 98.0, 262.0 to 262.0, 98.0 to 260.0),   // 정사각형
+        )
+        for (vs in shapes) {
+            // 어느 꼭짓점에서 시작해도, 시작점은 한 꼭짓점으로 그대로 남는다
+            for (s in vs.indices) {
+                val rotated = vs.drop(s) + vs.take(s)
+                val st = polygon(rotated, 1.5)
+                val r = recognize(st)
+                assertNotNull("인식 ${rotated}", r)
+                val c = r!!.fitted.curves.single()
+                val d = (0 until c.size / 2 - 1).minOf { hypot((c[it * 2] - st.x(0)).toDouble(), (c[it * 2 + 1] - st.y(0)).toDouble()) }
+                assertEquals("시작점 ${rotated[0]}에 꼭짓점이 놓여야 함", 0.0, d, 0.01)
+            }
+        }
+    }
+
+    @Test fun 모서리에서_조금_떨어진_곳에서_시작해도_시작점은_도형_위에_그대로() {
+        // 모서리를 겨냥해 시작했지만 (15px쯤) 꼭짓점에서 벗어난 시작점: 그 자리가 꼭짓점이 되고, 다른 꼭짓점은 그린 곳에 남는다
+        val start = 112.0 to 108.0
+        val st = polygon(listOf(start, 100.0 to 300.0, 500.0 to 300.0, 100.0 to 100.0), 1.5)
+        val r = recognize(st)
+        assertEquals("삼각형", r?.label)
+        val cs = corners(r!!)
+        assertHasCorner(cs, start.first, start.second, 0.01)
+        assertHasCorner(cs, 100.0, 300.0, 10.0)
+        assertHasCorner(cs, 500.0, 300.0, 10.0)
+    }
+
+    @Test fun 변_가운데서_시작해도_시작점은_도형_위에_있다() {
+        val start = 100.0 to 200.0   // 세로 변의 한가운데
+        val st = polygon(listOf(start, 100.0 to 300.0, 500.0 to 300.0, 100.0 to 100.0), 1.5)
+        val c = recognize(st)!!.fitted.curves.single()
+        val d = (0 until c.size / 2 - 1).minOf { i ->
+            val j = i + 1
+            val ex = c[j * 2] - c[i * 2]; val ey = c[j * 2 + 1] - c[i * 2 + 1]
+            val t = (((start.first - c[i * 2]) * ex + (start.second - c[i * 2 + 1]) * ey) / (ex * ex + ey * ey)).coerceIn(0.0, 1.0)
+            hypot(c[i * 2] + ex * t - start.first, c[i * 2 + 1] + ey * t - start.second)
+        }
+        assertEquals(0.0, d, 0.01)
+    }
+
+    @Test fun 시작점을_옮겨도_직각과_같은_변은_그대로() {
+        val st = polygon(listOf(100.0 to 100.0, 98.0 to 300.0, 322.0 to 304.0), 1.5)
+        val c = recognize(st)!!.fitted.curves.single()
         val cosines = (0..2).map { i ->
             val o = (i + 1) % 3; val a = i; val b = (i + 2) % 3
             val ax = c[a * 2] - c[o * 2]; val ay = c[a * 2 + 1] - c[o * 2 + 1]

@@ -969,6 +969,9 @@ class InkDocument(pageCount: Int) {
 
     var dirty = false
         private set
+    /** 필기가 바뀐 횟수: 저장하는 동안 또 바뀌었는지 알아보는 데 쓴다 (저장이 끝나도 깨끗하다고 하면 안 되므로) */
+    var changeCount = 0
+        private set
     var onChanged: (() -> Unit)? = null
 
     val canUndo get() = undoStack.isNotEmpty()
@@ -1267,6 +1270,7 @@ class InkDocument(pageCount: Int) {
 
     private fun changed() {
         dirty = true
+        changeCount++
         onChanged?.invoke()
     }
 }

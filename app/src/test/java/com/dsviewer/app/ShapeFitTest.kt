@@ -194,6 +194,22 @@ class ShapeFitTest {
         assertTrue((0..2).any { abs(angle(v, it) - 90.0) < 0.01 })
     }
 
+    @Test fun rightTriangleKeepsTheDrawnSizeWhenElongated() {
+        // 길쭉한 직각삼각형: 뾰족한 끝이 깎여 짧아지거나 이웃 변에 끌려 틀어지지 않는다
+        for ((w, h) in listOf(400.0 to 200.0, 400.0 to 120.0, 600.0 to 60.0)) {
+            val drawn = listOf(100.0 to 100.0, 100.0 to 100.0 + h, 100.0 + w to 100.0 + h)
+            val v = vertices(fit(ShapeKind.TRI_RIGHT, closedStroke(drawn, 1.5))!!)
+            for (d in drawn) assertTrue("${w}x$h: 꼭짓점이 그린 곳 가까이 $d $v", v.any { dist(it, d) < 8.0 })
+            assertTrue((0..2).any { abs(angle(v, it) - 90.0) < 0.01 })
+        }
+    }
+
+    @Test fun plainTriangleKeepsTheDrawnSizeWhenElongated() {
+        val drawn = listOf(100.0 to 100.0, 100.0 to 300.0, 500.0 to 300.0)
+        val v = vertices(fit(ShapeKind.TRIANGLE, closedStroke(drawn, 1.5))!!)
+        for (d in drawn) assertTrue("꼭짓점이 그린 곳 가까이 $d $v", v.any { dist(it, d) < 8.0 })
+    }
+
     @Test fun rightIsoscelesHasRightAngleAndEqualLegs() {
         val drawn = listOf(100.0 to 100.0, 95.0 to 300.0, 310.0 to 310.0)
         val v = vertices(fit(ShapeKind.TRI_RIGHT_ISOSCELES, closedStroke(drawn))!!)

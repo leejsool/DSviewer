@@ -40,8 +40,10 @@ import com.google.android.material.snackbar.Snackbar
 import com.dsviewer.app.conv.DocConvert
 import com.dsviewer.app.conv.ImagePdf
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import android.util.SizeF
@@ -110,6 +112,7 @@ class ViewerActivity : AppCompatActivity() {
     private var fromBrowser = false
 
     private val prefs by lazy { getSharedPreferences("tools", Context.MODE_PRIVATE) }
+    private var autoOverwriteJob: Job? = null
 
     private val createDoc = registerForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
         val t = saver.takeSaveTarget()
@@ -377,11 +380,37 @@ class ViewerActivity : AppCompatActivity() {
         calc.onPause()
     }
 
+    override fun onStart() {
+        super.onStart()
+        startAutoOverwrite()
+    }
+
     override fun onStop() {
         super.onStop()
         // 시스템이 뒤로 간 앱을 끌 수 있으니, 저장하지 않은 필기는 지금 자동 저장본에 적어 둔다
         autoSaver.flush()
+        // 수업이 끝나 앱을 닫는 것도 여기로 오니, 옵션이 켜져 있으면 원본에도 덮어쓴다
+        autoOverwriteJob?.cancel()
+        if (autoOverwriteOn()) overwriteAll()
         docs.forEach { rememberPage(it) }
+    }
+
+    /** 옵션 ▸ 자동으로 덮어쓰기 저장 (기본은 끔) */
+    private fun autoOverwriteOn() = prefs.getBoolean(KEY_AUTO_OVERWRITE, false)
+
+    /** 화면이 보이는 동안 [AUTO_OVERWRITE_MS]마다, 옵션이 켜져 있으면 저장하지 않은 문서를 원본에 덮어쓴다 */
+    private fun startAutoOverwrite() {
+        autoOverwriteJob?.cancel()
+        autoOverwriteJob = lifecycleScope.launch {
+            while (true) {
+                delay(AUTO_OVERWRITE_MS)
+                if (autoOverwriteOn()) overwriteAll()
+            }
+        }
+    }
+
+    private fun overwriteAll() {
+        for (t in docs.toList()) saver.autoOverwrite(t)
     }
 
     /** 뷰어가 이미 떠 있을 때 탐색기에서 문서를 고르면 새 탭으로 연다 */
@@ -612,6 +641,18 @@ class ViewerActivity : AppCompatActivity() {
             removeTab(t)
             return
         }
+        // 옵션 '자동으로 덮어쓰기 저장'이 켜져 있으면 묻지 않고 원본에 저장한 뒤 닫는다 (저장하지 못하면 평소처럼 묻는다)
+        if (autoOverwriteOn() && saver.canAutoOverwrite(t)) {
+            saver.autoOverwrite(t, showProgress = true) { ok ->
+                if (t !in docs) return@autoOverwrite
+                if (ok && t.ink?.dirty != true) removeTab(t) else askSaveBeforeClose(t)
+            }
+            return
+        }
+        askSaveBeforeClose(t)
+    }
+
+    private fun askSaveBeforeClose(t: DocTab) {
         docTabs.select(docs.indexOf(t), notify = true)
         MaterialAlertDialogBuilder(this)
             .setTitle("'${t.name}'에 저장하지 않은 필기가 있습니다")
@@ -2872,6 +2913,10 @@ class ViewerActivity : AppCompatActivity() {
         val convenience = OptionCategory(
             "편의 옵션", "필기할 때 쓰는 편의 기능을 켜고 끕니다.",
             listOf(
+                OptionItem(icon(R.drawable.ic_save), "자동으로 덮어쓰기 저장", { autoOverwriteOn() }, { on ->
+                    prefs.edit().putBoolean(KEY_AUTO_OVERWRITE, on).apply()
+                    true
+                }, "켜면 7분마다 그리고 앱을 나가거나 탭을 닫을 때, 저장하지 않은 필기를 물어보지 않고 원본 파일에 덮어씁니다. (새 노트·한글 문서는 해당 없음. 끄면 지금처럼 ‘저장’을 눌러야 합니다)"),
                 OptionItem(icon(R.drawable.ic_scribble_erase), "긁어서 지우기", { docView.scribbleErase }, { on ->
                     docView.scribbleErase = on
                     prefs.edit().putBoolean("scribbleErase", on).apply()
@@ -2945,7 +2990,7 @@ class ViewerActivity : AppCompatActivity() {
                 p.view.penTilt = true
                 p.view.holdShape = true
             }
-            prefs.edit().remove("holdShape").remove("penButton").remove("penTilt").remove("textMarkup").remove("textMark").remove("pageKeys").remove(KEY_PRESENT_TIMER).remove(KEY_PRESENT_PAGE).apply()
+            prefs.edit().remove("holdShape").remove("penButton").remove("penTilt").remove("textMarkup").remove("textMark").remove("pageKeys").remove(KEY_AUTO_OVERWRITE).remove(KEY_PRESENT_TIMER).remove(KEY_PRESENT_PAGE).apply()
             setHorizontalFlow(false)
             tools.onTextMarkupChanged()
             for (p in panes) p.view.textMark = TextMark.NONE
@@ -2992,6 +3037,10 @@ class ViewerActivity : AppCompatActivity() {
         private const val PARALLEL_EDIT_MAX_BYTES = 40L shl 20
         /** 넘기지 않은 채 이만큼(ms) 지나면 쪽 번호가 흐려지며 사라진다 */
         private const val PAGE_LABEL_SHOW_MS = 2500L
+
+        /** 옵션 '자동으로 덮어쓰기 저장' (기본은 끔)과 그 간격 */
+        private const val KEY_AUTO_OVERWRITE = "autoOverwrite"
+        private const val AUTO_OVERWRITE_MS = 7 * 60_000L
 
         /** 발표 옵션 (둘 다 기본은 끔) */
         private const val KEY_PRESENT_TIMER = "presentTimer"

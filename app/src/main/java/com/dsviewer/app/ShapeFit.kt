@@ -109,27 +109,17 @@ object ShapeFit {
 
     /**
      * 대충 그린 다각형의 꼭짓점 k개 ([x0,y0,x1,y1,...], 둘레 순서).
-     * 1) 볼록 껍질을 구하고 넓이를 가장 적게 잃는 꼭짓점부터 빼서 k개로 줄이고 (Visvalingam)
+     * 1) 볼록 껍질의 점 가운데 k개를 이어 만든 다각형의 넓이가 가장 넓은 것을 꼭짓점으로 고르고
+     *    (뾰족한 모서리일수록 끝점이 껍질 안쪽 점들보다 넓이에 크게 보태므로, 길쭉한 삼각형의 뾰족한 끝도 살아남는다)
      * 2) 각 변 가운데 부분의 점들로 직선을 맞춘 뒤, 이웃한 직선의 교점을 꼭짓점으로 삼는다.
      */
     internal fun polygon(p: Pair<DoubleArray, DoubleArray>, k: Int): DoubleArray? {
         val (xs, ys) = p
         val hull = convexHull(xs, ys)
         if (hull.size < k) return null
-        val poly = hull.toMutableList()
-        while (poly.size > k) {
-            var best = 0
-            var bestA = Double.MAX_VALUE
-            for (i in poly.indices) {
-                val a = poly[(i - 1 + poly.size) % poly.size]; val b = poly[i]; val c = poly[(i + 1) % poly.size]
-                val area = abs((xs[b] - xs[a]) * (ys[c] - ys[a]) - (xs[c] - xs[a]) * (ys[b] - ys[a]))
-                if (area < bestA) { bestA = area; best = i }
-            }
-            poly.removeAt(best)
-        }
+        val poly = maxAreaVertices(xs, ys, thinHull(xs, ys, hull), k)
         val vx = DoubleArray(k) { xs[poly[it]] }
-        val vy = DoubleArray(k) { ys[poly[it]] }
-        // 너무 납작하면 도형이 아님
+        val vy = DoubleArray(k) { ys[poly[it]] }        // 너무 납작하면 도형이 아님
         var area2 = 0.0
         var perim = 0.0
         for (i in 0 until k) {
@@ -137,15 +127,27 @@ object ShapeFit {
             area2 += vx[i] * vy[j] - vx[j] * vy[i]
             perim += hypot(vx[j] - vx[i], vy[j] - vy[i])
         }
-        if (abs(area2) / 2 < perim * perim * 0.01) return null
+        if (abs(area2) / 2 < perim * perim * 0.007) return null
 
-        // 변마다 직선 맞추기 (꼭짓점 가까운 15%와 변에서 멀리 떨어진 점은 빼고)
+        // 변마다 직선 맞추기 (꼭짓점 가까운 15%와 변에서 멀리 떨어진 점은 빼고).
+        // 점은 가장 가까운 변 하나에만 준다: 뾰족한 각 근처에서는 이웃 변의 점이 이 변 가까이 섞여 들어 직선이 틀어지므로
+        val owner = IntArray(xs.size) { m ->
+            var bestE = 0
+            var bestD = Double.MAX_VALUE
+            for (e in 0 until k) {
+                val f = (e + 1) % k
+                val d = segDistance(xs[m], ys[m], vx[e], vy[e], vx[f], vy[f])
+                if (d < bestD) { bestD = d; bestE = e }
+            }
+            bestE
+        }
         val lines = Array(k) { i ->
             val j = (i + 1) % k
             val ex = vx[j] - vx[i]; val ey = vy[j] - vy[i]
             val len = hypot(ex, ey)
             val px = ArrayList<Double>(); val py = ArrayList<Double>()
             for (m in xs.indices) {
+                if (owner[m] != i) continue
                 val t = ((xs[m] - vx[i]) * ex + (ys[m] - vy[i]) * ey) / (len * len)
                 if (t < 0.15 || t > 0.85) continue
                 val d = abs((xs[m] - vx[i]) * ey - (ys[m] - vy[i]) * ex) / len
@@ -182,6 +184,80 @@ object ShapeFit {
             out[i * 2] = x; out[i * 2 + 1] = y
         }
         return out
+    }
+
+    /** 점 (x, y)에서 선분 a-b까지의 거리 */
+    private fun segDistance(x: Double, y: Double, ax: Double, ay: Double, bx: Double, by: Double): Double {
+        val ex = bx - ax; val ey = by - ay
+        val l2 = ex * ex + ey * ey
+        val t = if (l2 < 1e-12) 0.0 else (((x - ax) * ex + (y - ay) * ey) / l2).coerceIn(0.0, 1.0)
+        return hypot(ax + ex * t - x, ay + ey * t - y)
+    }
+
+    /** 껍질 점이 너무 많으면 (계산이 느려지므로) 넓이를 가장 적게 잃는 점부터 빼서 이 수까지 줄인다 (Visvalingam) */
+    private const val HULL_MAX = 90
+
+    private fun thinHull(xs: DoubleArray, ys: DoubleArray, hull: List<Int>): List<Int> {
+        if (hull.size <= HULL_MAX) return hull
+        val poly = hull.toMutableList()
+        while (poly.size > HULL_MAX) {
+            var best = 0
+            var bestA = Double.MAX_VALUE
+            for (i in poly.indices) {
+                val a = poly[(i - 1 + poly.size) % poly.size]; val b = poly[i]; val c = poly[(i + 1) % poly.size]
+                val area = abs((xs[b] - xs[a]) * (ys[c] - ys[a]) - (xs[c] - xs[a]) * (ys[b] - ys[a]))
+                if (area < bestA) { bestA = area; best = i }
+            }
+            poly.removeAt(best)
+        }
+        return poly
+    }
+
+    /**
+     * 껍질 점 [hull](둘레 순서) 가운데 k개를 둘레 순서대로 이어 만든 다각형 중 넓이가 가장 넓은 것의 점 번호.
+     * 한 꼭짓점 s에서 부채꼴로 삼각형을 나눈 넓이를 동적 계획법으로 최대화한다.
+     */
+    private fun maxAreaVertices(xs: DoubleArray, ys: DoubleArray, hull: List<Int>, k: Int): List<Int> {
+        val h = hull.size
+        if (h <= k) return hull
+        fun tri(s: Int, a: Int, b: Int): Double {
+            val ps = hull[s]; val pa = hull[a]; val pb = hull[b]
+            return abs((xs[pa] - xs[ps]) * (ys[pb] - ys[ps]) - (xs[pb] - xs[ps]) * (ys[pa] - ys[ps])) / 2
+        }
+        var bestArea = -1.0
+        var best: List<Int> = hull.take(k)
+        for (s in 0 until h) {
+            // 번호를 s부터 돌려 매기고, g[m][j] = s 다음으로 m개를 골라 j에서 끝나는 부채꼴 넓이의 최대
+            val n = h - 1
+            val g = Array(k) { DoubleArray(n) { Double.NEGATIVE_INFINITY } }
+            val from = Array(k) { IntArray(n) { -1 } }
+            for (j in 0 until n) g[1][j] = 0.0
+            for (m in 2 until k) {
+                for (j in m - 1 until n) {
+                    for (i in m - 2 until j) {
+                        val prev = g[m - 1][i]
+                        if (prev == Double.NEGATIVE_INFINITY) continue
+                        val v = prev + tri(s, (s + 1 + i) % h, (s + 1 + j) % h)
+                        if (v > g[m][j]) { g[m][j] = v; from[m][j] = i }
+                    }
+                }
+            }
+            var endJ = -1
+            var endV = Double.NEGATIVE_INFINITY
+            for (j in k - 2 until n) if (g[k - 1][j] > endV) { endV = g[k - 1][j]; endJ = j }
+            if (endJ < 0 || endV <= bestArea) continue
+            bestArea = endV
+            val picked = IntArray(k - 1)
+            var j = endJ
+            for (m in k - 1 downTo 1) {
+                picked[m - 1] = j
+                j = from[m][j]
+            }
+            best = listOf(hull[s]) + picked.map { hull[(s + 1 + it) % h] }
+        }
+        // 껍질 순서(둘레)대로
+        val order = hull.withIndex().associate { it.value to it.index }
+        return best.sortedBy { order[it] }
     }
 
     /** 볼록 껍질 (점 번호, 둘레 순서) */
