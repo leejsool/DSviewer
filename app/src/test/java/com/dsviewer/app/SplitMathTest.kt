@@ -14,6 +14,13 @@ class SplitMathTest {
         assertFalse(SplitMath.sideBySide(1000, 1000))   // 정사각형은 위아래
     }
 
+    @Test fun chosenDirectionOverridesTheScreenShape() {
+        assertFalse(SplitMath.sideBySide(2800, 1752, false))
+        assertTrue(SplitMath.sideBySide(1752, 2800, true))
+        assertTrue(SplitMath.sideBySide(2800, 1752, null))
+        assertFalse(SplitMath.sideBySide(1752, 2800, null))
+    }
+
     @Test fun ratioIsClampedToTheAllowedRange() {
         assertEquals(0.2f, SplitMath.clamp(0f), 0f)
         assertEquals(0.8f, SplitMath.clamp(1f), 0f)

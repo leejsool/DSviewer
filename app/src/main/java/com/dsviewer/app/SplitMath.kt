@@ -14,6 +14,9 @@ internal object SplitMath {
     /** 화면이 가로로 길면 좌우로, 아니면 위아래로 나눈다 */
     fun sideBySide(width: Int, height: Int) = width > height
 
+    /** 사용자가 좌우·위아래를 골랐으면([forced]) 그대로, 아니면 화면 모양대로 */
+    fun sideBySide(width: Int, height: Int, forced: Boolean?) = forced ?: sideBySide(width, height)
+
     fun clamp(ratio: Float) = if (ratio.isNaN()) DEFAULT_RATIO else ratio.coerceIn(MIN_RATIO, MAX_RATIO)
 
     /** 나누는 방향의 전체 길이 [total]에서 구분선 [divider]를 뺀 나머지를 비율로 나눈 첫 칸 길이 (px) */

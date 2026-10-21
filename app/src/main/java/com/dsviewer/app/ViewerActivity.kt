@@ -395,8 +395,8 @@ class ViewerActivity : AppCompatActivity() {
         docs.forEach { rememberPage(it) }
     }
 
-    /** 옵션 ▸ 자동으로 덮어쓰기 저장 (기본은 끔) */
-    private fun autoOverwriteOn() = prefs.getBoolean(KEY_AUTO_OVERWRITE, false)
+    /** 옵션 ▸ 자동으로 덮어쓰기 저장 (기본은 켬) */
+    private fun autoOverwriteOn() = prefs.getBoolean(KEY_AUTO_OVERWRITE, true)
 
     /** 화면이 보이는 동안 [AUTO_OVERWRITE_MS]마다, 옵션이 켜져 있으면 저장하지 않은 문서를 원본에 덮어쓴다 */
     private fun startAutoOverwrite() {
@@ -1214,6 +1214,15 @@ class ViewerActivity : AppCompatActivity() {
             .show()
     }
 
+    /** ⋮ ▸ 뽑기: 수업 중 쓰는 뽑기 사이트를 바로 브라우저로 연다 (정해진 주소라 따로 묻지 않는다) */
+    private fun openDrawLots() {
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(DRAW_LOTS_URL)).addCategory(Intent.CATEGORY_BROWSABLE))
+        } catch (e: android.content.ActivityNotFoundException) {
+            toast("웹 브라우저를 열 수 없습니다.")
+        }
+    }
+
     /** 페이지 관리 창을 저장된 설정대로 열거나 닫는다 (전체 화면에서는 늘 닫음) */
     private fun syncPagePanel() {
         val t = current
@@ -1678,6 +1687,7 @@ class ViewerActivity : AppCompatActivity() {
                 R.id.action_save_image -> current?.let { if (it.ink != null) saver.askExportImages(it) }
                 R.id.action_calc -> calc.toggle()
                 R.id.action_timer -> timer.open()
+                R.id.action_draw_lots -> openDrawLots()
                 R.id.action_options -> showOptionsDialog(0)
                 R.id.action_about -> updater.show()
                 R.id.action_finger -> {
@@ -2584,6 +2594,11 @@ class ViewerActivity : AppCompatActivity() {
     private fun setupSplit() {
         splitHost.ratio = prefs.getFloat("splitRatio", SplitMath.DEFAULT_RATIO)
         splitHost.onRatioChanged = { r, done -> if (done) prefs.edit().putFloat("splitRatio", r).apply() }
+        // 구분선 가운데 단추로 고른 방향("side" 좌우 / "stack" 위아래). 안 골랐으면 화면 모양대로
+        splitHost.forcedSide = when (prefs.getString("splitDir", null)) { "side" -> true; "stack" -> false; else -> null }
+        splitHost.onDirectionChanged = { side ->
+            prefs.edit().apply { if (side == null) remove("splitDir") else putString("splitDir", if (side) "side" else "stack") }.apply()
+        }
         for (p in panes) {
             p.frame.onTouched = { if (split) focusPane(p) }
             // 칸의 크기나 자리가 바뀌면 겹쳐 뜬 줄이 칸마다 가리는 만큼을 다시 잰다
@@ -2902,10 +2917,16 @@ class ViewerActivity : AppCompatActivity() {
                     tools.applyToolVisibility()
                     true
                 })
-            } },
+            } + OptionItem(icon(R.drawable.ic_ruler), "자", { tools.rulerShown() }, { on ->
+                prefs.edit().putBoolean("showRuler", on).apply()
+                tools.applyRulerVisibility()
+                true
+            }, "직선자·눈금자·각도기를 고르는 단추입니다. 끄면 툴바에서 사라집니다.") },
             listOf(iconSizeChoice("toolIconSize", tools::applyToolIconSize)),
             onReorder = { from, to ->
                 val order = tools.toolNames.map { it.first }.toMutableList()
+                // 맨 끝의 '자' 줄은 차례를 바꾸지 않는다
+                if (from !in order.indices || to !in order.indices) return@OptionCategory
                 order.add(to, order.removeAt(from))
                 tools.setToolOrder(order)
             },
@@ -2982,7 +3003,7 @@ class ViewerActivity : AppCompatActivity() {
             ),
         )
         OptionsDialog(this, listOf(top, bottom, convenience)) {
-            prefs.edit().remove("topOrder").remove("hiddenActions").remove("hiddenTools").remove("topIconSize").remove("toolIconSize").putBoolean("scribbleErase", true).putBoolean("palmErase", true).apply()
+            prefs.edit().remove("topOrder").remove("hiddenActions").remove("hiddenTools").remove("showRuler").remove("topIconSize").remove("toolIconSize").putBoolean("scribbleErase", true).putBoolean("palmErase", true).apply()
             docView.scribbleErase = true
             docView.palmErase = true
             for (p in panes) {
@@ -2997,6 +3018,7 @@ class ViewerActivity : AppCompatActivity() {
             tools.setToolOrder(emptyList())
             applyActionVisibility()
             tools.applyToolVisibility()
+            tools.applyRulerVisibility()
             applyTopIconSize()
             tools.applyToolIconSize()
         }.show(start)
@@ -3040,6 +3062,7 @@ class ViewerActivity : AppCompatActivity() {
 
         /** 옵션 '자동으로 덮어쓰기 저장' (기본은 끔)과 그 간격 */
         private const val KEY_AUTO_OVERWRITE = "autoOverwrite"
+        private const val DRAW_LOTS_URL = "https://leejsool.github.io/bbobki/"
         private const val AUTO_OVERWRITE_MS = 7 * 60_000L
 
         /** 발표 옵션 (둘 다 기본은 끔) */

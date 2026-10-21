@@ -636,6 +636,20 @@ internal class ToolbarController(
         rulerButton.contentDescription = if (ruler.active) shown.label else "자"
     }
 
+    /** 옵션 ▸ 하단 툴바 ▸ '자' (기본은 보임) */
+    fun rulerShown() = prefs.getBoolean("showRuler", true)
+
+    /** '자' 단추를 보이거나 감춘다. 감출 때 켜져 있던 자는 함께 끈다 */
+    fun applyRulerVisibility() {
+        if (!::rulerButton.isInitialized) return
+        val shown = rulerShown()
+        rulerButton.visibility = if (shown) View.VISIBLE else View.GONE
+        if (!shown && docView.ruler.active) {
+            docView.ruler.hide()
+            updateRulerButton()
+        }
+    }
+
     fun setupRuler() {
         rulerButton = findViewById(R.id.toolRuler)
         rulerButton.setOnClickListener {
@@ -1445,6 +1459,7 @@ internal class ToolbarController(
         applyToolOrder()
         applyToolVisibility()
         setupRuler()
+        applyRulerVisibility()
     }
 
     fun selectTool(t: Tool) {
