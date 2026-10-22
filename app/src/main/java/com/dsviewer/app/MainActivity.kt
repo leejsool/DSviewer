@@ -1270,9 +1270,55 @@ class MainActivity : AppCompatActivity() {
         MaterialAlertDialogBuilder(this)
             .setTitle("저장하지 않은 필기 ${found.size}개")
             .setItems(items) { _, i -> unlockThen(found[i].uri) { openDraft(found[i]) } }
+            .setPositiveButton("모두 저장") { _, _ -> saveAllDrafts(found) }
             .setNegativeButton("나중에", null)
             .setNeutralButton("모두 버리기") { _, _ -> confirmDiscardDrafts(found) }
             .show()
+    }
+
+    private var savingDrafts = false
+
+    /**
+     * 저장하지 않은 필기를 문서를 열지 않고 모두 저장한다 ([DraftSaver]): 원래 문서가 있으면 덮어쓰고,
+     * 새 노트처럼 덮어쓸 곳이 없으면 문서 폴더의 DSnote 폴더에 새 PDF로 둔다. 저장하지 못한 것은 그대로 남는다
+     */
+    private fun saveAllDrafts(found: List<DraftMeta>) {
+        if (savingDrafts || found.isEmpty()) return
+        savingDrafts = true
+        fun shown(name: String, uri: String) = if (Locks.isLocked(this, uri)) "잠긴 문서" else name
+        val names = found.associate { it.name to shown(it.name, it.uri) }
+        val dialog = MaterialAlertDialogBuilder(this)
+            .setTitle("저장하지 않은 필기를 저장하는 중")
+            .setMessage("준비하는 중입니다…")
+            .setCancelable(false)
+            .show()
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                DraftSaver.saveAll(applicationContext, Drafts.store(this@MainActivity), found) { i, n, name ->
+                    if (name.isNotEmpty()) runOnUiThread { dialog.setMessage("${i + 1} / $n\n${names[name] ?: name}") }
+                }
+            }
+            runCatching { dialog.dismiss() }
+            savingDrafts = false
+            updateRecoverItem()
+            refresh()
+            val text = StringBuilder()
+            if (result.saved.isNotEmpty()) text.append("${result.saved.size}개를 저장했습니다.")
+            val moved = result.saved.filter { it.folder != null }
+            if (moved.isNotEmpty()) {
+                text.append("\n\n덮어쓸 원본이 없는 ${moved.size}개는 ${moved[0].folder} 폴더에 새 PDF로 두었습니다:")
+                moved.forEach { text.append("\n· ${it.name}") }
+            }
+            if (result.left.isNotEmpty()) {
+                text.append("\n\n저장하지 못한 ${result.left.size}개는 그대로 남겨 두었습니다. 하나씩 열어 복구할 수 있습니다:")
+                result.left.forEach { text.append("\n· ${names[it.name] ?: it.name} (${it.reason})") }
+            }
+            MaterialAlertDialogBuilder(this@MainActivity)
+                .setTitle(if (result.left.isEmpty()) "저장했습니다" else "일부만 저장했습니다")
+                .setMessage(text.toString())
+                .setPositiveButton("확인", null)
+                .show()
+        }
     }
 
     private fun confirmDiscardDrafts(found: List<DraftMeta>) {

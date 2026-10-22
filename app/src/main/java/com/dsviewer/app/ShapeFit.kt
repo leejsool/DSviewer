@@ -22,8 +22,10 @@ enum class ShapeKind(val label: String) {
     /** 두 점을 잇는 원호, 가운데를 비워 길이를 쓴다 */
     LENGTH_MARK("길이 표시"),
     LINE("일차"),
-    /** 점 두 개를 차례로 찍으면 그 두 점을 잇는 직선 */
-    LINE_2PT("두 점 직선"),
+    /** 획을 아무렇게나 그어도 처음 점과 끝점을 곧게 잇는 선분 */
+    LINE_ENDS("처음·끝점 선분"),
+    /** 점 두 개를 차례로 찍으면 그 두 점을 잇는 선분 */
+    LINE_2PT("두 점 선분"),
     QUADRATIC("이차"),
     CUBIC("삼차"),
     QUARTIC("사차"),
@@ -98,6 +100,7 @@ object ShapeFit {
         if (kind.isTapKind) return null
         if (kind == ShapeKind.CIRCLE_CR) return centerRadius(st)?.let { Fitted(listOf(it)) }
         if (kind == ShapeKind.RECT_DIAG) return diagonalRect(st)?.let { Fitted(listOf(it)) }
+        if (kind == ShapeKind.LINE_ENDS) return endsLine(st)?.let { Fitted(listOf(it)) }
         val p = resample(st) ?: return null
         when (kind) {
             ShapeKind.HYPERBOLA -> return ShapeCurves.hyperbola(p)
@@ -144,6 +147,15 @@ object ShapeFit {
             else -> null
         }
         return one?.let { Fitted(listOf(it)) }
+    }
+
+    /** 그은 획의 처음 점과 끝점을 잇는 선분 (두 점이 거의 붙어 있으면 null) */
+    internal fun endsLine(st: Stroke): FloatArray? {
+        if (st.count < 2) return null
+        val x0 = st.x(0); val y0 = st.y(0)
+        val x1 = st.x(st.count - 1); val y1 = st.y(st.count - 1)
+        if (hypot((x1 - x0).toDouble(), (y1 - y0).toDouble()) < 2) return null
+        return floatArrayOf(x0, y0, x1, y1)
     }
 
     /** 두 모서리를 대각선으로 한, 변이 가로·세로인 직사각형 (처음 점과 끝점이 마주 보는 모서리) */

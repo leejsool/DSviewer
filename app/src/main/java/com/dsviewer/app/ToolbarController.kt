@@ -67,6 +67,22 @@ internal class ToolbarController(
     private lateinit var shapeBarH: View
     private lateinit var shapeBarV: View
     private val shapeRow: LinearLayout = findViewById(R.id.shapeRow)
+    /**
+     * 도형 줄의 칸(일차·원·삼각형·사각형)을 누르면 그 도형 줄 위에 한 줄 더 생기는 무리 줄 (일차 · 이차 · 삼차 · 사차처럼. 칸들은 [shapeOptRow]에).
+     * 거기서 합친 묶음(일차 …)을 고르면 그 위에 옵션 줄이 또 한 줄 생긴다 ([shapeSubRow]).
+     * 위·아래 툴바에서만이고, 세로 툴바에서는 줄이 겹치므로 예전처럼 펼침 창으로 보인다
+     */
+    private val shapeOptRow = LinearLayout(activity)
+    private var shapeOptBar: View? = null
+    /** 옵션 줄이 펼친 칸 (없으면 null) */
+    private var shapeOptKey: ShapeKind? = null
+    /** 무리 줄 위에 한 줄 더 생기는, 합친 묶음(일차·원·삼각형·직사각형)의 옵션 줄 */
+    private val shapeSubRow = LinearLayout(activity)
+    private var shapeSubBar: View? = null
+    /** 옵션 줄이 펼친 묶음 (없으면 null) */
+    private var shapeSubGroup: ShapeMenu.Group? = null
+    /** 묶음마다 마지막으로 고른 옵션 (묶음 항목을 누르면 이것으로) */
+    private val shapeGroupLast = mutableMapOf<ShapeMenu.Group, ShapeKind>()
     private val lassoRow: View = findViewById(R.id.lassoRow)
     private val pasteButton: View = findViewById(R.id.pasteButton)
     private val pasteClipButton: View = findViewById(R.id.pasteClipButton)
@@ -84,6 +100,7 @@ internal class ToolbarController(
     /** 읽기 모드가 바뀔 때: 도형 줄은 읽기 모드가 아니고 보정 펜일 때만 */
     fun updateShapeBarForReadMode(readMode: Boolean) {
         shapeBar.visibility = if (!readMode && docView.tool == Tool.SHAPE) View.VISIBLE else View.GONE
+        if (readMode) hideShapeOptions()
     }
 
     /** 기기에 펜 입력(S펜 등)이 있는지. 펜을 인식하는 화면은 입력 장치에 SOURCE_STYLUS가 붙는다 */
@@ -181,6 +198,8 @@ internal class ToolbarController(
         formatBarV = sideScroll()
         shapeBarH = shapeBar
         shapeBarV = sideScroll()
+        shapeOptBar = optionStrip(shapeOptRow)
+        shapeSubBar = optionStrip(shapeSubRow)
         optionBarH = optionBar
         optionBarV = sideScroll()
         topOverlay = findViewById(R.id.topOverlay)
@@ -210,6 +229,7 @@ internal class ToolbarController(
     /** 옵션에서 하단(도구) 툴바 아이콘 크기를 바꿨을 때. 열려 있던 줄·창은 자리가 달라지므로 닫는다 */
     fun applyToolIconSize() {
         hideOptionBar()
+        hideShapeOptions()
         closeFlyout()
         dock.setIconScale(toolIconScale())
         findViewById<View>(R.id.toolbar).post { updateOverlayInsets() }
@@ -273,6 +293,63 @@ internal class ToolbarController(
     }
 
 
+    /**
+     * 도형 줄 위에 한 줄 더 생기는 줄 하나: [row]를 담는 가로 스크롤 (처음엔 숨김).
+     * 좌우를 꽉 채우지 않고 칸들이 차지하는 만큼만 둥근 판으로 떠서, 양옆의 문서가 가려지지 않는다 (좁은 화면에서만 옆으로 밀린다).
+     * 자리는 직전에 누른 칸의 바로 위 ([placeStripNear])
+     */
+    private fun optionStrip(row: LinearLayout): View {
+        row.orientation = LinearLayout.HORIZONTAL
+        row.gravity = android.view.Gravity.CENTER
+        val d = resources.displayMetrics.density
+        return EdgeArrowScrollView(activity).apply {
+            isFillViewport = false
+            isHorizontalScrollBarEnabled = false
+            background = GradientDrawable().apply {
+                cornerRadius = 14 * d
+                setColor(MaterialColors.getColor(shapeBar, com.google.android.material.R.attr.colorSurfaceContainer))
+            }
+            clipToOutline = true
+            elevation = 4 * d
+            visibility = View.GONE
+            addView(row, ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+    }
+
+    /**
+     * 줄 [bar]를 앵커(직전에 누른 칸) 바로 위(위 툴바면 아래)로 옮긴다: 가로로 앵커와 가운데를 맞추되 화면 밖으로는 나가지 않는다.
+     * 칸을 새로 만든 직후라 자리가 잡힌 뒤(그릴 때)에 한 번 옮긴다. [anchor]는 그때 돌려주는 칸
+     */
+    private fun placeStripNear(bar: View, anchor: () -> View?) {
+        bar.translationX = 0f
+        bar.viewTreeObserver.addOnPreDrawListener(object : android.view.ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                bar.viewTreeObserver.removeOnPreDrawListener(this)
+                val a = anchor() ?: return true
+                if (!a.isLaidOut || bar.width == 0) return true
+                val aLoc = IntArray(2)
+                val bLoc = IntArray(2)
+                a.getLocationOnScreen(aLoc)
+                bar.getLocationOnScreen(bLoc)
+                val margin = 6 * resources.displayMetrics.density
+                val screenW = resources.displayMetrics.widthPixels
+                // 앵커 가운데에 줄 가운데를 맞춘 왼쪽 끝 (지금 translationX가 들어 있는 bLoc 기준)
+                val want = aLoc[0] + a.width / 2f - bar.width / 2f
+                val left = want.coerceIn(margin, (screenW - bar.width - margin).coerceAtLeast(margin))
+                bar.translationX += left - bLoc[0]
+                return true
+            }
+        })
+    }
+
+    /** [optionStrip]이 줄 쌓기 틀 안에서 가운데에 내용 폭만큼만 차지하도록 하는 자리 값 (줄 사이에 틈을 조금) */
+    private fun stripParams() = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+        gravity = android.view.Gravity.CENTER_HORIZONTAL
+        val gap = (3 * resources.displayMetrics.density).toInt()
+        topMargin = gap
+        bottomMargin = gap
+    }
+
     /** 세로 툴바 옆에 붙는 줄(서식·도형·옵션)을 담는 세로 스크롤 */
     private fun sideScroll() = EdgeArrowVerticalScrollView(activity).apply {
         setBackgroundColor(MaterialColors.getColor(shapeBar, com.google.android.material.R.attr.colorSurfaceContainer))
@@ -299,6 +376,7 @@ internal class ToolbarController(
      */
     private fun placeOverlays(side: ToolbarSide) {
         hideOptionBar()
+        hideShapeOptions()
         closeFlyout()
         val top = side == ToolbarSide.TOP
         val v = side.vertical
@@ -306,21 +384,28 @@ internal class ToolbarController(
         formatBar = swapBar(formatBar, if (v) formatBarV else formatBarH, findViewById(R.id.formatRow))
         shapeBar = swapBar(shapeBar, if (v) shapeBarV else shapeBarH, shapeRow)
         optionBar = swapBar(optionBar, if (v) optionBarV else optionBarH, optionRow)
+        // 무리 줄과 그 옵션 줄은 도형 줄에서 툴바 반대쪽으로 차례로 (아래 툴바면 도형 줄 위로 무리 줄, 그 위에 옵션 줄. 위 툴바면 아래로)
+        val shapeOpt = shapeOptBar
+        val shapeSub = shapeSubBar
+        shapeOpt?.let { (it.parent as? ViewGroup)?.removeView(it) }
+        shapeSub?.let { (it.parent as? ViewGroup)?.removeView(it) }
         val bars = if (v) listOf(shapeBar, optionBar, formatBar)
-            else if (top) listOf(optionBar, formatBar, shapeBar) else listOf(shapeBar, formatBar, optionBar)
+            else if (top) listOfNotNull(optionBar, formatBar, shapeBar, shapeOpt, shapeSub)
+            else listOfNotNull(shapeSub, shapeOpt, shapeBar, formatBar, optionBar)
         val frame = findViewById<FrameLayout>(R.id.docFrame)
         for (b in bars) {
             (b.parent as? ViewGroup)?.removeView(b)
             if (v) frame.addView(b, frame.indexOfChild(topOverlay) + 1, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT,
                 if (side == ToolbarSide.LEFT) android.view.Gravity.START else android.view.Gravity.END))
+            else if (b === shapeOpt || b === shapeSub) target.addView(b, stripParams())
             else target.addView(b)
         }
         if (::textFormat.isInitialized) textFormat.fit()
         val d = resources.displayMetrics.density
         fun px(x: Int) = (x * d).toInt()
         // 도형 줄·옵션 줄: 가로면 칸이 옆으로, 세로면 아래로 늘어선다. 가로 줄은 툴바에서 먼 쪽에 여백을 조금 더
-        for (row in listOf(shapeRow, optionRow)) {
+        for (row in listOf(shapeRow, optionRow, shapeOptRow, shapeSubRow)) {
             row.orientation = if (v) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
             // 칸이 적어 줄이 남으면 툴바처럼 가운데에 모은다
             row.gravity = android.view.Gravity.CENTER
@@ -348,7 +433,7 @@ internal class ToolbarController(
 
     private fun updateOverlayInsets() {
         fun barsHeight(o: ViewGroup) = (0 until o.childCount).map { o.getChildAt(it) }
-            .filter { it === shapeBar || it === optionBar || it === formatBar || it.id == R.id.reviewBar }
+            .filter { it === shapeBar || it === shapeOptBar || it === shapeSubBar || it === optionBar || it === formatBar || it.id == R.id.reviewBar }
             .sumOf { if (it.visibility == View.VISIBLE) it.height else 0 }.toFloat()
         val top = barsHeight(topOverlay)
         val bottom = barsHeight(bottomOverlay)
@@ -1552,29 +1637,17 @@ internal class ToolbarController(
         docView.tool = t
         toolButtons.forEach { (k, b) -> b.isSelected = k == t }
         shapeBar.visibility = if (t == Tool.SHAPE) View.VISIBLE else View.GONE
+        if (t != Tool.SHAPE) hideShapeOptions()
         buildColors()
     }
 
     // ----- 보정 펜 도형 줄 -----
 
-    /** 펼쳐 고르는 무리: 칸에는 지금 고른 종류가 보이고, 누르면 펼쳐진다 */
-    private val shapeFamilies = mapOf(
-        // 보조선 화살표: 직선·곡선·돼지꼬리
-        ShapeKind.ARROW to listOf(ShapeKind.ARROW, ShapeKind.ARROW_CURVE, ShapeKind.ARROW_PIGTAIL),
-        // 다항: 직선(일차)·이차·삼차·사차
-        ShapeKind.LINE to listOf(ShapeKind.LINE, ShapeKind.LINE_2PT, ShapeKind.QUADRATIC, ShapeKind.CUBIC, ShapeKind.QUARTIC),
-        ShapeKind.CIRCLE to listOf(
-            ShapeKind.CIRCLE, ShapeKind.CIRCLE_CR, ShapeKind.CIRCLE_3PT, ShapeKind.ELLIPSE, ShapeKind.SECTOR, ShapeKind.SEMICIRCLE,
-        ),
-        ShapeKind.TRIANGLE to listOf(
-            ShapeKind.TRIANGLE, ShapeKind.TRI_EQUILATERAL, ShapeKind.TRI_RIGHT,
-            ShapeKind.TRI_ISOSCELES, ShapeKind.TRI_RIGHT_ISOSCELES, ShapeKind.TRI_3PT,
-        ),
-        ShapeKind.QUADRILATERAL to listOf(
-            ShapeKind.QUADRILATERAL, ShapeKind.SQUARE, ShapeKind.RECT_DIAG, ShapeKind.RECTANGLE,
-            ShapeKind.RHOMBUS, ShapeKind.PARALLELOGRAM, ShapeKind.QUAD_4PT,
-        ),
-    )
+    /**
+     * 펼쳐 고르는 무리: 칸에는 지금 고른 종류가 보이고, 누르면 펼쳐진다.
+     * 비슷한 기능(일차 셋, 원 셋, 삼각형 둘, 직사각형 둘)은 [ShapeMenu]에서 한 칸 이름으로 합쳐 펼침 창 맨 앞 구역의 옵션으로 고른다
+     */
+    private val shapeFamilies = ShapeMenu.families.mapValues { it.value.kinds }
     private val shapeOrder = listOf(
         "화살표" to ShapeKind.ARROW, "길이 표시" to ShapeKind.LENGTH_MARK,
         "다항" to ShapeKind.LINE, "원" to ShapeKind.CIRCLE, "쌍곡선" to ShapeKind.HYPERBOLA,
@@ -1586,10 +1659,16 @@ internal class ToolbarController(
     private val shapeFamilyLast = mutableMapOf<ShapeKind, ShapeKind>()
 
     private fun setupShapeBar() {
+        // 일차의 기본이 '처음·끝점 연결'로 바뀌었다: 예전에 기본값이던 '가장 유사한 직선'은 한 번만 새 기본으로 옮긴다
+        if (!prefs.getBoolean("shapeLineEndsDefault", false)) {
+            prefs.edit().putBoolean("shapeLineEndsDefault", true).apply {
+                if (prefs.getString("shapeKind", null) == ShapeKind.LINE.name) putString("shapeKind", ShapeKind.LINE_ENDS.name)
+            }.apply()
+        }
         docView.shapeKind = prefs.getString("shapeKind", null)
             // 지수·로그 버튼이 따로 있던 때 고른 값
             ?.let { n -> if (n == "EXPONENTIAL" || n == "LOG") ShapeKind.EXP_LOG.name else n }
-            ?.let { n -> ShapeKind.entries.firstOrNull { it.name == n } } ?: ShapeKind.LINE
+            ?.let { n -> ShapeKind.entries.firstOrNull { it.name == n } } ?: ShapeKind.LINE_ENDS
         docView.shapeGuide = guideStyle(docView.shapeKind)
         docView.shapeDashed = lineDashed(docView.shapeKind)
         buildShapeBar()
@@ -1606,7 +1685,101 @@ internal class ToolbarController(
             else if (kind.isTapKind) toast("점 ${kind.tapPoints}개를 차례로 찍으세요. 찍은 점을 다시 누르면 지워집니다.")
         }
         shapeFamilies.entries.firstOrNull { kind in it.value }?.let { shapeFamilyLast[it.key] = kind }
+        ShapeMenu.groupOf(kind)?.let { shapeGroupLast[it] = kind }
         buildShapeBar()
+        // 줄이 떠 있으면 고른 표시를 새로
+        shapeOptKey?.let { key -> ShapeMenu.families[key]?.let(::buildShapeOptions) }
+        shapeSubGroup?.let(::buildShapeSub)
+    }
+
+    /** [key] 칸의 무리 줄을 도형 줄 위에 띄운다 (이미 떠 있으면 내용만 바꾼다. 옵션 줄은 닫힌 채로 시작) */
+    private fun showShapeOptions(key: ShapeKind, anchor: () -> View?) {
+        val bar = shapeOptBar ?: return
+        val fam = ShapeMenu.families[key] ?: return
+        val wasShown = shapeOptKey != null
+        hideShapeSub()
+        shapeOptKey = key
+        buildShapeOptions(fam)
+        bar.visibility = View.VISIBLE
+        placeStripNear(bar, anchor)
+        if (!wasShown) slideIn(bar)
+    }
+
+    /** 줄이 도형 줄 쪽에서 살짝 밀려 나오며 나타난다 */
+    private fun slideIn(bar: View) {
+        bar.animate().cancel()
+        bar.alpha = 0f
+        bar.translationY = (if (dock.side == ToolbarSide.TOP) -1 else 1) * 12 * resources.displayMetrics.density
+        bar.animate().alpha(1f).translationY(0f).setDuration(150).start()
+    }
+
+    /**
+     * 무리 줄의 항목들 (예: 일차 · 이차 · 삼차 · 사차). 합친 묶음은 항목 하나로만 보이고, 누르면 그 위에 묶음의 옵션 줄이 생긴다.
+     * 그 밖의 종류를 고르면 줄이 모두 사라진다
+     */
+    private fun buildShapeOptions(fam: ShapeMenu.Family) {
+        shapeOptRow.removeAllViews()
+        fam.entries.forEachIndexed { index, e ->
+            val g = e.group
+            if (g != null) {
+                // 묶음: 지금 쓰는 옵션(아니면 마지막으로 고른 옵션, 처음엔 첫 옵션)의 아이콘, 누르면 옵션 줄을 열고 닫는다
+                val cur = if (docView.shapeKind in g.options) docView.shapeKind else shapeGroupLast[g] ?: g.options[0]
+                shapeOptRow.addView(optionItem(
+                    ShapeIconDrawable(activity, cur, lineDashed(cur)), "${e.label} ▾", docView.shapeKind in g.options,
+                ) {
+                    val open = shapeSubGroup === g
+                    selectShapeKind(cur)
+                    // 항목을 새로 만들었으니 그 자리의 새 칸 바로 위에 옵션 줄을 띄운다
+                    if (open) hideShapeSub() else showShapeSub(g) { shapeOptRow.getChildAt(index) }
+                })
+            } else {
+                val k = e.kind ?: return@forEachIndexed
+                shapeOptRow.addView(optionItem(ShapeIconDrawable(activity, k, lineDashed(k)), e.label, k == docView.shapeKind) {
+                    hideShapeOptions()
+                    selectShapeKind(k)
+                })
+            }
+        }
+    }
+
+    /** [g] 묶음의 옵션 줄을 무리 줄 위에 띄운다 */
+    private fun showShapeSub(g: ShapeMenu.Group, anchor: () -> View?) {
+        val bar = shapeSubBar ?: return
+        val wasShown = shapeSubGroup != null
+        shapeSubGroup = g
+        buildShapeSub(g)
+        bar.visibility = View.VISIBLE
+        placeStripNear(bar, anchor)
+        if (!wasShown) slideIn(bar)
+    }
+
+    /** 묶음의 옵션들 (예: 일차의 처음·끝점 연결 / 두 점 선분 / 가장 유사한 선분). 하나를 고르면 두 줄 모두 사라진다 */
+    private fun buildShapeSub(g: ShapeMenu.Group) {
+        shapeSubRow.removeAllViews()
+        for (k in g.options) {
+            shapeSubRow.addView(optionItem(ShapeIconDrawable(activity, k, lineDashed(k)), ShapeMenu.optionLabel(k), k == docView.shapeKind) {
+                hideShapeOptions()
+                selectShapeKind(k)
+            })
+        }
+    }
+
+    private fun hideShapeSub() {
+        if (shapeSubGroup == null) return
+        shapeSubGroup = null
+        shapeSubBar?.animate()?.cancel()
+        shapeSubBar?.visibility = View.GONE
+        shapeSubBar?.translationX = 0f
+    }
+
+    /** 도형 줄 위의 줄들(무리 줄과 그 옵션 줄)을 모두 닫는다 */
+    fun hideShapeOptions() {
+        hideShapeSub()
+        if (shapeOptKey == null) return
+        shapeOptKey = null
+        shapeOptBar?.animate()?.cancel()
+        shapeOptBar?.visibility = View.GONE
+        shapeOptBar?.translationX = 0f
     }
 
     /** 도형 줄의 칸들 (도형 아이콘 + 이름). 툴바가 왼쪽·오른쪽이면 세로로 늘어선다 */
@@ -1623,18 +1796,20 @@ internal class ToolbarController(
             val cur = when {
                 family == null -> kind
                 docView.shapeKind in family -> docView.shapeKind
-                else -> shapeFamilyLast[kind] ?: family[0]
+                else -> shapeFamilyLast[kind] ?: ShapeMenu.families.getValue(kind).default
             }
             val selected = if (family != null) docView.shapeKind in family else docView.shapeKind == kind
             val text = when {
                 kind.isGuideLine -> "$label ▾"
-                family != null -> "${cur.label} ▾"
+                family != null -> "${ShapeMenu.barLabel(cur)} ▾"
                 kind in GUIDE_KINDS -> "$label ▾"
                 else -> label
             }
             val index = shapeRow.childCount
             shapeRow.addView(optionItem(ShapeIconDrawable(activity, cur, lineDashed(cur),
                 if (kind in GUIDE_KINDS) guideStyle(kind) else GuideStyle.DASHED), text, selected) { v ->
+                // 옵션 줄을 펼치는 칸(일차·원·삼각형·사각형)이 아닌 곳을 누르면 떠 있던 옵션 줄은 닫는다
+                if (kind.isGuideLine || family == null) hideShapeOptions()
                 when {
                     // 보조선(화살표·길이 표시): 바로 고르고, 모양·실선/점선을 고르는 창
                     kind.isGuideLine -> {
@@ -1642,14 +1817,24 @@ internal class ToolbarController(
                         // 칸을 새로 만들었으니 자리가 잡힌 뒤에 그 옆에 띄운다
                         shapeRow.post { showGuideLineFlyout(shapeRow.getChildAt(index) ?: v, family ?: listOf(kind)) }
                     }
-                    // 무리: 칸에 보이는 종류로 바로 바꾸고, 펼친 창에서 다른 종류를 고를 수도 있다
+                    // 무리 (위·아래 툴바): 칸에 보이는 종류로 바로 바꾸고, 도형 줄 위에 옵션 줄이 한 줄 더 생긴다. 다시 누르면 닫힌다
+                    family != null && !dock.side.vertical -> {
+                        val open = shapeOptKey == kind
+                        selectShapeKind(cur)
+                        // 칸을 새로 만들었으니 그 자리의 새 칸 바로 위에 무리 줄을 띄운다
+                        if (open) hideShapeOptions() else showShapeOptions(kind) { shapeRow.getChildAt(index) }
+                    }
+                    // 무리 (세로 툴바): 칸에 보이는 종류로 바로 바꾸고, 펼친 창에서 다른 종류를 고를 수도 있다
                     family != null -> {
                         selectShapeKind(cur)
                         // 칸을 새로 만들었으니 자리가 잡힌 뒤에 그 옆에 띄운다
                         shapeRow.post {
-                            showFlyout(shapeRow.getChildAt(index) ?: v, family.map { k ->
-                                Triple(ShapeIconDrawable(activity, k, lineDashed(k)), k.label, k == docView.shapeKind)
-                            }) { i -> selectShapeKind(family[i]) }
+                            showFlyout(
+                                shapeRow.getChildAt(index) ?: v,
+                                family.map { k -> Triple(ShapeIconDrawable(activity, k, lineDashed(k)), ShapeMenu.optionLabel(k), k == docView.shapeKind) },
+                                // 합친 묶음의 옵션(일차·원·삼각형·직사각형)이 앞, 다른 종류가 뒤
+                                separatorBefore = ShapeMenu.families.getValue(kind).let(ShapeMenu::separatorIndex),
+                            ) { i -> selectShapeKind(family[i]) }
                         }
                     }
                     // 점근선·축이 있는 도형: 고르고 보조선 방식 고르는 창

@@ -298,7 +298,7 @@ class DocumentView @JvmOverloads constructor(
         blendMode = BlendMode.MULTIPLY
     }
     /** 보정 펜으로 그릴 도형 */
-    var shapeKind = ShapeKind.LINE
+    var shapeKind = ShapeKind.LINE_ENDS
         set(v) {
             if (field != v) resetTapPoints()
             field = v

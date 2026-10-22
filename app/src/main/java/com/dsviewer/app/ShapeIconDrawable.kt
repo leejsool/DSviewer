@@ -70,6 +70,8 @@ class ShapeIconDrawable(
 
     /** 직각 표시 */
     private val thin = Paint(line).apply { strokeWidth = 1f; pathEffect = null }
+    /** 그은 획을 나타내는 옅은 실선 (처음·끝점 연결 아이콘) */
+    private val faint = Paint(thin).apply { strokeWidth = 1.3f; alpha = 105 }
     private val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = this@ShapeIconDrawable.color }
 
     override fun draw(canvas: Canvas) {
@@ -161,7 +163,17 @@ class ShapeIconDrawable(
             ShapeKind.RECTANGLE -> canvas.drawRect(2.5f, 7f, 21.5f, 17f, line)
             ShapeKind.RHOMBUS -> poly(canvas, 12f, 2.5f, 20f, 12f, 12f, 21.5f, 4f, 12f)
             ShapeKind.PARALLELOGRAM -> poly(canvas, 2.5f, 18f, 16.5f, 18f, 21.5f, 6f, 7.5f, 6f)
-            // 직선과 양 끝의 두 점
+            // 휘어 그은 획(옅은 호 하나)과, 그 처음·끝점을 곧게 이은 선분 (양 끝에 점)
+            ShapeKind.LINE_ENDS -> {
+                val p = Path()
+                p.moveTo(4f, 19f)
+                p.quadTo(4f, 5f, 20f, 5f)
+                canvas.drawPath(p, faint)
+                canvas.drawLine(4f, 19f, 20f, 5f, line)
+                canvas.drawCircle(4f, 19f, 1.9f, dot)
+                canvas.drawCircle(20f, 5f, 1.9f, dot)
+            }
+            // 선분과 양 끝의 두 점
             ShapeKind.LINE_2PT -> {
                 canvas.drawLine(4f, 19f, 20f, 5f, line)
                 canvas.drawCircle(4f, 19f, 1.9f, dot)
