@@ -343,7 +343,8 @@ class ViewerActivity : AppCompatActivity() {
             }
 
             override fun onShapeFailed(kind: ShapeKind) {
-                Toast.makeText(this@ViewerActivity, "${withRo(kind.label)} 맞추지 못했어요. 조금 더 크게 그려 보세요.", Toast.LENGTH_SHORT).show()
+                val hint = if (kind.isTapKind) "점이 한 줄에 놓이지 않게 넓게 찍어 보세요." else "조금 더 크게 그려 보세요."
+                Toast.makeText(this@ViewerActivity, "${withRo(kind.label)} 맞추지 못했어요. $hint", Toast.LENGTH_SHORT).show()
             }
     }
 
@@ -837,7 +838,9 @@ class ViewerActivity : AppCompatActivity() {
             }
         }
         t.renderPdf = renderFile
-        val d = PdfDoc.open(renderFile)
+        // 보던 쪽 근처만 읽고 먼저 연다 (큰 PDF는 모든 쪽의 크기를 읽는 데만 오래 걸린다. 나머지는 뒤에서)
+        val focus = if (t.viewState != null || t.review != null) 0 else Recents.get(this, t.uri.toString())?.lastPage ?: 0
+        val d = PdfDoc.open(renderFile, focusPage = focus)
         if (t !in docs) {
             // 읽는 사이 탭이 닫힘
             d.close()

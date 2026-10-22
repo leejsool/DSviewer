@@ -1563,14 +1563,17 @@ internal class ToolbarController(
         ShapeKind.ARROW to listOf(ShapeKind.ARROW, ShapeKind.ARROW_CURVE, ShapeKind.ARROW_PIGTAIL),
         // 다항: 직선(일차)·이차·삼차·사차
         ShapeKind.LINE to listOf(ShapeKind.LINE, ShapeKind.QUADRATIC, ShapeKind.CUBIC, ShapeKind.QUARTIC),
-        ShapeKind.CIRCLE to listOf(ShapeKind.CIRCLE, ShapeKind.CIRCLE_CR, ShapeKind.ELLIPSE, ShapeKind.SECTOR, ShapeKind.SEMICIRCLE),
+        ShapeKind.CIRCLE to listOf(
+            ShapeKind.CIRCLE, ShapeKind.CIRCLE_CR, ShapeKind.ELLIPSE, ShapeKind.SECTOR, ShapeKind.SEMICIRCLE,
+            ShapeKind.CIRCLE_3PT,
+        ),
         ShapeKind.TRIANGLE to listOf(
             ShapeKind.TRIANGLE, ShapeKind.TRI_EQUILATERAL, ShapeKind.TRI_RIGHT,
-            ShapeKind.TRI_ISOSCELES, ShapeKind.TRI_RIGHT_ISOSCELES,
+            ShapeKind.TRI_ISOSCELES, ShapeKind.TRI_RIGHT_ISOSCELES, ShapeKind.TRI_3PT,
         ),
         ShapeKind.QUADRILATERAL to listOf(
             ShapeKind.QUADRILATERAL, ShapeKind.SQUARE, ShapeKind.RECTANGLE,
-            ShapeKind.RHOMBUS, ShapeKind.PARALLELOGRAM,
+            ShapeKind.RHOMBUS, ShapeKind.PARALLELOGRAM, ShapeKind.QUAD_4PT, ShapeKind.RECT_DIAG,
         ),
     )
     private val shapeOrder = listOf(
@@ -1594,10 +1597,15 @@ internal class ToolbarController(
     }
 
     private fun selectShapeKind(kind: ShapeKind) {
+        val changed = docView.shapeKind != kind
         docView.shapeKind = kind
         docView.shapeGuide = guideStyle(kind)
         docView.shapeDashed = lineDashed(kind)
         prefs.edit().putString("shapeKind", kind.name).apply()
+        if (changed) {
+            if (kind == ShapeKind.RECT_DIAG) toast("대각선 방향으로 한 번 그으면 직사각형이 됩니다.")
+            else if (kind.isTapKind) toast("점 ${kind.tapPoints}개를 차례로 찍으세요. 찍은 점을 다시 누르면 지워집니다.")
+        }
         shapeFamilies.entries.firstOrNull { kind in it.value }?.let { shapeFamilyLast[it.key] = kind }
         buildShapeBar()
     }

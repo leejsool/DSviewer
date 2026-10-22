@@ -161,6 +161,26 @@ class ShapeIconDrawable(
             ShapeKind.RECTANGLE -> canvas.drawRect(2.5f, 7f, 21.5f, 17f, line)
             ShapeKind.RHOMBUS -> poly(canvas, 12f, 2.5f, 20f, 12f, 12f, 21.5f, 4f, 12f)
             ShapeKind.PARALLELOGRAM -> poly(canvas, 2.5f, 18f, 16.5f, 18f, 21.5f, 6f, 7.5f, 6f)
+            // 원 위의 세 점
+            ShapeKind.CIRCLE_3PT -> {
+                canvas.drawCircle(12f, 12f, 8.5f, line)
+                for ((x, y) in listOf(12f to 3.5f, 4.6f to 16.3f, 19.4f to 16.3f)) canvas.drawCircle(x, y, 1.9f, dot)
+            }
+            ShapeKind.TRI_3PT -> {
+                poly(canvas, 3f, 19f, 21f, 19f, 8f, 5f)
+                for ((x, y) in listOf(3f to 19f, 21f to 19f, 8f to 5f)) canvas.drawCircle(x, y, 1.9f, dot)
+            }
+            ShapeKind.QUAD_4PT -> {
+                poly(canvas, 4f, 18f, 19f, 20.5f, 21f, 6f, 8f, 3.5f)
+                for ((x, y) in listOf(4f to 18f, 19f to 20.5f, 21f to 6f, 8f to 3.5f)) canvas.drawCircle(x, y, 1.9f, dot)
+            }
+            // 직사각형과 그 대각선 (두 모서리에 점)
+            ShapeKind.RECT_DIAG -> {
+                canvas.drawRect(2.5f, 6f, 21.5f, 18f, line)
+                canvas.drawLine(2.5f, 18f, 21.5f, 6f, guide)
+                canvas.drawCircle(2.5f, 18f, 1.9f, dot)
+                canvas.drawCircle(21.5f, 6f, 1.9f, dot)
+            }
             ShapeKind.HYPERBOLA -> {
                 // x² − y² = 1 의 두 가지와 점근선 y = ±x
                 asymptote(canvas, 4f, 4f, 20f, 20f)

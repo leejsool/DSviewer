@@ -115,6 +115,7 @@ class DocumentView @JvmOverloads constructor(
         set(v) {
             if (field != v && !quietTool) previousTool = field
             field = v
+            if (v != Tool.SHAPE) resetTapPoints()
             if (v != Tool.LASSO) {
                 buttonLassoReturn = null
                 clearSelection()
@@ -281,6 +282,82 @@ class DocumentView @JvmOverloads constructor(
     }
     /** 보정 펜으로 그릴 도형 */
     var shapeKind = ShapeKind.LINE
+        set(v) {
+            if (field != v) resetTapPoints()
+            field = v
+        }
+    /** 보정 펜 점 찍기 도형(세 점 원·삼각형, 네 점 사각형): 지금까지 찍은 점 [x0, y0, x1, ...] (쪽 좌표)과 그 쪽, 찍을 때 필압 */
+    private val tapPts = ArrayList<Float>()
+    private var tapPage = -1
+    private var tapPressSum = 0f
+    private val tapDotPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val tapRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = Color.WHITE }
+
+    private fun resetTapPoints() {
+        if (tapPts.isEmpty() && tapPage == -1) return
+        tapPts.clear()
+        tapPage = -1
+        tapPressSum = 0f
+        invalidate()
+    }
+
+    /** 보정 펜 점 찍기: 놓은 자리(획의 끝점)를 점으로 보탠다. 점이 다 모이면 도형을 남기고, 찍은 점을 다시 누르면 그 점을 지운다 */
+    private fun addTapPoint(page: Int, st: Stroke) {
+        val inkDoc = ink ?: return
+        if (st.count == 0) return
+        val x = st.x(st.count - 1)
+        val y = st.y(st.count - 1)
+        if (page != tapPage) resetTapPoints()
+        tapPage = page
+        val hitR = 12f * density / scale
+        for (k in tapPts.size / 2 - 1 downTo 0) {
+            if (hypot(tapPts[k * 2] - x, tapPts[k * 2 + 1] - y) <= hitR) {
+                tapPts.removeAt(k * 2)
+                tapPts.removeAt(k * 2)
+                if (tapPts.isEmpty()) tapPressSum = 0f
+                invalidate()
+                return
+            }
+        }
+        tapPts.add(x)
+        tapPts.add(y)
+        tapPressSum += ShapeStrokes.averagePressure(st)
+        val kind = shapeKind
+        if (tapPts.size / 2 < kind.tapPoints) { invalidate(); return }
+        val raw = Stroke(Tool.PEN, st.color, st.width).apply { add(x, y, tapPressSum / (tapPts.size / 2)) }
+        val fitted = ShapeFit.fromPoints(kind, tapPts.toFloatArray())
+        if (fitted != null) inkDoc.addAll(page, ShapeStrokes.build(raw, fitted, kind, shapeGuide, shapeDashed, penStyle))
+        else listener?.onShapeFailed(kind)
+        resetTapPoints()
+    }
+
+    /** 점 찍기 도형의 찍은 점·이은 선·(마지막 점을 찍으려는 중이면) 완성될 도형을 [page]에 흐리게 보여 준다 */
+    private fun drawTapPoints(c: Canvas, page: Int) {
+        val live = curStroke?.takeIf { curPage == page && it.count > 0 }
+        val pts = ArrayList<Float>(if (tapPage == page) tapPts else emptyList())
+        if (live != null) { pts.add(live.x(live.count - 1)); pts.add(live.y(live.count - 1)) }
+        if (pts.isEmpty()) return
+        val n = pts.size / 2
+        val p = if (tapPts.isNotEmpty()) tapPressSum / (tapPts.size / 2) else lastPressure
+        val raw = Stroke(Tool.PEN, penColor, penWidth)
+        if (n >= shapeKind.tapPoints) {
+            ShapeFit.fromPoints(shapeKind, pts.toFloatArray())?.let { f ->
+                raw.add(pts[0], pts[1], p)
+                ShapeStrokes.build(raw, f, shapeKind, shapeGuide, shapeDashed, penStyle).forEach { drawStroke(c, it, 0.6f) }
+            }
+        } else if (n >= 2) {
+            val line = Stroke(Tool.PEN, penColor, penWidth, true, PenStyle.FELT)
+            for (k in 0 until n) line.add(pts[k * 2], pts[k * 2 + 1], p)
+            drawStroke(c, line, 0.5f)
+        }
+        val r = 5f * density / scale
+        tapDotPaint.color = penColor
+        tapRingPaint.strokeWidth = 1.5f * density / scale
+        for (k in 0 until n) {
+            c.drawCircle(pts[k * 2], pts[k * 2 + 1], r, tapDotPaint)
+            c.drawCircle(pts[k * 2], pts[k * 2 + 1], r, tapRingPaint)
+        }
+    }
     /** 보정 펜: 그리는 중에 맞춰 본 도형 (흐리게 미리 보여 줌) */
     private var shapePreview: List<Stroke>? = null
     /** 보정 펜: 보조선(지수·로그·탄젠트·쌍곡선의 점근선, 사인·코사인의 축)을 그리는 방식 */
@@ -611,6 +688,7 @@ class DocumentView @JvmOverloads constructor(
         clearLaser()
         ruler.hide()
         cancelRendering()
+        doc?.removeSizesListener(sizesListener)
         doc = null
         ink = null
         warmPages.clear()
@@ -683,7 +761,9 @@ class DocumentView @JvmOverloads constructor(
         clearLaser()
         ruler.hide()
         cancelRendering()
+        doc?.removeSizesListener(sizesListener)
         doc = d
+        d.addSizesListener(sizesListener)
         ink = inkDoc
         warmPages.clear()
         sizes = d.sizes
@@ -718,6 +798,30 @@ class DocumentView @JvmOverloads constructor(
             FloatArray(sizes.size) { sizes[it].width }, FloatArray(sizes.size) { sizes[it].height },
             rightMargin, twoPage, width, height, horizontal,
         )
+    }
+
+    /**
+     * 문서를 먼저 내주고 뒤에서 쪽 크기를 읽던 [PdfDoc]이 어림했던 크기를 실제 크기로 고쳤다:
+     * 쪽 배치를 새로 하고 보던 자리는 그대로 둔다 (읽던 쪽이 밀리지 않게)
+     */
+    private val sizesListener = Runnable { onDocSizesChanged() }
+
+    private fun onDocSizesChanged() {
+        val d = doc ?: return
+        val fresh = d.sizes
+        if (fresh.size != sizes.size || fresh == sizes || width == 0) return
+        val spot = topSpot()
+        clearSelection()
+        baseJobs.values.forEach { it.cancel() }
+        baseJobs.clear()
+        sizes = fresh
+        layoutPages()
+        baseScale = fitScale()
+        baseCache.evictAll()
+        details = emptyList()
+        if (spot != null) scrollToPageY(spot.first, spot.second) else clamp()
+        scheduleDetail()
+        invalidate()
     }
 
     /** 쪽 배치에 맞는 기본 배율 (확대 1배): 세로 스크롤은 문서 너비, 가로 넘김은 한 칸이 통째로 보이게 */
@@ -994,11 +1098,15 @@ class DocumentView @JvmOverloads constructor(
                 if (it.tool == Tool.LASER) laser.draw(canvas, it, 1f)
                 else if (it.tool == Tool.FILL) fillCtl.drawDraft(canvas, it)
                 else if (tool == Tool.SHAPE) {
-                    // 보정 펜: 내 획은 흐리게, 맞춘 도형은 조금 더 진하게 미리 보기
-                    drawStroke(canvas, it, 0.3f)
-                    shapePreview?.forEach { sp -> drawStroke(canvas, sp, 0.6f) }
+                    // 점 찍기 도형은 획을 보이지 않고 아래에서 점들만 (놓은 자리가 점이 된다)
+                    if (!shapeKind.isTapKind) {
+                        // 보정 펜: 내 획은 흐리게, 맞춘 도형은 조금 더 진하게 미리 보기
+                        drawStroke(canvas, it, 0.3f)
+                        shapePreview?.forEach { sp -> drawStroke(canvas, sp, 0.6f) }
+                    }
                 } else holdFitted?.let { held -> held.forEach { sp -> drawStroke(canvas, sp) } } ?: drawStroke(canvas, it)
             }
+            if (tool == Tool.SHAPE && shapeKind.isTapKind && i == (if (tapPts.isEmpty()) curPage else tapPage)) drawTapPoints(canvas, i)
             // 자는 붙여넣은 그림·필기보다 늘 맨 위에 (그은 선은 자 가장자리 바로 바깥에 놓여 자에 가려지지 않는다)
             ruler.draw(canvas, i)
             ruler.drawOverlay(canvas, i)
@@ -2264,7 +2372,7 @@ class DocumentView @JvmOverloads constructor(
         st.add(px, py, lastPressure)
         lastSx = sx
         lastSy = sy
-        if (tool == Tool.SHAPE) requestShapePreview()
+        if (tool == Tool.SHAPE && !shapeKind.isTapKind) requestShapePreview()
         invalidate()
     }
 
@@ -2474,6 +2582,9 @@ class DocumentView @JvmOverloads constructor(
                     if (held != null && st.tool == Tool.PEN) {
                         // 일반 펜을 꾹 누른 채 손을 뗌: 흐린 획 대신 맞춘 도형을 남긴다
                         inkDoc.addAll(curPage, held)
+                    } else if (tool == Tool.SHAPE && shapeKind.isTapKind) {
+                        // 보정 펜 점 찍기: 놓은 자리를 점으로 보탠다
+                        addTapPoint(curPage, st)
                     } else if (tool == Tool.SHAPE) {
                         // 보정 펜: 흐린 획 대신 맞춘 도형을 남긴다
                         val fitted = fitShape(st)

@@ -74,16 +74,21 @@ object PdfInk {
     fun containsInk(file: File): Boolean {
         val pattern = "/DSViewer".toByteArray()
         var matched = 0
-        file.inputStream().buffered(1 shl 16).use { input ->
+        // 한 바이트씩 읽으면 큰 PDF(수십 MB)에서 느린 기기는 수 초 걸린다: 덩어리로 읽는다
+        val buf = ByteArray(1 shl 16)
+        file.inputStream().use { input ->
             while (true) {
-                val b = input.read()
-                if (b < 0) return false
-                matched = when {
-                    b.toByte() == pattern[matched] -> matched + 1
-                    b.toByte() == pattern[0] -> 1
-                    else -> 0
+                val n = input.read(buf)
+                if (n < 0) return false
+                for (k in 0 until n) {
+                    val b = buf[k]
+                    matched = when {
+                        b == pattern[matched] -> matched + 1
+                        b == pattern[0] -> 1
+                        else -> 0
+                    }
+                    if (matched == pattern.size) return true
                 }
-                if (matched == pattern.size) return true
             }
         }
     }

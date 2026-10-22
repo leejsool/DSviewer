@@ -43,6 +43,14 @@ enum class ShapeKind(val label: String) {
     RECTANGLE("직사각형"),
     RHOMBUS("마름모"),
     PARALLELOGRAM("평행사변형"),
+    /** 점 세 개를 차례로 찍으면 그 세 점을 지나는 원 */
+    CIRCLE_3PT("세 점 원"),
+    /** 점 세 개를 찍으면 그 세 점이 꼭짓점인 삼각형 */
+    TRI_3PT("세 점 삼각형"),
+    /** 점 네 개를 찍으면 그 네 점이 꼭짓점인 사각형 */
+    QUAD_4PT("네 점 사각형"),
+    /** 대각선(마주 보는 두 모서리)을 그으면 가로·세로가 반듯한 직사각형 */
+    RECT_DIAG("대각선 직사각형"),
     /** 이차곡선 x²/a²−y²/b²=±1 (축에 나란한). 한 가지를 그리면 반대쪽 가지도 */
     HYPERBOLA("쌍곡선"),
     /** 지수인지 로그인지는 그린 모양으로 알아서 */
@@ -55,6 +63,14 @@ enum class ShapeKind(val label: String) {
 
     /** 보조선(화살표·길이 표시): 실선·점선을 고를 수 있다 */
     val isGuideLine get() = this == ARROW || this == ARROW_CURVE || this == ARROW_PIGTAIL || this == LENGTH_MARK
+
+    /** 획을 긋지 않고 점을 하나씩 찍어 그리는 도형의 점 수 (아니면 0) */
+    val tapPoints get() = when (this) {
+        CIRCLE_3PT, TRI_3PT -> 3
+        QUAD_4PT -> 4
+        else -> 0
+    }
+    val isTapKind get() = tapPoints > 0
 }
 
 /**
@@ -76,7 +92,9 @@ object ShapeFit {
 
     /** quick: 그리는 동안의 미리 보기. 오래 다듬는 도형(부채꼴·이차×지수·이등변삼각형)을 덜 다듬는다 */
     fun fit(kind: ShapeKind, st: Stroke, quick: Boolean = false): Fitted? {
+        if (kind.isTapKind) return null
         if (kind == ShapeKind.CIRCLE_CR) return centerRadius(st)?.let { Fitted(listOf(it)) }
+        if (kind == ShapeKind.RECT_DIAG) return diagonalRect(st)?.let { Fitted(listOf(it)) }
         val p = resample(st) ?: return null
         when (kind) {
             ShapeKind.HYPERBOLA -> return ShapeCurves.hyperbola(p)
@@ -105,6 +123,85 @@ object ShapeFit {
             else -> null
         }
         return one?.let { Fitted(listOf(it)) }
+    }
+
+    /**
+     * 찍은 점들 [pts] ([x0, y0, x1, y1, ...])로 도형을 만든다 (세 점 원·세 점 삼각형·네 점 사각형).
+     * 점이 모자라거나 한 줄에 놓여 도형이 되지 않으면 null
+     */
+    fun fromPoints(kind: ShapeKind, pts: FloatArray): Fitted? {
+        val n = kind.tapPoints
+        if (n == 0 || pts.size < n * 2) return null
+        val one = when (kind) {
+            ShapeKind.CIRCLE_3PT -> circumcircle(pts)
+            ShapeKind.TRI_3PT -> closedPolygon(pts, 3)
+            ShapeKind.QUAD_4PT -> closedPolygon(quadOrder(pts), 4)
+            else -> null
+        }
+        return one?.let { Fitted(listOf(it)) }
+    }
+
+    /** 두 모서리를 대각선으로 한, 변이 가로·세로인 직사각형 (처음 점과 끝점이 마주 보는 모서리) */
+    private fun diagonalRect(st: Stroke): FloatArray? {
+        if (st.count < 2) return null
+        val x0 = st.x(0); val y0 = st.y(0)
+        val x1 = st.x(st.count - 1); val y1 = st.y(st.count - 1)
+        if (abs(x1 - x0) < 2f || abs(y1 - y0) < 2f) return null
+        return floatArrayOf(x0, y0, x1, y0, x1, y1, x0, y1, x0, y0)
+    }
+
+    /** 세 점을 지나는 원 (한 줄에 놓였으면 null). 첫 점에서 시작해 한 바퀴 */
+    private fun circumcircle(pts: FloatArray): FloatArray? {
+        val ax = pts[0].toDouble(); val ay = pts[1].toDouble()
+        val bx = pts[2].toDouble(); val by = pts[3].toDouble()
+        val cx = pts[4].toDouble(); val cy = pts[5].toDouble()
+        val d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by))
+        val span = max(hypot(bx - ax, by - ay), max(hypot(cx - bx, cy - by), hypot(ax - cx, ay - cy)))
+        if (span < 2 || abs(d) < span * span * 0.02) return null
+        val a2 = ax * ax + ay * ay; val b2 = bx * bx + by * by; val c2 = cx * cx + cy * cy
+        val ux = (a2 * (by - cy) + b2 * (cy - ay) + c2 * (ay - by)) / d
+        val uy = (a2 * (cx - bx) + b2 * (ax - cx) + c2 * (bx - ax)) / d
+        val r = hypot(ax - ux, ay - uy)
+        if (r > span * 20) return null
+        val start = atan2(ay - uy, ax - ux)
+        return closedCurve(96) { t -> (ux + r * cos(start + t)) to (uy + r * sin(start + t)) }
+    }
+
+    /** 찍은 점 k개를 차례로 이은 닫힌 꺾은선 (너무 납작하면 null) */
+    private fun closedPolygon(pts: FloatArray, k: Int): FloatArray? {
+        var area2 = 0.0
+        var perim = 0.0
+        for (i in 0 until k) {
+            val j = (i + 1) % k
+            area2 += pts[i * 2].toDouble() * pts[j * 2 + 1] - pts[j * 2].toDouble() * pts[i * 2 + 1]
+            perim += hypot((pts[j * 2] - pts[i * 2]).toDouble(), (pts[j * 2 + 1] - pts[i * 2 + 1]).toDouble())
+        }
+        if (abs(area2) / 2 < perim * perim * 0.004) return null
+        val out = FloatArray((k + 1) * 2)
+        for (i in 0..k) {
+            out[i * 2] = pts[(i % k) * 2]; out[i * 2 + 1] = pts[(i % k) * 2 + 1]
+        }
+        return out
+    }
+
+    /** 네 점을 찍은 순서대로 이으면 변이 꼬이는 경우, 꼬이지 않는 순서로 바꾼다 */
+    private fun quadOrder(pts: FloatArray): FloatArray {
+        for (o in listOf(intArrayOf(0, 1, 2, 3), intArrayOf(0, 1, 3, 2), intArrayOf(0, 2, 1, 3))) {
+            fun x(i: Int) = pts[o[i] * 2]
+            fun y(i: Int) = pts[o[i] * 2 + 1]
+            // 마주 보는 변끼리 만나면 꼬인 것
+            val crossed = segmentsCross(x(0), y(0), x(1), y(1), x(2), y(2), x(3), y(3)) ||
+                segmentsCross(x(1), y(1), x(2), y(2), x(3), y(3), x(0), y(0))
+            if (!crossed) return FloatArray(8) { pts[o[it / 2] * 2 + it % 2] }
+        }
+        return pts
+    }
+
+    private fun segmentsCross(ax: Float, ay: Float, bx: Float, by: Float, cx: Float, cy: Float, dx: Float, dy: Float): Boolean {
+        fun side(px: Float, py: Float, qx: Float, qy: Float, rx: Float, ry: Float) = (qx - px) * (ry - py) - (qy - py) * (rx - px)
+        val d1 = side(ax, ay, bx, by, cx, cy); val d2 = side(ax, ay, bx, by, dx, dy)
+        val d3 = side(cx, cy, dx, dy, ax, ay); val d4 = side(cx, cy, dx, dy, bx, by)
+        return d1 * d2 < 0 && d3 * d4 < 0
     }
 
     /**
