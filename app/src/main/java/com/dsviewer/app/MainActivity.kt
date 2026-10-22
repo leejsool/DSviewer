@@ -444,14 +444,15 @@ class MainActivity : AppCompatActivity() {
     private fun applyFilter() {
         val q = query.trim()
         val shown = ListSort.filterByTitle(rows, q, rowFields)
-        adapter.submit(
-            when {
-                // 즐겨찾기 / 지금 폴더까지의 길을 계단 모양 폴더 머리글로 두고 그 아래에 줄들을 가지로 이은다
-                tab == Tab.FAVORITE -> withChain(shown, favLinks())
-                tab == Tab.FOLDER -> dir?.let { withChain(shown, folderLinks(it)) } ?: shown
-                else -> shown
-            }
-        )
+        // 즐겨찾기 / 지금 폴더까지의 길을 계단 모양 폴더 머리글로 두고 그 아래에 줄들을 가지로 이은다
+        val links = when {
+            tab == Tab.FAVORITE -> favLinks()
+            tab == Tab.FOLDER -> dir?.let { folderLinks(it) } ?: emptyList()
+            else -> emptyList()
+        }
+        adapter.submit(withChain(shown, links))
+        // 안내 글은 폴더 머리글들 아래에 뜬다
+        emptyText.setPadding(dp(32), dp(32 + CHAIN_ROW_DP * links.size), dp(32), dp(32))
         emptyText.text = if (q.isEmpty()) emptyMsg else "'$q' 이름의 문서가 없습니다."
         emptyText.isVisible = shown.isEmpty() && !progress.isVisible && !permCard.isVisible
     }
@@ -566,14 +567,15 @@ class MainActivity : AppCompatActivity() {
 
     /**
      * 폴더 계단: [links](맨 위 폴더 … 지금 폴더)를 한 칸씩 더 들여 쓴 폴더 머리글로 늘어놓고,
-     * 지금 폴더 안의 줄들을 그 아래에 가지선으로 잇는다. 줄이 하나도 없으면 안내 글이 보이게 그대로 둔다
+     * 지금 폴더 안의 줄들을 그 아래에 가지선으로 잇는다. 빈 폴더도 머리글은 보이고 (안내 글은 그 아래에 따로 뜬다)
      */
     private fun withChain(children: List<Row>, links: List<Link>): List<Row> {
-        if (children.isEmpty() || links.isEmpty()) return children
+        if (links.isEmpty()) return children
         val out = ArrayList<Row>()
         links.forEachIndexed { i, l ->
             val last = i == links.lastIndex
-            out += Row(l.name, if (last) "${children.size}개" else "", Kind.HEADER, { l.onClick?.invoke() }, folder = l.icon).also { it.indent = i }
+            val count = if (!last) "" else if (children.isEmpty()) "비어 있음" else "${children.size}개"
+            out += Row(l.name, count, Kind.HEADER, { l.onClick?.invoke() }, folder = l.icon).also { it.indent = i }
         }
         children.forEachIndexed { n, r ->
             r.tree = if (n == children.lastIndex) 2 else 1
@@ -2144,6 +2146,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
+        /** 폴더 머리글 한 줄이 차지하는 높이 (dp, 빈 폴더의 안내 글을 그 아래로 내리는 데 쓴다) */
+        private const val CHAIN_ROW_DP = 56
+
         /** 태그에 안 맞는 문서의 투명도 */
         private const val DIM_ALPHA = 0.38f
 
