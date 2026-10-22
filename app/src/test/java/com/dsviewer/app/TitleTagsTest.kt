@@ -44,18 +44,35 @@ class TitleTagsTest {
         assertTrue(TitleTags.extract(titles, max = 3).size <= 3)
     }
 
+    private fun rank(rows: List<String>, vararg tags: String) = TitleTags.rank(rows, tags.toList(), { it }, { !it.endsWith("/") })
+
     @Test fun pickedTagMovesMatchingDocsToTheTopKeepingOrder() {
         // 폴더(문서 아님)는 태그에 맞는 문서가 아니므로 나머지 쪽에 남는다
         val rows = listOf("보관/", "a 회의.pdf", "b 시험.pdf", "c 회의.pdf", "d 안내.pdf")
-        val (hit, rest) = TitleTags.split(rows, "회의", { it }, { !it.endsWith("/") })
+        val (hit, rest) = rank(rows, "회의")
         assertEquals(listOf("a 회의.pdf", "c 회의.pdf"), hit)
         assertEquals(listOf("보관/", "b 시험.pdf", "d 안내.pdf"), rest)
     }
 
     @Test fun tagMatchingNothingKeepsEverythingInRest() {
-        val (hit, rest) = TitleTags.split(listOf("a.pdf", "b.pdf"), "없음", { it }, { true })
+        val (hit, rest) = rank(listOf("a.pdf", "b.pdf"), "없음")
         assertTrue(hit.isEmpty())
         assertEquals(listOf("a.pdf", "b.pdf"), rest)
+    }
+
+    @Test fun moreMatchedTagsComeFirst() {
+        val rows = listOf("가 회의.pdf", "나 회의 자료.pdf", "다 자료.pdf", "라 안내.pdf", "마 회의 자료 최종.pdf")
+        val (hit, rest) = rank(rows, "회의", "자료")
+        // 둘 다 맞는 것(나, 마)이 먼저(원래 차례), 하나만 맞는 것(가, 다)이 그다음(원래 차례)
+        assertEquals(listOf("나 회의 자료.pdf", "마 회의 자료 최종.pdf", "가 회의.pdf", "다 자료.pdf"), hit)
+        assertEquals(listOf("라 안내.pdf"), rest)
+    }
+
+    @Test fun noTagsPickedLeavesEverythingInRest() {
+        val rows = listOf("a.pdf", "b/")
+        val (hit, rest) = rank(rows)
+        assertTrue(hit.isEmpty())
+        assertEquals(rows, rest)
     }
 
     @Test fun matchingIgnoresLatinCase() {

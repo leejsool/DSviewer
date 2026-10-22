@@ -91,9 +91,15 @@ internal object TitleTags {
     fun matches(title: String, tag: String) = title.contains(tag, ignoreCase = true)
 
     /**
-     * 태그를 골랐을 때의 차례: 태그가 제목에 든 문서([isDoc])가 맨 위(원래 차례대로), 나머지는 그 아래(원래 차례대로).
-     * 나머지 안에도 폴더 같은 문서 아닌 줄이 있다. 돌려주는 것은 (태그된 문서들, 나머지)
+     * 태그를 골랐을 때의 차례: 골라 둔 태그([tags])가 제목에 하나라도 든 문서([isDoc])를 맨 위로, **맞는 태그가 많은 문서부터**
+     * (맞는 개수가 같으면 원래 차례대로). 나머지(안 맞는 문서와 폴더 같은 문서 아닌 줄)는 그 아래에 원래 차례대로.
+     * 돌려주는 것은 (맞는 문서들, 나머지)
      */
-    fun <T> split(rows: List<T>, tag: String, title: (T) -> String, isDoc: (T) -> Boolean): Pair<List<T>, List<T>> =
-        rows.partition { isDoc(it) && matches(title(it), tag) }
+    fun <T> rank(rows: List<T>, tags: Collection<String>, title: (T) -> String, isDoc: (T) -> Boolean): Pair<List<T>, List<T>> {
+        val counts = rows.map { r -> if (isDoc(r)) tags.count { matches(title(r), it) } else 0 }
+        // sortedByDescending은 안정 정렬이라 같은 개수끼리는 원래 차례가 남는다
+        val hit = rows.indices.filter { counts[it] > 0 }.sortedByDescending { counts[it] }.map { rows[it] }
+        val rest = rows.indices.filter { counts[it] == 0 }.map { rows[it] }
+        return hit to rest
+    }
 }

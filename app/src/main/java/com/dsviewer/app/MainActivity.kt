@@ -125,7 +125,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var searchItem: MenuItem
     private lateinit var selectBar: View
     private lateinit var tagBar: View
-    private lateinit var tagScroll: HorizontalScrollView
+    private lateinit var tagClear: View
     private lateinit var tagRow: LinearLayout
     private lateinit var selectCount: TextView
     private lateinit var selectAll: MaterialButton
@@ -142,8 +142,8 @@ class MainActivity : AppCompatActivity() {
     private var rows: List<Row> = emptyList()
     private var emptyMsg = ""
     private var query = ""
-    /** 최근 파일·즐겨찾기·폴더에서 고른 추천 태그 (null = 안 고름). 탭이나 폴더를 바꾸면 풀린다 */
-    private var tagFilter: String? = null
+    /** 고른 추천 태그들 (비어 있으면 안 고름). 탭이나 폴더를 바꾸면 풀린다 */
+    private val tagFilters = LinkedHashSet<String>()
     /** 정렬한 줄들 (태그를 골랐으면 [rows]는 이것을 태그 차례로 바꾼 것) */
     private var baseRows: List<Row> = emptyList()
     private var loadJob: Job? = null
@@ -179,7 +179,7 @@ class MainActivity : AppCompatActivity() {
             when {
                 selecting -> endSelection()
                 searchItem.isActionViewExpanded -> searchItem.collapseActionView()
-                tagFilter != null -> chooseTag(null)
+                tagFilters.isNotEmpty() -> clearTags()
                 else -> goUp()
             }
         }
@@ -214,7 +214,8 @@ class MainActivity : AppCompatActivity() {
         viewButton = findViewById(R.id.viewButton)
         selectBar = findViewById(R.id.selectBar)
         tagBar = findViewById(R.id.tagBar)
-        tagScroll = tagBar as HorizontalScrollView
+        tagClear = findViewById(R.id.tagClear)
+        tagClear.setOnClickListener { clearTags() }
         tagRow = findViewById(R.id.tagRow)
         selectCount = findViewById(R.id.selectCount)
         selectAll = findViewById(R.id.selectAll)
@@ -458,36 +459,36 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ================= 추천 태그 =================
-    // 최근 파일·즐겨찾기·폴더 탭: 지금 목록(즐겨찾기·폴더는 지금 들어간 폴더)의 문서 제목에 자주 나오는 낱말을 '# 태그'로 보여 준다.
-    // 하나를 누르면 그 낱말이 든 문서가 맨 위로 오고 나머지는 그 아래에서 흐리게 보인다 (없애지는 않는다). 폴더를 옮기면 태그도 바뀐다
+    // 최근 파일·즐겨찾기·모든 문서·폴더 탭: 지금 목록(즐겨찾기·폴더는 지금 들어간 폴더)의 문서 제목에 자주 나오는 낱말을 '# 태그'로 보여 준다.
+    // 태그는 여러 개 고를 수 있고(누르면 켜고, 다시 누르면 끈다), 고른 태그에 하나라도 맞는 문서가 맨 위로, 맞는 태그가 많은 문서부터 온다.
+    // 나머지 문서는 그 아래에서 흐리게 보인다 (없애지는 않는다). 폴더를 옮기면 태그도 바뀐다. 줄 맨 오른쪽 ✕로 고른 태그를 모두 푼다
 
     /** 태그 줄을 그린다. 지금 목록의 문서([baseRows])에 공통 낱말이 있을 때만 보이고, 없어진 태그를 골라 둔 상태면 푼다 */
     private fun renderTags() {
-        val tagTab = tab == Tab.RECENT || tab == Tab.FAVORITE || tab == Tab.FOLDER
-        val tags = if (tagTab) TitleTags.extract(baseRows.filter { !it.isFolder }.map { it.title }) else emptyList()
-        if (tagFilter != null && tagFilter !in tags) tagFilter = null
-        tagBar.isVisible = tagTab && !selecting && tags.isNotEmpty()
+        val tags = TitleTags.extract(baseRows.filter { !it.isFolder }.map { it.title })
+        tagFilters.retainAll(tags.toSet())
+        tagBar.isVisible = !selecting && tags.isNotEmpty()
+        tagClear.isVisible = tagFilters.isNotEmpty()
         tagRow.removeAllViews()
-        for (t in tags) tagRow.addView(tagChip(t, t == tagFilter))
+        for (t in tags) tagRow.addView(tagChip(t, t in tagFilters))
     }
 
-    /** 고른 태그에 맞게 [rows]의 차례와 흐림을 정한다 (태그가 없으면 정렬한 그대로) */
+    /** 고른 태그에 맞게 [rows]의 차례와 흐림을 정한다 (태그를 안 골랐으면 정렬한 그대로) */
     private fun arrangeTag() {
-        val tag = tagFilter
-        if (tag == null) {
+        if (tagFilters.isEmpty()) {
             baseRows.forEach { it.dim = false }
             rows = baseRows
             return
         }
-        val (hit, rest) = TitleTags.split(baseRows, tag, { it.title }, { !it.isFolder })
+        val (hit, rest) = TitleTags.rank(baseRows, tagFilters, { it.title }, { !it.isFolder })
         hit.forEach { it.dim = false }
         rest.forEach { it.dim = !it.isFolder }
         rows = hit + rest
     }
 
-    /** 태그 고른 것을 풀고 태그 줄을 감춘다 (탭이나 폴더를 옮길 때: 새 목록이 올 때까지 옛 태그가 보이지 않게) */
+    /** 고른 태그를 풀고 태그 줄을 감춘다 (탭이나 폴더를 옮길 때: 새 목록이 올 때까지 옛 태그가 보이지 않게) */
     private fun resetTags() {
-        tagFilter = null
+        tagFilters.clear()
         tagBar.isVisible = false
     }
 
@@ -513,17 +514,28 @@ class MainActivity : AppCompatActivity() {
             gravity = android.view.Gravity.CENTER
             setPadding(dp(14), 0, dp(14), 0)
             isSingleLine = true
-            contentDescription = if (on) "$tag 태그 (눌러서 풀기)" else "$tag 태그로 모아 보기"
+            contentDescription = if (on) "$tag 태그 (눌러서 끄기)" else "$tag 태그 켜기"
             // apply 안이라 setTag만 쓰면 View.setTag로 읽히므로 이름을 달리한다
-            setOnClickListener { chooseTag(if (on) null else tag) }
+            setOnClickListener { toggleTag(tag) }
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(36)).apply { marginEnd = dp(8) }
         }
     }
 
-    /** 태그를 고르거나([t]) 푼다(null) */
-    private fun chooseTag(t: String?) {
+    /** 태그 [t]를 켜거나 끈다 */
+    private fun toggleTag(t: String) {
+        if (!tagFilters.remove(t)) tagFilters += t
+        retag()
+    }
+
+    /** 고른 태그를 모두 푼다 */
+    private fun clearTags() {
+        tagFilters.clear()
+        retag()
+    }
+
+    /** 고른 태그가 바뀐 뒤: 줄 차례·흐림과 태그 줄을 다시 그린다 (목록을 다시 읽지 않는다) */
+    private fun retag() {
         endSelection()
-        tagFilter = t
         renderTags()
         arrangeTag()
         applyFilter()
@@ -1054,7 +1066,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateBack() {
-        backCallback.isEnabled = selecting || searchItem.isActionViewExpanded || tagFilter != null ||
+        backCallback.isEnabled = selecting || searchItem.isActionViewExpanded || tagFilters.isNotEmpty() ||
             (tab == Tab.FOLDER && !permCard.isVisible && canGoUp()) ||
             (tab == Tab.FAVORITE && favDir != null)
     }
@@ -1931,7 +1943,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** 손잡이를 보일 때: 직접 정한 순서로 보는 중이고, 고르는 중이나 찾는 중이 아닐 때 */
-    private fun canReorder() = manualOn() && !selecting && query.isBlank() && tagFilter == null
+    private fun canReorder() = manualOn() && !selecting && query.isBlank() && tagFilters.isEmpty()
 
     // ================= 목록 어댑터 =================
 

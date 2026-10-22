@@ -129,23 +129,44 @@
     </LinearLayout>
 
     <!-- 추천 태그 줄 (최근 파일·즐겨찾기 탭): 자주 나오는 제목 낱말을 # 태그로. 누르면 그 낱말이 든 문서만 (MainActivity.renderTags) -->
-    <HorizontalScrollView
+    <LinearLayout
         android:id="@+id/tagBar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:background="?attr/colorSurfaceContainer"
-        android:scrollbars="none"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
         android:visibility="gone">
 
-        <LinearLayout
-            android:id="@+id/tagRow"
-            android:layout_width="wrap_content"
+        <HorizontalScrollView
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingHorizontal="12dp"
-            android:paddingBottom="8dp" />
-    </HorizontalScrollView>
+            android:layout_weight="1"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:id="@+id/tagRow"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingHorizontal="12dp"
+                android:paddingBottom="8dp" />
+        </HorizontalScrollView>
+
+        <!-- 태그를 하나라도 골랐을 때만: 고른 태그를 모두 풀기 -->
+        <ImageButton
+            android:id="@+id/tagClear"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:layout_marginEnd="4dp"
+            android:layout_marginBottom="4dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="고른 태그 모두 풀기"
+            android:src="@drawable/ic_close"
+            android:tooltipText="고른 태그 모두 풀기"
+            android:visibility="gone" />
+    </LinearLayout>
 
     <!-- 선택 모드: 닫기 · 고른 수 · 모두 선택 (목록 줄 자리에) -->
     <LinearLayout
