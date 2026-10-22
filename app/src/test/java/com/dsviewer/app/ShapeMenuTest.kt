@@ -37,9 +37,10 @@ class ShapeMenuTest {
         assertFalse(ShapeKind.TRI_3PT in f.others)
     }
 
-    @Test fun rectangleOptionsAreRectangleAndDiagonal() {
+    @Test fun rectangleOptionsAreDiagonalFirstThenRectangle() {
         val f = family(ShapeKind.QUADRILATERAL)
-        assertEquals(listOf(ShapeKind.RECTANGLE, ShapeKind.RECT_DIAG), f.group!!.options)
+        // 기본(맨 왼쪽)은 대각선 직사각형
+        assertEquals(listOf(ShapeKind.RECT_DIAG, ShapeKind.RECTANGLE), f.group!!.options)
         assertEquals("직사각형", f.group!!.label)
         // 처음 보이는 칸은 그대로 일반사각형
         assertEquals(ShapeKind.QUADRILATERAL, f.default)
@@ -131,7 +132,7 @@ class ShapeMenuTest {
         assertEquals(listOf("처음·끝점 연결", "두 점 선분", "가장 유사한 선분"), line)
         assertEquals(listOf("원", "중심·반지름 원", "세 점 원"), family(ShapeKind.CIRCLE).group!!.options.map(ShapeMenu::optionLabel))
         assertEquals(listOf("일반삼각형", "세 점 삼각형"), family(ShapeKind.TRIANGLE).group!!.options.map(ShapeMenu::optionLabel))
-        assertEquals(listOf("직사각형", "대각선 직사각형"), family(ShapeKind.QUADRILATERAL).group!!.options.map(ShapeMenu::optionLabel))
+        assertEquals(listOf("대각선 직사각형", "직사각형"), family(ShapeKind.QUADRILATERAL).group!!.options.map(ShapeMenu::optionLabel))
         // 합치지 않은 종류는 원래 이름
         assertEquals("이차", ShapeMenu.optionLabel(ShapeKind.QUADRATIC))
     }

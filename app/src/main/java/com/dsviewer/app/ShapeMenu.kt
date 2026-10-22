@@ -31,7 +31,7 @@ internal object ShapeMenu {
     private val LINE_GROUP = Group("일차", listOf(ShapeKind.LINE_ENDS, ShapeKind.LINE_2PT, ShapeKind.LINE))
     private val CIRCLE_GROUP = Group("원", listOf(ShapeKind.CIRCLE, ShapeKind.CIRCLE_CR, ShapeKind.CIRCLE_3PT))
     private val TRIANGLE_GROUP = Group("일반삼각형", listOf(ShapeKind.TRIANGLE, ShapeKind.TRI_3PT))
-    private val RECT_GROUP = Group("직사각형", listOf(ShapeKind.RECTANGLE, ShapeKind.RECT_DIAG))
+    private val RECT_GROUP = Group("직사각형", listOf(ShapeKind.RECT_DIAG, ShapeKind.RECTANGLE))
 
     /** 펼쳐 고르는 칸들 (키는 줄에서 그 칸을 가리키는 종류) */
     val families: Map<ShapeKind, Family> = listOf(
@@ -47,7 +47,7 @@ internal object ShapeMenu {
             listOf(ShapeKind.TRI_EQUILATERAL, ShapeKind.TRI_RIGHT, ShapeKind.TRI_ISOSCELES, ShapeKind.TRI_RIGHT_ISOSCELES),
             ShapeKind.TRIANGLE,
         ),
-        // 직사각형(그린 대로 / 대각선), 일반사각형, 정사각형 …. 처음 보이는 것은 일반사각형
+        // 직사각형(대각선 / 그린 대로), 일반사각형, 정사각형 …. 처음 보이는 것은 일반사각형
         Family(
             ShapeKind.QUADRILATERAL, RECT_GROUP,
             listOf(ShapeKind.QUADRILATERAL, ShapeKind.SQUARE, ShapeKind.RHOMBUS, ShapeKind.PARALLELOGRAM, ShapeKind.QUAD_4PT),

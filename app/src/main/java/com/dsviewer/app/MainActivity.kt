@@ -1112,7 +1112,9 @@ class MainActivity : AppCompatActivity() {
         val lastPaper = prefs.getString("notePaper", null)?.let { n -> Paper.entries.firstOrNull { it.name == n } } ?: Paper.GRID
         val picker = PaperPicker(this, lastPaper)
         view.findViewById<android.widget.FrameLayout>(R.id.paperPickerHost).addView(picker.view)
-        orientGroup.check(if (prefs.getBoolean("notePortrait", false)) R.id.orientPortrait else R.id.orientLandscape)
+        // 방향은 지금 기기가 세로면 세로, 가로면 가로가 기본
+        val dm = resources.displayMetrics
+        orientGroup.check(if (NoteDefaults.portrait(dm.widthPixels, dm.heightPixels)) R.id.orientPortrait else R.id.orientLandscape)
         view.findViewById<TextView>(R.id.orientLabel).text = "방향 (A4)"
         MaterialAlertDialogBuilder(this)
             .setTitle("새 노트")
@@ -1120,7 +1122,7 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("만들기") { _, _ ->
                 val paper = picker.selected
                 val portrait = orientGroup.checkedButtonId == R.id.orientPortrait
-                prefs.edit().putString("notePaper", paper.name).putBoolean("notePortrait", portrait).apply()
+                prefs.edit().putString("notePaper", paper.name).apply()
                 createNote(paper, portrait)
             }
             .setNegativeButton("취소", null)
@@ -1153,7 +1155,13 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** 검색 중이면 검색을 끝내고 전체 목록으로 (검색해서 문서를 열고 돌아와도 다른 파일이 바로 보이게) */
+    private fun endSearch() {
+        if (::searchItem.isInitialized && searchItem.isActionViewExpanded) searchItem.collapseActionView()
+    }
+
     private fun openViewer(uri: Uri, newNote: Boolean = false, startReview: Boolean = false) {
+        endSearch()
         val writable = if (newNote) false else if (uri.scheme == "file") File(uri.path ?: "").canWrite()
         else contentResolver.persistedUriPermissions.any { it.uri == uri && it.isWritePermission }
         // 뷰어가 이미 떠 있으면 그 뷰어에 새 탭으로 연다
@@ -1334,6 +1342,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun openDraft(meta: DraftMeta) {
+        endSearch()
         startActivity(
             Intent(this, ViewerActivity::class.java)
                 .setData(Uri.parse(meta.uri))
@@ -1922,6 +1931,89 @@ class MainActivity : AppCompatActivity() {
             anchor = pos
             last = pos
             base = selected.toSet()
+            lift(pos)
+        }
+
+        // ---- 끌고 가는 동안 손가락을 따라다니는 떠 있는 썸네일 ----
+
+        /** 손가락을 따라다니는 떠 있는 썸네일 (끌기 시작할 때 만들고 손을 떼면 없앤다) */
+        private var ghost: android.view.View? = null
+        /** 꾹 누른 줄: 떠오른 동안 자리에 흐리게 남는다 */
+        private var lifted: android.view.View? = null
+        /** 꾹 누른 줄의 모습 (누른 순간 찍어 둔다) */
+        private var ghostBmp: android.graphics.Bitmap? = null
+
+        /** 꾹 누른 줄 [pos]의 모습을 찍어 둔다 (손가락이 움직이기 시작하면 [showGhost]가 이것을 띄운다) */
+        private fun lift(pos: Int) {
+            removeGhost(animate = false)
+            val v = list.findViewHolderForAdapterPosition(pos)?.itemView ?: return
+            if (v.width <= 0 || v.height <= 0) return
+            ghostBmp = android.graphics.Bitmap.createBitmap(v.width, v.height, android.graphics.Bitmap.Config.ARGB_8888)
+                .also { v.draw(android.graphics.Canvas(it)) }
+            lifted = v
+        }
+
+        /** 찍어 둔 줄의 모습을 문서 고르는 화면 위에 띄운다. 여러 개를 골랐으면 개수 표시를 붙인다 */
+        private fun showGhost() {
+            if (ghost != null) return
+            val bmp = ghostBmp ?: return
+            val d = resources.displayMetrics.density
+            val box = android.widget.FrameLayout(this@MainActivity)
+            box.addView(
+                android.widget.ImageView(this@MainActivity).apply { setImageBitmap(bmp) },
+                android.widget.FrameLayout.LayoutParams(bmp.width, bmp.height),
+            )
+            val n = selected.size
+            if (n > 1) {
+                box.addView(
+                    TextView(this@MainActivity).apply {
+                        text = "${n}개"
+                        setTextColor(Color.WHITE)
+                        textSize = 13f
+                        gravity = android.view.Gravity.CENTER
+                        setPadding((10 * d).toInt(), (3 * d).toInt(), (10 * d).toInt(), (3 * d).toInt())
+                        background = android.graphics.drawable.GradientDrawable().apply {
+                            cornerRadius = 14 * d
+                            setColor(Color.parseColor("#E53935"))
+                        }
+                    },
+                    android.widget.FrameLayout.LayoutParams(
+                        android.widget.FrameLayout.LayoutParams.WRAP_CONTENT, android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                        android.view.Gravity.TOP or android.view.Gravity.END,
+                    ).apply { setMargins(0, (4 * d).toInt(), (4 * d).toInt(), 0) },
+                )
+            }
+            box.alpha = 0f
+            box.elevation = 16 * d
+            (window.decorView as android.view.ViewGroup).addView(box, android.widget.FrameLayout.LayoutParams(bmp.width, bmp.height))
+            box.animate().alpha(0.92f).scaleX(1.05f).scaleY(1.05f).setDuration(120).start()
+            lifted?.alpha = 0.3f
+            ghost = box
+            moveGhost()
+        }
+
+        /** 떠 있는 썸네일의 가운데를 지금 손가락 자리로 */
+        private fun moveGhost() {
+            val g = ghost ?: return
+            val bmp = ghostBmp ?: return
+            val listLoc = IntArray(2)
+            val decorLoc = IntArray(2)
+            list.getLocationOnScreen(listLoc)
+            window.decorView.getLocationOnScreen(decorLoc)
+            g.translationX = listLoc[0] + x - bmp.width / 2f - decorLoc[0]
+            g.translationY = listLoc[1] + y - bmp.height / 2f - decorLoc[1]
+        }
+
+        private fun removeGhost(animate: Boolean = true) {
+            lifted?.alpha = 1f
+            lifted = null
+            val g = ghost
+            ghost = null
+            ghostBmp = null
+            g ?: return
+            val decor = window.decorView as android.view.ViewGroup
+            if (animate) g.animate().alpha(0f).scaleX(1f).scaleY(1f).setDuration(120).withEndAction { decor.removeView(g) }.start()
+            else decor.removeView(g)
         }
 
         /** 손가락이 있는 폴더 줄: 이 줄에서 손을 떼면 고른 문서를 그 폴더로 옮긴다 (없으면 -1) */
@@ -1963,6 +2055,7 @@ class MainActivity : AppCompatActivity() {
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     active = false
                     setDrop(-1)
+                    removeGhost()
                 }
             }
             return false
@@ -1974,6 +2067,8 @@ class MainActivity : AppCompatActivity() {
                     x = e.x
                     y = e.y
                     update()
+                    showGhost()
+                    moveGhost()
                     if (!scrolling && DragSelect.inEdge(y, list.height, edge)) {
                         scrolling = true
                         list.postOnAnimation(scroller)
@@ -1981,6 +2076,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     active = false
+                    removeGhost()
                     val target = if (e.actionMasked == MotionEvent.ACTION_UP) adapter.items.getOrNull(dropPos) else null
                     setDrop(-1)
                     if (target != null) dropSelectedOn(target)
