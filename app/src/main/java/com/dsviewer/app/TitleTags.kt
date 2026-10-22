@@ -89,4 +89,11 @@ internal object TitleTags {
 
     /** [title]에 태그 [tag]가 들어 있는가 (영문 대소문자는 가리지 않는다) */
     fun matches(title: String, tag: String) = title.contains(tag, ignoreCase = true)
+
+    /**
+     * 태그를 골랐을 때의 차례: 태그가 제목에 든 문서([isDoc])가 맨 위(원래 차례대로), 나머지는 그 아래(원래 차례대로).
+     * 나머지 안에도 폴더 같은 문서 아닌 줄이 있다. 돌려주는 것은 (태그된 문서들, 나머지)
+     */
+    fun <T> split(rows: List<T>, tag: String, title: (T) -> String, isDoc: (T) -> Boolean): Pair<List<T>, List<T>> =
+        rows.partition { isDoc(it) && matches(title(it), tag) }
 }

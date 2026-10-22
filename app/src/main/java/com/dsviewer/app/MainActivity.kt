@@ -99,6 +99,8 @@ class MainActivity : AppCompatActivity() {
         var tree = 0
         /** 폴더 계단에서 들여쓰는 칸 수 (머리글은 그 폴더의 깊이, 가지에 달린 줄은 맨 아래 폴더의 깊이) */
         var indent = 0
+        /** 태그를 골랐을 때 태그에 안 맞는 문서: 흐리게 보인다 */
+        var dim = false
         val isFolder get() = kind == Kind.FOLDER || kind == Kind.DRIVE
         /** 선택 모드에서 쓰는 열쇠 */
         val key get() = docUri ?: vfolder?.let { "vf:${it.id}" }
@@ -140,10 +142,10 @@ class MainActivity : AppCompatActivity() {
     private var rows: List<Row> = emptyList()
     private var emptyMsg = ""
     private var query = ""
-    /** 최근 파일·즐겨찾기에서 고른 추천 태그 (null = 안 고름). 탭을 바꾸면 풀린다 */
+    /** 최근 파일·즐겨찾기·폴더에서 고른 추천 태그 (null = 안 고름). 탭이나 폴더를 바꾸면 풀린다 */
     private var tagFilter: String? = null
-    /** 태그로 모아 볼 때 문서(uri)가 속한 폴더 머리글 */
-    private var groupOf: Map<String, Group> = emptyMap()
+    /** 정렬한 줄들 (태그를 골랐으면 [rows]는 이것을 태그 차례로 바꾼 것) */
+    private var baseRows: List<Row> = emptyList()
     private var loadJob: Job? = null
     /** 위 폴더로 돌아갈 때 이전 스크롤 위치를 되살린다 */
     private val scrollStates = HashMap<String, Parcelable?>()
@@ -255,7 +257,7 @@ class MainActivity : AppCompatActivity() {
         tabs.listener = object : ChromeTabBar.Listener {
             override fun onTabSelected(index: Int) {
                 endSelection()
-                tagFilter = null
+                resetTags()
                 tab = Tab.entries[index]
                 prefs.edit().putString("tabName", tab.name).apply()
                 adapter.submit(emptyList())
@@ -351,7 +353,6 @@ class MainActivity : AppCompatActivity() {
         newFolderButton.isVisible = tab == Tab.FAVORITE
         updateSortButton()
         updateFilterButton()
-        renderTags()
         if (needAccess) {
             progress.isVisible = false
             show(emptyList(), "")
@@ -364,11 +365,11 @@ class MainActivity : AppCompatActivity() {
                 progress.isVisible = false
                 barLabel = { n -> if (n == 0) "최근 연 문서" else "최근 연 문서 ${n}개" }
                 crumbs = null
-                show(if (tagFilter != null) taggedRows() else recentRows(), "최근에 연 파일이 없습니다.\n'모든 문서'나 '폴더' 탭에서 문서를 골라 보세요.")
+                show(recentRows(), "최근에 연 파일이 없습니다.\n'모든 문서'나 '폴더' 탭에서 문서를 골라 보세요.")
             }
             Tab.FAVORITE -> {
                 progress.isVisible = false
-                val rows = if (tagFilter != null) taggedRows() else favoriteRows()
+                val rows = favoriteRows()
                 val path = FavFolders.path(FavFolders.list(this), favDir)
                 barLabel = { listOf("즐겨찾기").plus(path.map { it.name }).joinToString("  ›  ") }
                 crumbs = favCrumbs(path)
@@ -426,7 +427,9 @@ class MainActivity : AppCompatActivity() {
     private fun show(all: List<Row>, emptyMsg: String) {
         val groups = shownGroups()
         val rows = all.filter { it.kind != Kind.DOC || DocGroup.of(DocType.ofName(it.title))?.let { g -> g in groups } ?: true }
-        this.rows = if (manualOn()) ListSort.sortManual(sortRows(rows), FavOrder.load(this), { it.key }, rowFields, foldersFirst()) else sortRows(rows)
+        baseRows = if (manualOn()) ListSort.sortManual(sortRows(rows), FavOrder.load(this), { it.key }, rowFields, foldersFirst()) else sortRows(rows)
+        renderTags()
+        arrangeTag()
         if (selecting) selected.retainAll(this.rows.mapNotNull { it.key }.toSet())
         this.emptyMsg = if (rows.none { !it.isFolder } && all.any { !it.isFolder })
             "고른 형식(${groups.joinToString("·") { it.label }})의 문서가 없습니다.\n깔때기 단추에서 볼 형식을 고르세요."
@@ -443,9 +446,7 @@ class MainActivity : AppCompatActivity() {
         val shown = ListSort.filterByTitle(rows, q, rowFields)
         adapter.submit(
             when {
-                // 태그로 모아 볼 때: 즐겨찾기 폴더별로 묶는다
-                tab == Tab.FAVORITE && tagFilter != null -> withGroups(shown)
-                // 평소: 즐겨찾기 / 지금 폴더까지의 길을 계단 모양 폴더 머리글로 두고 그 아래에 줄들을 가지로 이은다
+                // 즐겨찾기 / 지금 폴더까지의 길을 계단 모양 폴더 머리글로 두고 그 아래에 줄들을 가지로 이은다
                 tab == Tab.FAVORITE -> withChain(shown, favLinks())
                 tab == Tab.FOLDER -> dir?.let { withChain(shown, folderLinks(it)) } ?: shown
                 else -> shown
@@ -456,23 +457,37 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ================= 추천 태그 =================
-    // 최근 파일·즐겨찾기 탭: 제목에 자주 나오는 낱말을 '# 태그'로 보여 주고, 하나를 누르면 그 낱말이 든 문서만 모아 보인다
-    // (즐겨찾기 탭에서는 즐겨찾기 폴더별로 묶는다)
+    // 최근 파일·즐겨찾기·폴더 탭: 지금 목록(즐겨찾기·폴더는 지금 들어간 폴더)의 문서 제목에 자주 나오는 낱말을 '# 태그'로 보여 준다.
+    // 하나를 누르면 그 낱말이 든 문서가 맨 위로 오고 나머지는 그 아래에서 흐리게 보인다 (없애지는 않는다). 폴더를 옮기면 태그도 바뀐다
 
-    /** 태그로 모아 볼 때 문서가 속한 폴더 하나 (머리글로 보임) */
-    private class Group(val id: String, val name: String, val icon: Drawable, val onClick: (() -> Unit)?)
-
-    /** 태그를 뽑을 제목들: 가까운 때에 연 것부터 (즐겨찾기 탭은 즐겨찾기한 문서만) */
-    private fun tagTitles() = Recents.list(this).filter { tab != Tab.FAVORITE || it.star }.map { it.name }
-
-    /** 태그 줄을 그린다. 최근 파일·즐겨찾기 탭에서 공통 낱말이 있을 때만 보이고, 없어진 태그를 골라 둔 상태면 푼다 */
+    /** 태그 줄을 그린다. 지금 목록의 문서([baseRows])에 공통 낱말이 있을 때만 보이고, 없어진 태그를 골라 둔 상태면 푼다 */
     private fun renderTags() {
-        val tagTab = tab == Tab.RECENT || tab == Tab.FAVORITE
-        val tags = if (tagTab) TitleTags.extract(tagTitles()) else emptyList()
+        val tagTab = tab == Tab.RECENT || tab == Tab.FAVORITE || tab == Tab.FOLDER
+        val tags = if (tagTab) TitleTags.extract(baseRows.filter { !it.isFolder }.map { it.title }) else emptyList()
         if (tagFilter != null && tagFilter !in tags) tagFilter = null
         tagBar.isVisible = tagTab && !selecting && tags.isNotEmpty()
         tagRow.removeAllViews()
         for (t in tags) tagRow.addView(tagChip(t, t == tagFilter))
+    }
+
+    /** 고른 태그에 맞게 [rows]의 차례와 흐림을 정한다 (태그가 없으면 정렬한 그대로) */
+    private fun arrangeTag() {
+        val tag = tagFilter
+        if (tag == null) {
+            baseRows.forEach { it.dim = false }
+            rows = baseRows
+            return
+        }
+        val (hit, rest) = TitleTags.split(baseRows, tag, { it.title }, { !it.isFolder })
+        hit.forEach { it.dim = false }
+        rest.forEach { it.dim = !it.isFolder }
+        rows = hit + rest
+    }
+
+    /** 태그 고른 것을 풀고 태그 줄을 감춘다 (탭이나 폴더를 옮길 때: 새 목록이 올 때까지 옛 태그가 보이지 않게) */
+    private fun resetTags() {
+        tagFilter = null
+        tagBar.isVisible = false
     }
 
     private fun tagChip(tag: String, on: Boolean): View {
@@ -508,53 +523,10 @@ class MainActivity : AppCompatActivity() {
     private fun chooseTag(t: String?) {
         endSelection()
         tagFilter = t
-        refresh()
+        renderTags()
+        arrangeTag()
+        applyFilter()
         list.scrollToPosition(0)
-    }
-
-    /** 태그가 제목에 든 문서들. 즐겨찾기 탭은 폴더 위치와 상관없이 즐겨찾기 전체에서 찾고, 어느 폴더 것인지 [groupOf]에 적어 둔다 (최근 파일 탭은 묶지 않는다) */
-    private fun taggedRows(): List<Row> {
-        val tag = tagFilter ?: return emptyList()
-        val key = sortKey()
-        val locked = Locks.locked(this)
-        val favFolders = FavFolders.list(this).associateBy { it.id }
-        val groups = HashMap<String, Group>()
-        val out = ArrayList<Row>()
-        for (i in Recents.list(this)) {
-            if ((tab == Tab.FAVORITE && !i.star) || !TitleTags.matches(i.name, tag)) continue
-            val row = itemRow(i, key, locked) ?: continue
-            if (tab == Tab.FAVORITE) groups[i.uri] = favGroup(i, favFolders)
-            out += row
-        }
-        groupOf = groups
-        return out
-    }
-
-    private fun favGroup(i: Recents.Item, folders: Map<String, FavFolder>): Group {
-        val f = i.folder?.let { folders[it] }
-        return if (f != null) Group(f.id, f.name, FolderDrawable(f.color, f.pattern)) { tagFilter = null; openFavDir(f.id) }
-        else Group("", "즐겨찾기", FolderDrawable(FOLDER_COLOR, TapePattern.SOLID)) { tagFilter = null; openFavRoot() }
-    }
-
-    /**
-     * 태그로 모아 볼 때: 문서들을 즐겨찾기 폴더별로 묶어 폴더 머리글을 끼운다 (폴더 차례는 정렬된 문서가 처음 나오는 차례, 아래 줄에는 가지선 표시)
-     */
-    private fun withGroups(all: List<Row>): List<Row> {
-        val docs = all.filter { !it.isFolder }
-        val byGroup = LinkedHashMap<String, Pair<Group, MutableList<Row>>>()
-        for (r in docs) {
-            val g = r.docUri?.let { groupOf[it] } ?: Group("", "기타", FolderDrawable(FOLDER_COLOR, TapePattern.SOLID), null)
-            byGroup.getOrPut(g.id) { g to ArrayList() }.second += r
-        }
-        val out = ArrayList<Row>()
-        for ((g, list) in byGroup.values) {
-            out += Row(g.name, "${list.size}개", Kind.HEADER, { g.onClick?.invoke() }, folder = g.icon)
-            list.forEachIndexed { n, r ->
-                r.tree = if (n == list.lastIndex) 2 else 1
-                out += r
-            }
-        }
-        return out
     }
 
     /** 폴더 계단의 한 칸: 폴더 이름과 그림, 누르면 그 폴더로 (지금 폴더는 null) */
@@ -640,10 +612,7 @@ class MainActivity : AppCompatActivity() {
                 folder = FolderDrawable(f.color, f.pattern), opened = f.time, modified = f.time, vfolder = f,
             )
         }
-        val here = items.filter { where(it) == favDir }
-        val byId = folders.associateBy { it.id }
-        groupOf = here.associate { it.uri to favGroup(it, byId) }
-        here.forEach { i -> itemRow(i, key, locked)?.let { out += it } }
+        items.filter { where(it) == favDir }.forEach { i -> itemRow(i, key, locked)?.let { out += it } }
         return out
     }
 
@@ -1071,11 +1040,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setDir(f: File?) {
+        resetTags()
         dir = f
         prefs.edit().putString("dir", f?.path).apply()
     }
 
     private fun setFavDir(id: String?) {
+        resetTags()
         favDir = id
         prefs.edit().putString("favDir", id).apply()
     }
@@ -2083,6 +2054,8 @@ class MainActivity : AppCompatActivity() {
         fun bind(r: Row) {
             // 폴더 계단 아래 줄: 맨 아래 폴더만큼 들여 쓴다 (큰 아이콘 보기는 그대로)
             if (!isGrid) itemView.setPadding(basePad + dp(STEP_DP) * r.indent, itemView.paddingTop, itemView.paddingRight, itemView.paddingBottom)
+            // 태그에 안 맞는 문서는 흐리게
+            itemView.alpha = if (r.dim) DIM_ALPHA else 1f
             name.text = r.title
             val s = if (isGrid) r.short else r.sub
             sub.text = s
@@ -2171,6 +2144,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
+        /** 태그에 안 맞는 문서의 투명도 */
+        private const val DIM_ALPHA = 0.38f
+
         /** 폴더 계단에서 한 칸 들여 쓰는 너비 (dp) */
         private const val STEP_DP = 18
 
