@@ -177,7 +177,7 @@ class MainActivity : AppCompatActivity() {
             when {
                 selecting -> endSelection()
                 searchItem.isActionViewExpanded -> searchItem.collapseActionView()
-                tagFilter != null -> setTag(null)
+                tagFilter != null -> chooseTag(null)
                 else -> goUp()
             }
         }
@@ -498,13 +498,14 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(14), 0, dp(14), 0)
             isSingleLine = true
             contentDescription = if (on) "$tag 태그 (눌러서 풀기)" else "$tag 태그로 모아 보기"
-            setOnClickListener { setTag(if (on) null else tag) }
+            // apply 안이라 setTag만 쓰면 View.setTag로 읽히므로 이름을 달리한다
+            setOnClickListener { chooseTag(if (on) null else tag) }
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(36)).apply { marginEnd = dp(8) }
         }
     }
 
     /** 태그를 고르거나([t]) 푼다(null) */
-    private fun setTag(t: String?) {
+    private fun chooseTag(t: String?) {
         endSelection()
         tagFilter = t
         refresh()
