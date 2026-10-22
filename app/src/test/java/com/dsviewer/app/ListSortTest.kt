@@ -260,4 +260,29 @@ class ListSortTest {
             }
         }
     }
+
+    // ================= 꾹 누른 뒤 손을 뗄 때 =================
+
+    @Test fun holdAndReleaseEntersSelectionMode() {
+        assertEquals(DragSelect.End.ENTER_SELECTION, DragSelect.end(pressed = true, dragged = false, up = true, overFolder = false))
+    }
+
+    @Test fun holdAndDragOntoFolderMovesThePressedDocument() {
+        assertEquals(DragSelect.End.MOVE_PRESSED, DragSelect.end(pressed = true, dragged = true, up = true, overFolder = true))
+    }
+
+    @Test fun holdAndDragReleasedElsewhereDoesNothing() {
+        assertEquals(DragSelect.End.NOTHING, DragSelect.end(pressed = true, dragged = true, up = true, overFolder = false))
+    }
+
+    @Test fun interruptedHoldDoesNotEnterSelectionOrMove() {
+        assertEquals(DragSelect.End.NOTHING, DragSelect.end(pressed = true, dragged = false, up = false, overFolder = false))
+        assertEquals(DragSelect.End.NOTHING, DragSelect.end(pressed = true, dragged = true, up = false, overFolder = true))
+    }
+
+    @Test fun dragInSelectionModeMovesTheSelectedOnesOntoFolder() {
+        assertEquals(DragSelect.End.MOVE_SELECTED, DragSelect.end(pressed = false, dragged = false, up = true, overFolder = true))
+        assertEquals(DragSelect.End.NOTHING, DragSelect.end(pressed = false, dragged = false, up = true, overFolder = false))
+        assertEquals(DragSelect.End.NOTHING, DragSelect.end(pressed = false, dragged = false, up = false, overFolder = true))
+    }
 }

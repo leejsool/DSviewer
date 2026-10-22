@@ -147,6 +147,29 @@ internal object DragSelect {
         else -> 0f
     }
 
+    /** 꾹 누른 뒤 손을 떼거나 끌기가 끊겼을 때 할 일 */
+    enum class End {
+        /** 선택 모드를 켜고 누른 문서를 고른다 (꾹 누르고 끌지 않고 손을 뗐다) */
+        ENTER_SELECTION,
+        /** 끌어 온 문서(누른 문서 하나)를 폴더로 옮긴다 */
+        MOVE_PRESSED,
+        /** 선택 모드에서 끌어 온 고른 문서들을 폴더로 옮긴다 */
+        MOVE_SELECTED,
+        /** 아무 일도 없던 것으로 (끌다가 폴더가 아닌 곳에서 뗐거나, 끊겼다) */
+        NOTHING,
+    }
+
+    /**
+     * 꾹 누른 뒤의 끝에 할 일. [pressed]는 선택 모드를 켜기 전에 문서 하나를 꾹 누른 경우, [dragged]는 그러고 나서 끌기가 시작됐는지,
+     * [up]은 손을 뗀 것(아니면 끊김), [overFolder]는 뗀 자리가 옮길 수 있는 폴더인지
+     */
+    fun end(pressed: Boolean, dragged: Boolean, up: Boolean, overFolder: Boolean): End = when {
+        pressed && !dragged -> if (up) End.ENTER_SELECTION else End.NOTHING
+        pressed -> if (up && overFolder) End.MOVE_PRESSED else End.NOTHING
+        up && overFolder -> End.MOVE_SELECTED
+        else -> End.NOTHING
+    }
+
     /** 손가락이 위·아래 가장자리에 있어 자동 스크롤을 시작해야 하는가 */
     fun inEdge(y: Float, listHeight: Int, edge: Float): Boolean = y < edge || y > listHeight - edge
 }

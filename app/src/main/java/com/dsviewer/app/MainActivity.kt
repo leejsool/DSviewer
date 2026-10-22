@@ -1934,6 +1934,49 @@ class MainActivity : AppCompatActivity() {
             lift(pos)
         }
 
+        /** 꾹 누른 칸 (선택 모드를 켜기 전): 끌면 이 문서를 옮기고, 끌지 않고 손을 떼면 선택 모드를 켠다 */
+        private var press: Row? = null
+        /** 꾹 누른 뒤 손가락이 [touchSlop] 넘게 움직여 끌기가 시작됐나 */
+        private var pressDragging = false
+        private var downX = 0f
+        private var downY = 0f
+        private val touchSlop get() = android.view.ViewConfiguration.get(this@MainActivity).scaledTouchSlop
+
+        /** 문서 하나를 꾹 눌렀다 ([pos]번째 칸 [r]): 선택 모드는 아직 켜지 않는다 */
+        fun beginPress(pos: Int, r: Row) {
+            if (pos < 0 || r.key == null) return
+            active = true
+            anchor = pos
+            last = pos
+            base = emptySet()
+            press = r
+            pressDragging = false
+            lift(pos)
+        }
+
+        /**
+         * 손을 떼거나 끌기가 끊겼다 ([up]이면 손을 뗀 것).
+         * 꾹 누르고 끌지 않았으면 그때 선택 모드를 켜고, 끌었으면 폴더 위에서 뗀 경우 옮기고 아니면 아무 일도 없던 것으로 한다
+         */
+        private fun endGesture(up: Boolean) {
+            val r = press
+            val dragging = pressDragging
+            active = false
+            press = null
+            pressDragging = false
+            removeGhost()
+            val target = adapter.items.getOrNull(dropPos)
+            setDrop(-1)
+            when (DragSelect.end(pressed = r != null, dragged = dragging, up = up, overFolder = target != null)) {
+                DragSelect.End.ENTER_SELECTION -> r?.let(::startSelection)
+                DragSelect.End.MOVE_PRESSED -> target?.let(::dropSelectedOn)
+                DragSelect.End.MOVE_SELECTED -> target?.let(::dropSelectedOn)
+                DragSelect.End.NOTHING -> {}
+            }
+            // 선택 모드를 켜지 않고 끌던 문서는 놓은 뒤 고른 것을 비운다 (고른 표시가 남지 않게)
+            if (r != null && !selecting) selected.clear()
+        }
+
         // ---- 끌고 가는 동안 손가락을 따라다니는 떠 있는 썸네일 ----
 
         /** 손가락을 따라다니는 떠 있는 썸네일 (끌기 시작할 때 만들고 손을 떼면 없앤다) */
@@ -1942,6 +1985,9 @@ class MainActivity : AppCompatActivity() {
         private var lifted: android.view.View? = null
         /** 꾹 누른 줄의 모습 (누른 순간 찍어 둔다) */
         private var ghostBmp: android.graphics.Bitmap? = null
+        /** 눌렀을 때 손가락이 그 줄 안에서 있던 자리: 떠 있는 썸네일도 같은 자리를 잡고 따라온다 */
+        private var grabX = 0f
+        private var grabY = 0f
 
         /** 꾹 누른 줄 [pos]의 모습을 찍어 둔다 (손가락이 움직이기 시작하면 [showGhost]가 이것을 띄운다) */
         private fun lift(pos: Int) {
@@ -1951,6 +1997,8 @@ class MainActivity : AppCompatActivity() {
             ghostBmp = android.graphics.Bitmap.createBitmap(v.width, v.height, android.graphics.Bitmap.Config.ARGB_8888)
                 .also { v.draw(android.graphics.Canvas(it)) }
             lifted = v
+            grabX = (downX - v.left).coerceIn(0f, v.width.toFloat())
+            grabY = (downY - v.top).coerceIn(0f, v.height.toFloat())
         }
 
         /** 찍어 둔 줄의 모습을 문서 고르는 화면 위에 띄운다. 여러 개를 골랐으면 개수 표시를 붙인다 */
@@ -1984,6 +2032,8 @@ class MainActivity : AppCompatActivity() {
                 )
             }
             box.alpha = 0f
+            box.pivotX = grabX
+            box.pivotY = grabY
             box.elevation = 16 * d
             (window.decorView as android.view.ViewGroup).addView(box, android.widget.FrameLayout.LayoutParams(bmp.width, bmp.height))
             box.animate().alpha(0.92f).scaleX(1.05f).scaleY(1.05f).setDuration(120).start()
@@ -2000,8 +2050,8 @@ class MainActivity : AppCompatActivity() {
             val decorLoc = IntArray(2)
             list.getLocationOnScreen(listLoc)
             window.decorView.getLocationOnScreen(decorLoc)
-            g.translationX = listLoc[0] + x - bmp.width / 2f - decorLoc[0]
-            g.translationY = listLoc[1] + y - bmp.height / 2f - decorLoc[1]
+            g.translationX = listLoc[0] + x - grabX - decorLoc[0]
+            g.translationY = listLoc[1] + y - grabY - decorLoc[1]
         }
 
         private fun removeGhost(animate: Boolean = true) {
@@ -2039,6 +2089,8 @@ class MainActivity : AppCompatActivity() {
                 return
             }
             setDrop(-1)
+            // 선택 모드를 켜지 않고 끌고 있는 중이면 고르지 않고, 폴더 위에 있는지만 본다
+            if (press != null) return
             if (pos == last) return
             last = pos
             val items = adapter.items
@@ -2049,14 +2101,14 @@ class MainActivity : AppCompatActivity() {
         }
 
         override fun onInterceptTouchEvent(rv: RecyclerView, e: MotionEvent): Boolean {
+            if (e.actionMasked == MotionEvent.ACTION_DOWN) {
+                downX = e.x
+                downY = e.y
+            }
             if (!active) return false
             when (e.actionMasked) {
                 MotionEvent.ACTION_MOVE -> return true
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    active = false
-                    setDrop(-1)
-                    removeGhost()
-                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> endGesture(e.actionMasked == MotionEvent.ACTION_UP)
             }
             return false
         }
@@ -2064,6 +2116,13 @@ class MainActivity : AppCompatActivity() {
         override fun onTouchEvent(rv: RecyclerView, e: MotionEvent) {
             when (e.actionMasked) {
                 MotionEvent.ACTION_MOVE -> {
+                    // 꾹 누른 뒤 아직 조금밖에 안 움직였으면 끌기가 아니다 (손을 떼면 선택 모드)
+                    if (press != null && !pressDragging) {
+                        if (kotlin.math.hypot(e.x - downX, e.y - downY) < touchSlop) return
+                        pressDragging = true
+                        selected.clear()
+                        press?.key?.let { selected += it }
+                    }
                     x = e.x
                     y = e.y
                     update()
@@ -2074,13 +2133,7 @@ class MainActivity : AppCompatActivity() {
                         list.postOnAnimation(scroller)
                     }
                 }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    active = false
-                    removeGhost()
-                    val target = if (e.actionMasked == MotionEvent.ACTION_UP) adapter.items.getOrNull(dropPos) else null
-                    setDrop(-1)
-                    if (target != null) dropSelectedOn(target)
-                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> endGesture(e.actionMasked == MotionEvent.ACTION_UP)
             }
         }
 
@@ -2314,11 +2367,20 @@ class MainActivity : AppCompatActivity() {
                 // 목록을 새로 그리기 전에 자리를 먼저 (새로 그리는 동안은 자리가 -1)
                 val pos = bindingAdapterPosition
                 if (pos == RecyclerView.NO_POSITION) return@setOnLongClickListener true
-                if (selecting) {
-                    r.key?.let { selected += it }
-                    onSelectionChanged()
-                } else startSelection(r)
-                dragSelect.begin(pos)
+                when {
+                    selecting -> {
+                        r.key?.let { selected += it }
+                        onSelectionChanged()
+                        dragSelect.begin(pos)
+                    }
+                    // 문서를 끌어 옮길 수 있는 탭: 선택 모드는 켜지 않고, 끌면 바로 이동하고 그냥 손을 떼면 그때 선택 모드가 된다
+                    // (목록을 새로 그리면 누르고 있던 칸이 사라져 끌기가 끊기므로 손을 뗄 때까지 미룬다)
+                    tab == Tab.FOLDER || tab == Tab.FAVORITE -> dragSelect.beginPress(pos, r)
+                    else -> {
+                        startSelection(r)
+                        dragSelect.begin(pos)
+                    }
+                }
                 true
             } else {
                 itemView.setOnLongClickListener(null)
