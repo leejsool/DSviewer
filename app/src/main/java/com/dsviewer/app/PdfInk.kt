@@ -7,6 +7,7 @@ import com.tom_roush.pdfbox.cos.COSArray
 import com.tom_roush.pdfbox.cos.COSDictionary
 import com.tom_roush.pdfbox.cos.COSFloat
 import com.tom_roush.pdfbox.cos.COSName
+import com.tom_roush.pdfbox.cos.COSString
 import com.tom_roush.pdfbox.multipdf.LayerUtility
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.PDPage
@@ -31,11 +32,17 @@ import com.tom_roush.pdfbox.pdmodel.interactive.annotation.PDAppearanceStream
 import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.destination.PDPageXYZDestination
 import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.outline.PDDocumentOutline
 import com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineItem
+import com.tom_roush.pdfbox.util.DateConverter
 import com.tom_roush.pdfbox.util.Matrix
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.OutputStream
+import java.math.BigDecimal
 import java.util.Calendar
 import java.util.UUID
+import java.util.WeakHashMap
+import java.util.concurrent.atomic.AtomicLong
+import java.util.zip.Deflater
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -136,6 +143,7 @@ object PdfInk {
     fun save(src: File, out: File, pages: List<List<Stroke>>, marks: Set<Int> = emptySet(), wrongs: WrongSave? = null) {
         // 글 외형을 그린 임시 PDF (다 저장한 뒤에 닫는다)
         var texts: TextForms? = null
+        val ink = InkWriter()
         try {
             PDDocument.load(src).use { doc ->
                 if (doc.isEncrypted) doc.isAllSecurityToBeRemoved = true
@@ -143,7 +151,8 @@ object PdfInk {
                 for ((i, page) in doc.pages.withIndex()) {
                     val list: MutableList<PDAnnotation> =
                         page.annotations.filterTo(ArrayList()) { !it.cosObject.containsKey(KEY_NAME) }
-                    if (i < pages.size) {
+                    if (i < pages.size && pages[i].isNotEmpty()) {
+                        val frame = PageFrame(page)
                         // 그림, 채우기를 먼저 (다른 앱에서도 필기가 그 위에 보이게)
                         for (s in pages[i].sortedBy { inkLayer(it) }) {
                             if (s.count == 0) continue
@@ -155,7 +164,7 @@ object PdfInk {
                                     s.table != null -> makeTableAnnotation(doc, page, s)
                                     s.tape != null -> makeTapeAnnotation(doc, page, s)
                                     s.fill != null -> makeFillAnnotation(doc, page, s)
-                                    else -> makeAnnotation(doc, page, s)
+                                    else -> ink.annotation(doc, page, frame, s)
                                 }
                             )
                             if (s.text != null) s.link?.let { list.add(makeLinkAnnotation(page, s, it)) }
@@ -175,6 +184,7 @@ object PdfInk {
             }
         } finally {
             texts?.src?.close()
+            ink.close()
         }
     }
 
@@ -300,9 +310,138 @@ object PdfInk {
         return TextForms(PDDocument.load(bytes), index, layer)
     }
 
-    private fun makeAnnotation(doc: PDDocument, page: PDPage, s: Stroke): PDAnnotation {
-        val box = page.cropBox
+    /**
+     * 펜·형광펜 획의 주석 재료. 저장할 때마다 새로 만들지 않고 획이 그대로면 다시 쓴다
+     * (만든 때의 [version]과 쪽 상자·회전이 같을 때). 여기 담긴 COS 객체는 만든 뒤로 고치지 않으므로
+     * 여러 저장이 같이 써도 된다. 쪽 참조(/P)·외형 스트림·주석 사전은 저장할 때마다 그 문서 것으로 새로 만든다
+     */
+    private class InkPart(
+        val version: Int,
+        val x0: Float, val y0: Float, val x1: Float, val y1: Float, val rot: Int,
+        val rect: COSArray,
+        val color: COSArray,
+        val name: COSString,
+        val inkList: COSArray,
+        val bs: COSDictionary,
+        val alpha: COSFloat?,
+        val data: COSString,
+        val resources: COSDictionary,
+        /** 외형 그리기 명령 (Flate로 압축한 바이트) */
+        val look: ByteArray,
+    )
+
+    /** 획 → 그 획의 주석 재료. 획이 사라지면 같이 정리된다 (약한 참조). 저장 스레드 여럿이 같이 쓰므로 잠가서 쓴다 */
+    private val inkParts = WeakHashMap<Stroke, InkPart>()
+
+    /** 주석 재료를 새로 만든 횟수 (시험에서 다시 썼는지 본다) */
+    @Volatile
+    internal var inkPartBuilds = 0
+        private set
+
+    /** 보관한 주석 재료를 모두 버린다 (시험용) */
+    internal fun clearInkParts() {
+        synchronized(inkParts) { inkParts.clear() }
+    }
+
+    /** 주석 이름(/NM): 앱을 켤 때 정한 머리말 + 차례 번호 (UUID보다 싸고, 한 쪽 안에서 겹치지 않으면 된다) */
+    private val namePrefix = "dsv" + java.lang.Long.toHexString(kotlin.random.Random.nextLong() and Long.MAX_VALUE) + "-"
+    private val nameCount = AtomicLong()
+
+    /** 쪽의 자르기 상자와 회전 (화면 좌표 → PDF 좌표가 이것에만 따른다). 쪽마다 한 번만 읽는다 */
+    private class PageFrame(page: PDPage) {
+        val x0: Float
+        val y0: Float
+        val x1: Float
+        val y1: Float
         val rot = ((page.rotation % 360) + 360) % 360
+
+        init {
+            val b = page.cropBox
+            x0 = b.lowerLeftX
+            y0 = b.lowerLeftY
+            x1 = b.upperRightX
+            y1 = b.upperRightY
+        }
+
+        fun fits(p: InkPart) = p.x0 == x0 && p.y0 == y0 && p.x1 == x1 && p.y1 == y1 && p.rot == rot
+
+        fun toUser(x: Float, y: Float, ux: FloatArray, uy: FloatArray, i: Int) = PdfInk.toUser(x, y, x0, y0, x1, y1, rot, ux, uy, i)
+    }
+
+    /**
+     * 저장 한 번 동안 펜·형광펜 획 주석을 만든다. 외형 그리기 버퍼·압축기·고친 날짜는 획마다 새로 만들지 않고 같이 쓴다.
+     * 한 저장 스레드 안에서만 쓴다
+     */
+    private class InkWriter {
+        /** 외형 그리기 명령을 받는 버퍼 (그리기 도구는 숫자 하나씩 잘게 쓰므로 압축기에 바로 흘리지 않는다) */
+        val plain = ByteArrayOutputStream(4096)
+        private var deflater: Deflater? = null
+        private val chunk = ByteArray(4096)
+        private val packed = ByteArrayOutputStream(1024)
+        private val date = COSString(DateConverter.toString(Calendar.getInstance()))
+
+        fun annotation(doc: PDDocument, page: PDPage, frame: PageFrame, s: Stroke): PDAnnotation {
+            // version을 만들기 전에 읽어 둔다: 만드는 동안 획이 바뀌면 다음 저장에서 다시 만든다
+            val version = s.version
+            val part = synchronized(inkParts) { inkParts[s] }?.takeIf { it.version == version && frame.fits(it) }
+                ?: makeInkPart(doc, frame, s, version, this).also {
+                    synchronized(inkParts) { inkParts[s] = it }
+                }
+            return inkAnnotation(doc, page, part, date)
+        }
+
+        /** [plain]에 받은 그리기 명령을 Flate(zlib)로 한 번에 압축한다 (PDFBox의 FlateFilter와 같은 기본 압축 수준) */
+        fun pack(): ByteArray {
+            val d = deflater ?: Deflater().also { deflater = it }
+            d.reset()
+            d.setInput(plain.toByteArray())
+            d.finish()
+            packed.reset()
+            while (!d.finished()) packed.write(chunk, 0, d.deflate(chunk))
+            return packed.toByteArray()
+        }
+
+        fun close() {
+            deflater?.end()
+        }
+    }
+
+    /**
+     * 주석 재료로 이 문서에 넣을 /Ink 주석을 만든다. 주석 사전과 외형 스트림은 문서마다 새로 만들고
+     * 그 안의 값들(상자, 색, 점, 획 글 등)은 재료의 것을 그대로 넣는다
+     */
+    private fun inkAnnotation(doc: PDDocument, page: PDPage, p: InkPart, date: COSString): PDAnnotation {
+        val dict = COSDictionary()
+        dict.setItem(COSName.TYPE, COSName.ANNOT)
+        dict.setItem(COSName.SUBTYPE, COSName.getPDFName("Ink"))
+        val annot = PDAnnotation.createAnnotation(dict)
+        dict.setItem(COSName.RECT, p.rect)
+        dict.setItem(COSName.C, p.color)
+        annot.isPrinted = true
+        dict.setItem(COSName.NM, p.name)
+        dict.setItem(COSName.M, date)
+        annot.page = page
+        dict.setItem(COSName.getPDFName("InkList"), p.inkList)
+        dict.setItem(COSName.BS, p.bs)
+        p.alpha?.let { dict.setItem(COSName.CA, it) }
+        dict.setItem(KEY_NAME, p.data)
+
+        // 외형: 미리 압축해 둔 그리기 명령을 그대로 넣는다
+        val ap = PDAppearanceStream(doc)
+        val stream = ap.cosObject
+        stream.setItem(COSName.BBOX, p.rect)
+        stream.setItem(COSName.RESOURCES, p.resources)
+        stream.setItem(COSName.FILTER, COSName.FLATE_DECODE)
+        stream.createRawOutputStream().use { it.write(p.look) }
+        val apd = PDAppearanceDictionary()
+        apd.setNormalAppearance(ap)
+        annot.appearance = apd
+        return annot
+    }
+
+    /** 펜·형광펜 획 하나의 주석 재료를 만든다 ([doc]은 그리기 도구에 넘길 뿐 재료에 남지 않는다) */
+    private fun makeInkPart(doc: PDDocument, frame: PageFrame, s: Stroke, version: Int, w: InkWriter): InkPart {
+        inkPartBuilds++
         val n = s.count
         val ux = FloatArray(n)
         val uy = FloatArray(n)
@@ -311,7 +450,7 @@ object PdfInk {
         var maxX = -Float.MAX_VALUE
         var maxY = -Float.MAX_VALUE
         for (i in 0 until n) {
-            toUser(s.x(i), s.y(i), box, rot, ux, uy, i)
+            frame.toUser(s.x(i), s.y(i), ux, uy, i)
             minX = min(minX, ux[i]); maxX = max(maxX, ux[i])
             minY = min(minY, uy[i]); maxY = max(maxY, uy[i])
         }
@@ -322,12 +461,13 @@ object PdfInk {
             PDDeviceRGB.INSTANCE
         )
 
-        // 외형: 필압 구간마다 선 굵기를 바꿔 그린다
+        // 외형: 필압 구간마다 선 굵기를 바꿔 그린다. 이 스트림은 자원(투명도 설정)을 받을 자리로만 쓰고,
+        // 그리기 명령은 바이트로 받아 한 번에 압축해 둔다 (굵기가 바뀌는 펜은 구간이 많다)
         val ap = PDAppearanceStream(doc)
-        ap.bBox = rect
         ap.resources = PDResources()
-        // 압축해서 넣는다 (굵기가 바뀌는 펜은 구간이 많다)
-        PDPageContentStream(doc, ap, ap.stream.createOutputStream(COSName.FLATE_DECODE)).use { cs ->
+        val plain = w.plain
+        plain.reset()
+        PDPageContentStream(doc, ap, plain).use { cs ->
             if (s.tool == Tool.HIGHLIGHTER) {
                 val gs = PDExtendedGraphicsState()
                 gs.strokingAlphaConstant = HL_ALPHA
@@ -341,10 +481,10 @@ object PdfInk {
                 val ty = FloatArray(1)
                 PenOutline.build(s, object : OutlineSink {
                     override fun moveTo(x: Float, y: Float) {
-                        toUser(x, y, box, rot, tx, ty, 0); cs.moveTo(tx[0], ty[0])
+                        frame.toUser(x, y, tx, ty, 0); cs.moveTo(tx[0], ty[0])
                     }
                     override fun lineTo(x: Float, y: Float) {
-                        toUser(x, y, box, rot, tx, ty, 0); cs.lineTo(tx[0], ty[0])
+                        frame.toUser(x, y, tx, ty, 0); cs.lineTo(tx[0], ty[0])
                     }
                     override fun cubicTo(x1: Float, y1: Float, x2: Float, y2: Float, x3: Float, y3: Float) = lineTo(x3, y3)
                     override fun close() = cs.closePath()
@@ -377,41 +517,65 @@ object PdfInk {
                 }
             }
         }
+        val look = w.pack()
 
-        val dict = COSDictionary()
-        dict.setItem(COSName.TYPE, COSName.ANNOT)
-        dict.setItem(COSName.SUBTYPE, COSName.getPDFName("Ink"))
-        val annot = PDAnnotation.createAnnotation(dict)
-        annot.rectangle = rect
-        annot.color = color
-        annot.isPrinted = true
-        annot.annotationName = UUID.randomUUID().toString()
-        annot.setModifiedDate(Calendar.getInstance())
-        annot.page = page
-
-        val inkPath = COSArray()
-        for (i in 0 until n) {
-            inkPath.add(COSFloat(ux[i]))
-            inkPath.add(COSFloat(uy[i]))
-        }
+        // 점 목록: 점마다 COSFloat를 만들지 않고 PDF 글로 한 번에 ([RawNumbers])
         val inkList = COSArray()
-        inkList.add(inkPath)
-        dict.setItem(COSName.getPDFName("InkList"), inkList)
+        inkList.add(RawNumbers(ux, uy, n))
         val bs = COSDictionary()
         bs.setFloat(COSName.W, s.width)
         if (s.dashed) {
             bs.setName(COSName.S, "D")
             bs.setItem(COSName.D, COSArray().apply { s.dashIntervals().forEach { add(COSFloat(it)) } })
         }
-        dict.setItem(COSName.BS, bs)
-        if (s.tool == Tool.HIGHLIGHTER) dict.setFloat(COSName.CA, HL_ALPHA)
-        if (s.outlined && s.pen == PenStyle.PENCIL) dict.setFloat(COSName.CA, PenStyle.PENCIL_ALPHA)
-        dict.setString(KEY_NAME, encode(s))
+        val alpha = when {
+            s.outlined && s.pen == PenStyle.PENCIL -> COSFloat(PenStyle.PENCIL_ALPHA)
+            s.tool == Tool.HIGHLIGHTER -> COSFloat(HL_ALPHA)
+            else -> null
+        }
+        return InkPart(
+            version, frame.x0, frame.y0, frame.x1, frame.y1, frame.rot,
+            rect.cosArray, color.toCOSArray(), COSString(namePrefix + nameCount.incrementAndGet()),
+            inkList, bs, alpha, COSString(encode(s)), ap.resources.cosObject, look,
+        )
+    }
 
-        val apd = PDAppearanceDictionary()
-        apd.setNormalAppearance(ap)
-        annot.appearance = apd
-        return annot
+    /**
+     * 점 목록 하나를 미리 PDF 글 "[x y x y ...]"로 만들어 둔 것. 파일에 쓸 때 그 바이트를 그대로 내보낸다.
+     * 점마다 COSFloat(속에 BigDecimal과 글이 든다)를 두면 만들기도 느리고, 획 수천 개를 보관하면 수십 MB가 된다.
+     * PDFBox의 COSWriter는 숫자를 writePDF로 쓰므로 배열 속 숫자 자리에 넣으면 배열 하나가 그대로 들어간다.
+     * 파일에 쓰는 데에만 쓴다 (값으로 읽으면 0)
+     */
+    private class RawNumbers(ux: FloatArray, uy: FloatArray, n: Int) : COSFloat(0f) {
+        private val bytes: ByteArray
+
+        init {
+            val sb = StringBuilder(n * 16 + 2)
+            sb.append('[')
+            for (i in 0 until n * 2) {
+                // COSWriter처럼 숫자 10개마다 줄을 바꾼다
+                if (i > 0) sb.append(if (i % 10 == 0) '\n' else ' ')
+                sb.append(pdfNumber(if (i % 2 == 0) ux[i / 2] else uy[i / 2]))
+            }
+            sb.append(']')
+            bytes = sb.toString().toByteArray(Charsets.ISO_8859_1)
+        }
+
+        override fun writePDF(output: OutputStream) = output.write(bytes)
+    }
+
+    /**
+     * COSFloat(v)가 파일에 쓰는 것과 같은 글 (String.valueOf → BigDecimal 소수 표기, ".0"이 아닌 끝의 0은 뺀다).
+     * 무한·NaN은 PDF에 쓸 수 없으므로 COSFloat처럼 예외를 낸다
+     */
+    internal fun pdfNumber(v: Float): String {
+        if (!v.isFinite()) throw NumberFormatException("PDF에 쓸 수 없는 수: $v")
+        if (v == 0f) return "0.0"  // -0도 0.0으로
+        val s = v.toString()
+        if (s.indexOf('E') < 0) return s
+        var plain = BigDecimal(s).toPlainString()
+        if (plain.indexOf('.') >= 0) while (plain.endsWith("0") && !plain.endsWith(".0")) plain = plain.dropLast(1)
+        return plain
     }
 
     /** 그림 주석(Stamp): 외형에 그림을 네 모서리에 맞춰 그려 넣는다 */
@@ -921,11 +1085,11 @@ object PdfInk {
     }
 
     /** 화면 좌표(보이는 페이지의 왼쪽 위 원점) → PDF 사용자 좌표 (페이지 회전 고려) */
-    private fun toUser(x: Float, y: Float, b: PDRectangle, rot: Int, ux: FloatArray, uy: FloatArray, i: Int) {
-        val x0 = b.lowerLeftX
-        val y0 = b.lowerLeftY
-        val x1 = b.upperRightX
-        val y1 = b.upperRightY
+    private fun toUser(x: Float, y: Float, b: PDRectangle, rot: Int, ux: FloatArray, uy: FloatArray, i: Int) =
+        toUser(x, y, b.lowerLeftX, b.lowerLeftY, b.upperRightX, b.upperRightY, rot, ux, uy, i)
+
+    /** 자르기 상자 (x0, y0)~(x1, y1)인 쪽에서 화면 좌표 → PDF 사용자 좌표 */
+    private fun toUser(x: Float, y: Float, x0: Float, y0: Float, x1: Float, y1: Float, rot: Int, ux: FloatArray, uy: FloatArray, i: Int) {
         when (rot) {
             90 -> { ux[i] = x0 + y; uy[i] = y0 + x }
             180 -> { ux[i] = x1 - x; uy[i] = y0 + y }
