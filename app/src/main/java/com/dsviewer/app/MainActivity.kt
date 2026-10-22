@@ -1932,6 +1932,12 @@ class MainActivity : AppCompatActivity() {
             last = pos
             base = selected.toSet()
             lift(pos)
+            // 문서를 끌어 옮길 수 있는 탭이면 꾹 누른 순간 떠오른다 (그 밖의 탭은 범위 선택이라 뜨지 않는다)
+            if (tab == Tab.FOLDER || tab == Tab.FAVORITE) {
+                x = downX
+                y = downY
+                showGhost()
+            }
         }
 
         /** 꾹 누른 칸 (선택 모드를 켜기 전): 끌면 이 문서를 옮기고, 끌지 않고 손을 떼면 선택 모드를 켠다 */
@@ -1952,6 +1958,10 @@ class MainActivity : AppCompatActivity() {
             press = r
             pressDragging = false
             lift(pos)
+            // 꾹 눌린 것이 보이도록 손가락을 움직이기 전에 그 자리에서 먼저 떠오른다
+            x = downX
+            y = downY
+            showGhost()
         }
 
         /**
@@ -2031,12 +2041,17 @@ class MainActivity : AppCompatActivity() {
                     ).apply { setMargins(0, (4 * d).toInt(), (4 * d).toInt(), 0) },
                 )
             }
+            // 줄 바탕이 투명해도 떠오른 판과 그림자가 보이도록 바탕을 깐다
+            box.background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = 12 * d
+                setColor(Color.WHITE)
+            }
             box.alpha = 0f
             box.pivotX = grabX
             box.pivotY = grabY
-            box.elevation = 16 * d
+            box.elevation = 20 * d
             (window.decorView as android.view.ViewGroup).addView(box, android.widget.FrameLayout.LayoutParams(bmp.width, bmp.height))
-            box.animate().alpha(0.92f).scaleX(1.05f).scaleY(1.05f).setDuration(120).start()
+            box.animate().alpha(0.96f).scaleX(1.06f).scaleY(1.06f).setDuration(140).start()
             lifted?.alpha = 0.3f
             ghost = box
             moveGhost()
