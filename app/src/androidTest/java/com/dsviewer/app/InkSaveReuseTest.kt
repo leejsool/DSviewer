@@ -110,6 +110,78 @@ class InkSaveReuseTest {
     }
 
     @Test
+    fun prewarmMakesFirstSaveReuse() {
+        val pages = pages()
+        val pens = pages.sumOf { p -> p.count(::isPen) }
+        PdfInk.clearInkParts()
+        assertEquals(pens, PdfInk.prewarm(src, pages) { true })
+        assertEquals("다시 준비하면 만들 것이 없다", 0, PdfInk.prewarm(src, pages) { true })
+        val b = PdfInk.inkPartBuilds
+        val out = File(dir, "warmed.pdf").also { PdfInk.save(src, it, pages) }
+        assertEquals("준비한 뒤 첫 저장은 새로 만들지 않는다", 0, PdfInk.inkPartBuilds - b)
+        assertEquals(expected(pages), readBack(out))
+        assertEquals(InkSaveFixture.dump(fresh(src, pages, "warmedFresh.pdf"), withNames = false), InkSaveFixture.dump(out, withNames = false))
+    }
+
+    @Test
+    fun prewarmThenEditOrOtherBase() {
+        val pages = pages()
+        PdfInk.clearInkParts()
+        PdfInk.prewarm(src, pages) { true }
+        // 준비한 뒤 바뀐 획은 저장할 때 다시 만든다
+        pages[0][1].translate(3f, -4f)
+        pages[1][0].recolor(0xFF00897B.toInt())
+        val b = PdfInk.inkPartBuilds
+        val out = File(dir, "edited.pdf").also { PdfInk.save(src, it, pages) }
+        assertEquals(2, PdfInk.inkPartBuilds - b)
+        assertEquals(expected(pages), readBack(out))
+        assertEquals(InkSaveFixture.dump(fresh(src, pages, "editedFresh.pdf"), withNames = false), InkSaveFixture.dump(out, withNames = false))
+        // 다른 바탕(셋째 쪽 상자가 다름)으로 준비했으면 그 쪽 획은 저장할 때 다시 만든다
+        val src2 = File(dir, "src2.pdf").also { InkSaveFixture.basePdf(it, shift = 10f) }
+        PdfInk.clearInkParts()
+        PdfInk.prewarm(src2, pages) { true }
+        val b2 = PdfInk.inkPartBuilds
+        val out2 = File(dir, "otherBase.pdf").also { PdfInk.save(src, it, pages) }
+        assertEquals(pages[2].count(::isPen), PdfInk.inkPartBuilds - b2)
+        assertEquals(InkSaveFixture.dump(fresh(src, pages, "otherBaseFresh.pdf"), withNames = false), InkSaveFixture.dump(out2, withNames = false))
+    }
+
+    @Test
+    fun prewarmStopsWhenAsked() {
+        val pages = pages()
+        val pens = pages.sumOf { p -> p.count(::isPen) }
+        PdfInk.clearInkParts()
+        var asked = 0
+        val built = PdfInk.prewarm(src, pages) { ++asked <= 5 }
+        assertEquals(5, built)
+        val b = PdfInk.inkPartBuilds
+        val out = File(dir, "partial.pdf").also { PdfInk.save(src, it, pages) }
+        assertEquals(pens - 5, PdfInk.inkPartBuilds - b)
+        assertEquals(InkSaveFixture.dump(fresh(src, pages, "partialFresh.pdf"), withNames = false), InkSaveFixture.dump(out, withNames = false))
+    }
+
+    @Test
+    fun prewarmWhileStrokesChange() {
+        // 준비가 도는 동안 다른 스레드(화면 스레드처럼)가 획을 옮기고 색을 바꿔도, 그 뒤 저장은 새로 만든 저장과 같다
+        val pages = pages()
+        val pens = pages.flatten().filter(::isPen)
+        val pool = Executors.newSingleThreadExecutor()
+        repeat(5) { round ->
+            PdfInk.clearInkParts()
+            val warm = pool.submit<Int> { PdfInk.prewarm(src, pages) { true } }
+            for ((k, s) in pens.withIndex()) {
+                if (k % 3 == round % 3) s.translate(0.5f, 0.25f)
+                if (k % 5 == round % 5) s.recolor(0xFF000000.toInt() or (k * 7919 + round))
+            }
+            warm.get(120, TimeUnit.SECONDS)
+            val out = File(dir, "race$round.pdf").also { PdfInk.save(src, it, pages) }
+            assertEquals(expected(pages), readBack(out))
+            assertEquals(InkSaveFixture.dump(fresh(src, pages, "raceFresh$round.pdf"), withNames = false), InkSaveFixture.dump(out, withNames = false))
+        }
+        pool.shutdown()
+    }
+
+    @Test
     fun numbersWrittenLikeCosFloat() {
         val rnd = java.util.Random(7)
         val values = mutableListOf(0f, -0f, 1f, -1f, 100f, 0.5f, 1e-4f, -3.2e-5f, 1.5e7f, 123456789f, 595.2756f, Float.MIN_VALUE)

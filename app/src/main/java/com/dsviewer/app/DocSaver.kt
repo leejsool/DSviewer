@@ -11,6 +11,7 @@ import android.graphics.RectF
 import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Environment
+import android.os.Process
 import android.provider.MediaStore
 import android.text.format.DateFormat
 import android.view.View
@@ -21,10 +22,16 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Date
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
@@ -398,7 +405,47 @@ internal class DocSaver(
         updateTabTitle(t)
     }
 
+    /**
+     * 문서를 연 뒤 저장 준비: 잠시 뒤 낮은 우선순위 스레드에서 펜 획의 주석 재료를 미리 만들어 둔다 ([PdfInk.prewarm]).
+     * 그러면 문서를 열고 처음 저장할 때도 바뀐 획만 새로 만든다. 필기가 적으면 효과가 작아 건너뛴다.
+     * 탭을 닫거나 화면용 PDF가 바뀌면(쪽 넣기·빼기) 그만두고, 저장이 돌기 시작해도 비켜선다 (그 저장이 필요한 것을 만든다)
+     */
+    fun prewarm(t: DocTab) {
+        if (t.prewarm?.isActive == true) return
+        val inkDoc = t.ink ?: return
+        // 저장할 때와 같은 바탕 PDF ([saveTo]·[writeOver])
+        val base = t.renderPdf ?: t.sourcePdf ?: return
+        t.prewarm = activity.lifecycleScope.launch {
+            delay(PREWARM_DELAY_MS)
+            if (t.ink !== inkDoc || (t.renderPdf ?: t.sourcePdf) !== base) return@launch
+            // 화면 스레드에서 지금 획 목록을 찍어 두고, 재료 만들기만 뒤에서 한다 (저장과 같은 방식)
+            val pages = inkDoc.snapshot()
+            if (pages.sumOf { p -> p.count(PdfInk::isPenStroke) } < PREWARM_MIN_STROKES) return@launch
+            val job = coroutineContext[Job]
+            withContext(prewarmThread) {
+                try {
+                    PdfInk.prewarm(base, pages) { job?.isActive != false && (t.renderPdf ?: t.sourcePdf) === base }
+                } catch (e: Exception) {
+                    // 준비가 안 돼도 저장할 때 만들면 된다
+                }
+            }
+        }
+    }
+
     companion object {
+        /** 문서를 다 띄운 뒤 이만큼(ms) 기다렸다가 저장 준비를 시작한다 (열기·첫 필기를 방해하지 않게) */
+        private const val PREWARM_DELAY_MS = 3000L
+        /** 펜 획이 이보다 적으면 저장 준비를 하지 않는다 (300획을 새로 만드는 데 0.2초 안쪽) */
+        private const val PREWARM_MIN_STROKES = 300
+
+        /** 저장 준비를 도는 낮은 우선순위 스레드 하나 (문서를 여럿 열어도 하나씩. 한동안 일이 없으면 스레드를 닫는다) */
+        private val prewarmThread = ThreadPoolExecutor(0, 1, 30L, TimeUnit.SECONDS, LinkedBlockingQueue()) { r ->
+            Thread({
+                Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
+                r.run()
+            }, "ink-prewarm").apply { isDaemon = true }
+        }.asCoroutineDispatcher()
+
         /** 이미지로 저장할 때 해상도 */
         private const val EXPORT_DPI = 150f
         /** 고른 부분 이미지: 가로가 이보다 좁으면 더 크게 그리고(최대 4배), 전체 픽셀은 이 수를 넘기지 않는다 */

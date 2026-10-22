@@ -1,6 +1,7 @@
 package com.dsviewer.app
 
 import android.net.Uri
+import kotlinx.coroutines.Job
 import java.io.File
 
 /** 탭 하나 = 열린 문서 하나. 문서 화면(DocumentView)은 하나를 같이 쓰고 탭을 바꿀 때 갈아 끼운다 */
@@ -39,6 +40,8 @@ internal class DocTab(var uri: Uri, var canOverwrite: Boolean, var isNewNote: Bo
     var review: ReviewSession? = null
     /** 탐색기의 '오늘 복습'에서 열었으면 다 열린 뒤 바로 오늘 복습할 오답을 복습한다 */
     var startReviewOnLoad = false
+    /** 문서를 연 뒤 저장 준비(펜 획 주석 재료 미리 만들기, [DocSaver.prewarm]). 탭을 닫으면 멈춘다 */
+    var prewarm: Job? = null
 }
 
 /** 쪽을 넣고 빼기 전·후의 PDF 파일과 그때 보던 쪽 (실행 취소하면 이 상태로 돌아간다) */

@@ -245,6 +245,11 @@ class Stroke(val tool: Tool, color: Int, width: Float, val dashed: Boolean = fal
         private set
     var count = 0
         private set
+    /**
+     * 모양이 바뀔 때마다 오른다 (점·색·굵기를 다 바꾼 뒤에). 저장 스레드가 이 값으로 PDF 주석 재료를 다시 쓸지 정하므로
+     * @Volatile: 다른 스레드에서 이 값을 읽으면 그 값까지 바뀐 점이 다 보인다
+     */
+    @Volatile
     var version = 0
         private set
     /** 그림이면 그 그림 (점 네 개가 그림의 네 모서리). 지우개로는 지우지 않는다 */

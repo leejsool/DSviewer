@@ -41,6 +41,7 @@ import java.math.BigDecimal
 import java.util.Calendar
 import java.util.UUID
 import java.util.WeakHashMap
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.zip.Deflater
 import kotlin.math.max
@@ -144,6 +145,7 @@ object PdfInk {
         // 글 외형을 그린 임시 PDF (다 저장한 뒤에 닫는다)
         var texts: TextForms? = null
         val ink = InkWriter()
+        savesRunning.incrementAndGet()
         try {
             PDDocument.load(src).use { doc ->
                 if (doc.isEncrypted) doc.isAllSecurityToBeRemoved = true
@@ -185,8 +187,45 @@ object PdfInk {
         } finally {
             texts?.src?.close()
             ink.close()
+            savesRunning.decrementAndGet()
         }
     }
+
+    /** 지금 돌고 있는 [save] 수 (미리 만들기는 저장이 돌면 비켜선다) */
+    private val savesRunning = AtomicInteger()
+
+    /**
+     * 저장 준비: 펜·형광펜 획의 주석 재료를 미리 만들어 보관해 둔다 (문서를 연 뒤 한가할 때, 첫 저장이 빨라지게).
+     * [base]는 저장할 때 바탕으로 쓸 PDF (쪽 상자·회전만 읽는다). 파일은 쓰지 않고 주석도 만들지 않는다.
+     * 저장과 같은 조건(획 [Stroke.version], 쪽 상자·회전)으로 보관하므로, 그새 획이 바뀌거나 저장 바탕이 달라지면
+     * 저장할 때 그 획만 다시 만든다. [active]가 false가 되거나 저장이 돌기 시작하면 그만둔다. 새로 만든 재료 수를 돌려준다
+     */
+    fun prewarm(base: File, pages: List<List<Stroke>>, active: () -> Boolean): Int {
+        var built = 0
+        val ink = InkWriter()
+        try {
+            PDDocument.load(base).use { doc ->
+                for ((i, page) in doc.pages.withIndex()) {
+                    if (i >= pages.size) break
+                    if (pages[i].none(::isPenStroke)) continue
+                    val frame = PageFrame(page)
+                    for (s in pages[i]) {
+                        if (!isPenStroke(s) || ink.ready(frame, s)) continue
+                        if (!active() || savesRunning.get() > 0) return built
+                        ink.part(doc, frame, s)
+                        built++
+                    }
+                }
+            }
+        } finally {
+            ink.close()
+        }
+        return built
+    }
+
+    /** [save]에서 [InkWriter]로 가는 획 (펜·형광펜): 그림·글·표·테이프·채우기·메모가 아닌 것 */
+    internal fun isPenStroke(s: Stroke) = s.count > 0 && s.note == null && s.image == null && s.text == null &&
+        s.table == null && s.tape == null && s.fill == null
 
     /**
      * 자동 저장용 가벼운 필기 파일: 원본 PDF를 열지 않고 쪽 수만큼의 빈 쪽에 필기 정보만 담아 [out]에 쓴다.
@@ -334,9 +373,8 @@ object PdfInk {
     private val inkParts = WeakHashMap<Stroke, InkPart>()
 
     /** 주석 재료를 새로 만든 횟수 (시험에서 다시 썼는지 본다) */
-    @Volatile
-    internal var inkPartBuilds = 0
-        private set
+    private val partBuilds = AtomicInteger()
+    internal val inkPartBuilds get() = partBuilds.get()
 
     /** 보관한 주석 재료를 모두 버린다 (시험용) */
     internal fun clearInkParts() {
@@ -380,14 +418,24 @@ object PdfInk {
         private val packed = ByteArrayOutputStream(1024)
         private val date = COSString(DateConverter.toString(Calendar.getInstance()))
 
-        fun annotation(doc: PDDocument, page: PDPage, frame: PageFrame, s: Stroke): PDAnnotation {
-            // version을 만들기 전에 읽어 둔다: 만드는 동안 획이 바뀌면 다음 저장에서 다시 만든다
+        fun annotation(doc: PDDocument, page: PDPage, frame: PageFrame, s: Stroke): PDAnnotation =
+            inkAnnotation(doc, page, part(doc, frame, s), date)
+
+        /** 보관한 재료가 지금 획·쪽에 맞는지 */
+        fun ready(frame: PageFrame, s: Stroke): Boolean {
             val version = s.version
-            val part = synchronized(inkParts) { inkParts[s] }?.takeIf { it.version == version && frame.fits(it) }
+            return synchronized(inkParts) { inkParts[s] }?.let { it.version == version && frame.fits(it) } == true
+        }
+
+        /** 이 획의 재료: 보관한 것이 맞으면 그것, 아니면 새로 만들어 보관한다 */
+        fun part(doc: PDDocument, frame: PageFrame, s: Stroke): InkPart {
+            // version을 만들기 전에 읽어 둔다: 만드는 동안 획이 바뀌면 version이 올라 다음 저장에서 다시 만든다
+            // ([Stroke.version]은 @Volatile이고 점을 다 바꾼 뒤에 올리므로, 읽은 version까지의 점은 다 보인다)
+            val version = s.version
+            return synchronized(inkParts) { inkParts[s] }?.takeIf { it.version == version && frame.fits(it) }
                 ?: makeInkPart(doc, frame, s, version, this).also {
                     synchronized(inkParts) { inkParts[s] = it }
                 }
-            return inkAnnotation(doc, page, part, date)
         }
 
         /** [plain]에 받은 그리기 명령을 Flate(zlib)로 한 번에 압축한다 (PDFBox의 FlateFilter와 같은 기본 압축 수준) */
@@ -441,7 +489,7 @@ object PdfInk {
 
     /** 펜·형광펜 획 하나의 주석 재료를 만든다 ([doc]은 그리기 도구에 넘길 뿐 재료에 남지 않는다) */
     private fun makeInkPart(doc: PDDocument, frame: PageFrame, s: Stroke, version: Int, w: InkWriter): InkPart {
-        inkPartBuilds++
+        partBuilds.incrementAndGet()
         val n = s.count
         val ux = FloatArray(n)
         val uy = FloatArray(n)

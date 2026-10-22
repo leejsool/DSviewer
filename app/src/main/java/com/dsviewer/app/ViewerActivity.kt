@@ -691,6 +691,7 @@ class ViewerActivity : AppCompatActivity() {
         if (t.ink != null && t.review == null) autoSaver.discard(t)
         t.review?.let { review.release(it) }
         t.search?.cancel()
+        t.prewarm?.cancel()
         t.handwriting?.onProgress = null
         openTabs = docs.size
         openUris = docs.mapTo(HashSet()) { it.uri.toString() }
@@ -893,6 +894,8 @@ class ViewerActivity : AppCompatActivity() {
             t.startReviewOnLoad = false
             if (current === t) docView.post { wrong.reviewDue() }
         }
+        // 한가할 때 저장 준비를 해 두어 처음 저장도 빠르게
+        saver.prewarm(t)
     }
 
     /** 보던 쪽을 최근 목록에 적어 둔다 (다음에 열면 그 쪽에서 이어 본다). 복습 문서·아직 안 열린 문서·떠 있지 않은 탭은 건너뛴다 */
