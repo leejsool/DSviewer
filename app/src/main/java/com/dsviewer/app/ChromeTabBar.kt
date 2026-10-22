@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.drawable.GradientDrawable
+import android.animation.ValueAnimator
 import android.os.Handler
 import android.os.Looper
 import android.util.AttributeSet
@@ -14,6 +15,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.LinearInterpolator
 import android.widget.HorizontalScrollView
 import android.widget.ImageButton
 import android.widget.ImageView
@@ -24,6 +26,12 @@ import androidx.core.graphics.ColorUtils
 import com.google.android.material.color.MaterialColors
 import kotlin.math.max
 import kotlin.math.min
+
+/** 긴 탭 이름 자동 흘리기: 처음·끝에서 멈추는 시간, 흐르는 속도(dp/초)와 가장 짧은 흐름 시간, 처음으로 돌아오는 시간 (ms) */
+private const val MARQUEE_HOLD_MS = 1200f
+private const val MARQUEE_DP_PER_SEC = 36f
+private const val MARQUEE_MIN_SCROLL_MS = 800f
+private const val MARQUEE_BACK_MS = 300f
 
 /**
  * 크롬 브라우저 모양의 탭 막대.
@@ -347,16 +355,46 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
         super.onMeasure(widthMeasureSpec, heightMeasureSpec)
     }
 
+    /**
+     * 탭 이름. 평소에는 TextView 그대로(끝은 …으로 줄임)이고, [scrolled]가 0 이상이면 이름을 줄이지 않고 그만큼 왼쪽으로 민 채 그린다
+     * (탭이 이름이 자리보다 길 때 저절로 흘려 보이려고)
+     */
+    private class MarqueeText(ctx: Context) : TextView(ctx) {
+        /** 왼쪽으로 민 거리 (px). 음수면 흘리지 않는다 */
+        var scrolled = -1f
+
+        private fun avail() = width - paddingLeft - paddingRight
+
+        /** 이름이 자리보다 넘치는 길이 (px, 넘치지 않으면 0) */
+        fun overflowPx(): Float {
+            if (width <= 0 || text.isNullOrEmpty()) return 0f
+            return max(0f, paint.measureText(text, 0, text.length) - avail())
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            val l = layout
+            if (scrolled < 0f || l == null) {
+                super.onDraw(canvas)
+                return
+            }
+            canvas.save()
+            canvas.clipRect(paddingLeft, 0, width - paddingRight, height)
+            paint.color = currentTextColor
+            canvas.drawText(text, 0, text.length, paddingLeft - scrolled, compoundPaddingTop + l.getLineBaseline(0).toFloat(), paint)
+            canvas.restore()
+        }
+    }
+
     /** 탭 하나: [아이콘] 이름 [저장 안 됨] [×] */
     private inner class TabView(private val closable: Boolean) : LinearLayout(context) {
         var active = false
         var divider = false
         private var small = false
 
-        private val foot = px(8f).toFloat()      // 아래쪽 바깥으로 휘는 부분
+        private val foot = px(6f).toFloat()      // 아래쪽 바깥으로 휘는 부분
         private val radius = px(10f).toFloat()   // 위쪽 둥근 모서리
         private val icon = ImageView(context)
-        private val title = TextView(context)
+        private val title = MarqueeText(context)
         private val unsaved = ImageView(context)
         private val close = ImageButton(context)
         private val shape = Path()
@@ -397,6 +435,8 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
             title.setSingleLine()
             title.ellipsize = android.text.TextUtils.TruncateAt.END
             addView(title, LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            // 이름이 자리보다 길면 (고른 탭만) 저절로 흘러 보인다
+            title.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateMarquee() }
             unsaved.setImageResource(R.drawable.ic_unsaved)
             unsaved.contentDescription = "저장하지 않음"
             unsaved.visibility = View.GONE
@@ -439,11 +479,11 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
             small = c
             (icon.layoutParams as LayoutParams).apply {
                 width = px(if (c) 14f else 16f); height = width
-                marginEnd = px(if (c) 5f else 8f)
+                marginEnd = px(if (c) 3f else 5f)
             }
             (unsaved.layoutParams as LayoutParams).apply {
                 width = px(if (c) 16f else 18f); height = width
-                marginStart = px(4f)
+                marginStart = px(2f)
             }
             title.setTextSize(TypedValue.COMPLEX_UNIT_SP, if (c) 12f else 13f)
             if (closable) {
@@ -463,13 +503,14 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
             val showClose = closable && (!small || active)
             if (closable) close.visibility = if (showClose) View.VISIBLE else View.GONE
             val f = foot.toInt()
-            val side = px(if (small) 6f else 10f)
+            val side = px(if (small) 3f else 4f)
             setPadding(f + side, px(2f), f + if (showClose) px(2f) else side, 0)
         }
 
         fun setTitle(t: CharSequence) {
             title.text = t
             contentDescription = t
+            title.post { updateMarquee() }
         }
 
         fun setUnsaved(on: Boolean) {
@@ -486,6 +527,60 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
             title.setTextColor(if (active) textActive else textInactive)
             title.paint.isFakeBoldText = active
             isSelected = active
+            title.post { updateMarquee() }
+        }
+
+        // ----- 긴 이름 자동으로 흘리기 -----
+        // 처음에서 잠깐 멈춤 → 끝까지 흐름 → 끝에서 잠깐 멈춤 → 처음으로 돌아감, 되풀이 (고른 탭만)
+
+        private var marquee: ValueAnimator? = null
+        private var marqueeRange = -1f
+
+        private fun updateMarquee() {
+            val range = title.overflowPx()
+            val want = active && range > 0f && isAttachedToWindow
+            if (!want) {
+                marquee?.cancel()
+                marquee = null
+                marqueeRange = -1f
+                title.scrolled = -1f
+                title.invalidate()
+                return
+            }
+            if (marquee?.isRunning == true && marqueeRange == range) return
+            marquee?.cancel()
+            marqueeRange = range
+            val scrollMs = max(MARQUEE_MIN_SCROLL_MS, range / density / MARQUEE_DP_PER_SEC * 1000f)
+            val total = MARQUEE_HOLD_MS + scrollMs + MARQUEE_HOLD_MS + MARQUEE_BACK_MS
+            title.scrolled = 0f
+            marquee = ValueAnimator.ofFloat(0f, total).apply {
+                duration = total.toLong()
+                interpolator = LinearInterpolator()
+                repeatCount = ValueAnimator.INFINITE
+                addUpdateListener {
+                    val t = it.animatedValue as Float
+                    title.scrolled = when {
+                        t < MARQUEE_HOLD_MS -> 0f
+                        t < MARQUEE_HOLD_MS + scrollMs -> range * (t - MARQUEE_HOLD_MS) / scrollMs
+                        t < MARQUEE_HOLD_MS + scrollMs + MARQUEE_HOLD_MS -> range
+                        else -> range * (1f - (t - MARQUEE_HOLD_MS - scrollMs - MARQUEE_HOLD_MS) / MARQUEE_BACK_MS)
+                    }
+                    title.invalidate()
+                }
+                start()
+            }
+        }
+
+        override fun onAttachedToWindow() {
+            super.onAttachedToWindow()
+            title.post { updateMarquee() }
+        }
+
+        override fun onDetachedFromWindow() {
+            marquee?.cancel()
+            marquee = null
+            marqueeRange = -1f
+            super.onDetachedFromWindow()
         }
 
         override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {

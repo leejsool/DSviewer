@@ -279,7 +279,7 @@ internal class DocSaver(
         t.overwriting = true
         activity.lifecycleScope.launch {
             val ok = try {
-                withContext(Dispatchers.IO) { writeOver(src, target, snapshot, marks, wrongSave) }
+                withContext(Dispatchers.IO) { writeOver(t.renderPdf ?: src, target, snapshot, marks, wrongSave) }
                 true
             } catch (e: Throwable) {  // 메모리 부족도 앱을 죽이지 않고 이번만 건너뛴다
                 false
@@ -313,6 +313,8 @@ internal class DocSaver(
                 try {
                     tmp.inputStream().use { i -> side.outputStream().use { o -> i.copyTo(o, 1 shl 16) } }
                     java.nio.file.Files.move(side.toPath(), dest.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+                    // 다음에 빨리 열리도록 필기와 화면용 PDF를 보관해 둔다 (src가 필기를 뺀 화면용 PDF일 때)
+                    InkCache.store(activity, dest, src, snapshot, marks, wrongSave?.metas ?: emptyMap())
                     return
                 } catch (e: Exception) {
                     side.delete()  // 같은 폴더에 임시 파일을 못 두면 아래처럼 바로 덮어쓴다
@@ -336,10 +338,13 @@ internal class DocSaver(
             try {
                 withContext(Dispatchers.IO) {
                     val tmp = FileUtil.tempFile(activity, "out", "pdf")
+                    val base = t.renderPdf ?: src
                     try {
-                        PdfInk.save(src, tmp, snapshot, marks, wrongSave)
+                        PdfInk.save(base, tmp, snapshot, marks, wrongSave)
                         val out = activity.contentResolver.openOutputStream(target, "wt") ?: error("저장 위치를 열 수 없습니다.")
                         out.use { o -> tmp.inputStream().use { it.copyTo(o, 1 shl 16) } }
+                        // 다음에 빨리 열리도록 필기와 화면용 PDF를 보관해 둔다 (내 기기 안의 파일일 때)
+                        if (target.scheme == "file") target.path?.let { InkCache.store(activity, File(it), base, snapshot, marks, wrongSave?.metas ?: emptyMap()) }
                     } finally {
                         tmp.delete()
                     }

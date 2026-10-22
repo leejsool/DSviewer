@@ -50,8 +50,8 @@ internal object FillRules {
         max(bounds[2] - bounds[0], bounds[3] - bounds[1]) * scale < 12 * density
 
     /** 찾은 윤곽들로 채우기 획을 만든다 (윤곽마다 첫 점의 필압 자리가 1, 바깥 윤곽이 먼저). 점이 3개 미만이면 null */
-    fun fillStroke(contours: List<FloatArray>, color: Int, pattern: FillPattern): Stroke? {
-        val st = Stroke(Tool.FILL, color, 0f).also { it.fill = FillStyle(pattern) }
+    fun fillStroke(contours: List<FloatArray>, color: Int, pattern: FillPattern, opaque: Boolean = false): Stroke? {
+        val st = Stroke(Tool.FILL, color, 0f).also { it.fill = FillStyle(pattern, opaque) }
         // 바깥 윤곽을 먼저 (무늬가 첫 점에 붙는다)
         for (c in contours.sortedByDescending { FillRegion.signedArea(it) }) {
             if (c.size < 6) continue

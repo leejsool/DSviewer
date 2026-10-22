@@ -97,6 +97,8 @@ class MainActivity : AppCompatActivity() {
     ) {
         /** 폴더 머리글 아래 문서의 가지선: 0 없음, 1 중간(├), 2 마지막(└) */
         var tree = 0
+        /** 폴더 계단에서 들여쓰는 칸 수 (머리글은 그 폴더의 깊이, 가지에 달린 줄은 맨 아래 폴더의 깊이) */
+        var indent = 0
         val isFolder get() = kind == Kind.FOLDER || kind == Kind.DRIVE
         /** 선택 모드에서 쓰는 열쇠 */
         val key get() = docUri ?: vfolder?.let { "vf:${it.id}" }
@@ -220,6 +222,7 @@ class MainActivity : AppCompatActivity() {
         setupSelection()
 
         list.adapter = adapter
+        list.addItemDecoration(TreeDecoration())
         grid = prefs.getBoolean("grid", false)
         applyViewMode()
         list.addOnLayoutChangeListener { _, l, _, r, _, ol, _, or, _ ->
@@ -423,7 +426,7 @@ class MainActivity : AppCompatActivity() {
     private fun show(all: List<Row>, emptyMsg: String) {
         val groups = shownGroups()
         val rows = all.filter { it.kind != Kind.DOC || DocGroup.of(DocType.ofName(it.title))?.let { g -> g in groups } ?: true }
-        this.rows = if (manualOn()) ListSort.sortManual(sortRows(rows), FavOrder.load(this), { it.key }, rowFields) else sortRows(rows)
+        this.rows = if (manualOn()) ListSort.sortManual(sortRows(rows), FavOrder.load(this), { it.key }, rowFields, foldersFirst()) else sortRows(rows)
         if (selecting) selected.retainAll(this.rows.mapNotNull { it.key }.toSet())
         this.emptyMsg = if (rows.none { !it.isFolder } && all.any { !it.isFolder })
             "고른 형식(${groups.joinToString("·") { it.label }})의 문서가 없습니다.\n깔때기 단추에서 볼 형식을 고르세요."
@@ -438,7 +441,16 @@ class MainActivity : AppCompatActivity() {
     private fun applyFilter() {
         val q = query.trim()
         val shown = ListSort.filterByTitle(rows, q, rowFields)
-        adapter.submit(if (tab == Tab.FAVORITE) withGroups(shown) else shown)
+        adapter.submit(
+            when {
+                // 태그로 모아 볼 때: 즐겨찾기 폴더별로 묶는다
+                tab == Tab.FAVORITE && tagFilter != null -> withGroups(shown)
+                // 평소: 즐겨찾기 / 지금 폴더까지의 길을 계단 모양 폴더 머리글로 두고 그 아래에 줄들을 가지로 이은다
+                tab == Tab.FAVORITE -> withChain(shown, favLinks())
+                tab == Tab.FOLDER -> dir?.let { withChain(shown, folderLinks(it)) } ?: shown
+                else -> shown
+            }
+        )
         emptyText.text = if (q.isEmpty()) emptyMsg else "'$q' 이름의 문서가 없습니다."
         emptyText.isVisible = shown.isEmpty() && !progress.isVisible && !permCard.isVisible
     }
@@ -524,24 +536,76 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * 즐겨찾기 목록: 문서들을 폴더별로 묶어 폴더 머리글을 끼운다
-     * (즐겨찾기 폴더 줄은 맨 위, 폴더 차례는 정렬된 문서가 처음 나오는 차례, 문서에는 가지선 표시)
+     * 태그로 모아 볼 때: 문서들을 즐겨찾기 폴더별로 묶어 폴더 머리글을 끼운다 (폴더 차례는 정렬된 문서가 처음 나오는 차례, 아래 줄에는 가지선 표시)
      */
     private fun withGroups(all: List<Row>): List<Row> {
-        val folders = all.filter { it.isFolder }
         val docs = all.filter { !it.isFolder }
         val byGroup = LinkedHashMap<String, Pair<Group, MutableList<Row>>>()
         for (r in docs) {
             val g = r.docUri?.let { groupOf[it] } ?: Group("", "기타", FolderDrawable(FOLDER_COLOR, TapePattern.SOLID), null)
             byGroup.getOrPut(g.id) { g to ArrayList() }.second += r
         }
-        val out = ArrayList<Row>(folders)
+        val out = ArrayList<Row>()
         for ((g, list) in byGroup.values) {
             out += Row(g.name, "${list.size}개", Kind.HEADER, { g.onClick?.invoke() }, folder = g.icon)
             list.forEachIndexed { n, r ->
                 r.tree = if (n == list.lastIndex) 2 else 1
                 out += r
             }
+        }
+        return out
+    }
+
+    /** 폴더 계단의 한 칸: 폴더 이름과 그림, 누르면 그 폴더로 (지금 폴더는 null) */
+    private class Link(val name: String, val icon: Drawable, val onClick: (() -> Unit)?)
+
+    /** 즐겨찾기 맨 위부터 지금 폴더까지 */
+    private fun favLinks(): List<Link> {
+        val path = FavFolders.path(FavFolders.list(this), favDir)
+        val out = ArrayList<Link>()
+        out += Link("즐겨찾기", FolderDrawable(FOLDER_COLOR, TapePattern.SOLID, open = path.isEmpty()), if (path.isEmpty()) null else ({ openFavRoot() }))
+        path.forEachIndexed { i, f ->
+            val here = i == path.lastIndex
+            out += Link(f.name, FolderDrawable(f.color, f.pattern, open = here), if (here) null else ({ openFavDir(f.id) }))
+        }
+        return out
+    }
+
+    /** 폴더 탭: 저장소부터 지금 폴더까지 */
+    private fun folderLinks(d: File): List<Link> {
+        val chain = ArrayList<File>()
+        var f: File? = d
+        while (f != null) {
+            chain.add(0, f)
+            if (isRoot(f)) break
+            f = f.parentFile
+        }
+        return chain.mapIndexed { i, dir ->
+            val here = i == chain.lastIndex
+            val root = roots.firstOrNull { it.file.path == dir.path }
+            Link(
+                root?.name ?: dir.name,
+                FolderDrawable(if (root != null) DocColors.HWP else FOLDER_COLOR, TapePattern.SOLID, open = here),
+                if (here) null else ({ openDir(dir) }),
+            )
+        }
+    }
+
+    /**
+     * 폴더 계단: [links](맨 위 폴더 … 지금 폴더)를 한 칸씩 더 들여 쓴 폴더 머리글로 늘어놓고,
+     * 지금 폴더 안의 줄들을 그 아래에 가지선으로 잇는다. 줄이 하나도 없으면 안내 글이 보이게 그대로 둔다
+     */
+    private fun withChain(children: List<Row>, links: List<Link>): List<Row> {
+        if (children.isEmpty() || links.isEmpty()) return children
+        val out = ArrayList<Row>()
+        links.forEachIndexed { i, l ->
+            val last = i == links.lastIndex
+            out += Row(l.name, if (last) "${children.size}개" else "", Kind.HEADER, { l.onClick?.invoke() }, folder = l.icon).also { it.indent = i }
+        }
+        children.forEachIndexed { n, r ->
+            r.tree = if (n == children.lastIndex) 2 else 1
+            r.indent = links.lastIndex
+            out += r
         }
         return out
     }
@@ -818,9 +882,18 @@ class MainActivity : AppCompatActivity() {
         // 즐겨찾기: 위 기준 대신 내가 끌어서 정한 순서
         if (tab == Tab.FAVORITE) m.add(3, MANUAL_ID, MANUAL_ID, "$MANUAL_LABEL (끌어서 바꾸기)").isChecked = manual
         m.setGroupCheckable(3, true, true)
+        // 폴더 줄을 파일의 위에 둘지 아래에 둘지
+        val first = foldersFirst()
+        m.add(4, FOLDERS_UP_ID, FOLDERS_UP_ID, "폴더를 파일보다 위로").isChecked = first
+        m.add(4, FOLDERS_DOWN_ID, FOLDERS_DOWN_ID, "폴더를 파일보다 아래로").isChecked = !first
+        m.setGroupCheckable(4, true, true)
         MenuCompat.setGroupDividerEnabled(m, true)
         pm.setOnMenuItemClickListener { item ->
             when {
+                item.groupId == 4 -> {
+                    prefs.edit().putBoolean("foldersFirst", item.itemId == FOLDERS_UP_ID).apply()
+                    refresh()
+                }
                 item.itemId == MANUAL_ID -> setManual()
                 item.groupId == 1 -> {
                     val k = keys[item.itemId]
@@ -920,7 +993,10 @@ class MainActivity : AppCompatActivity() {
         override fun typeRank(r: Row) = typeRank(DocType.ofName(r.title))
     }
 
-    private fun sortRows(rows: List<Row>): List<Row> = ListSort.sort(rows, sortKey(), sortDesc(), collator, rowFields)
+    private fun sortRows(rows: List<Row>): List<Row> = ListSort.sort(rows, sortKey(), sortDesc(), collator, rowFields, foldersFirst())
+
+    /** 정렬 ▸ 폴더를 파일보다 위로(기본) / 아래로 */
+    private fun foldersFirst() = prefs.getBoolean("foldersFirst", true)
 
     private fun spanCount(): Int {
         // 목록으로 볼 때 가로 화면이면 두 칸으로 나눠 오른쪽도 쓴다
@@ -1926,14 +2002,52 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * 폴더 머리글 아래 줄들의 가지선(├ └): 줄마다 따로 그리면 줄 사이 여백에서 끊기므로,
+     * 목록이 줄 위 칸 전체에 걸쳐 세로선을 한꺼번에 그린다 (마지막 줄은 가운데서 꺾여 가로선으로)
+     */
+    private inner class TreeDecoration : RecyclerView.ItemDecoration() {
+        private val d = resources.displayMetrics.density
+        private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            style = android.graphics.Paint.Style.STROKE
+            strokeWidth = 1.5f * d
+            strokeCap = android.graphics.Paint.Cap.ROUND
+            color = com.google.android.material.color.MaterialColors.getColor(
+                list, com.google.android.material.R.attr.colorOutline, Color.GRAY
+            )
+        }
+
+        override fun onDraw(c: android.graphics.Canvas, parent: RecyclerView, state: RecyclerView.State) {
+            if (grid) return
+            for (i in 0 until parent.childCount) {
+                val child = parent.getChildAt(i)
+                val pos = parent.getChildAdapterPosition(child)
+                val row = adapter.items.getOrNull(pos) ?: continue
+                if (row.tree == 0 || row.kind == Kind.HEADER) continue
+                val tv = child.findViewById<View>(R.id.tree) ?: continue
+                if (tv.visibility != View.VISIBLE) continue
+                val x = child.left + child.translationX + tv.left + 24 * d
+                val y0 = child.top + child.translationY
+                // 머리글 바로 아래 첫 줄은 머리글 칸 아래 여백(2dp)까지 이어서 그린다
+                val top = if (adapter.items.getOrNull(pos - 1)?.kind == Kind.HEADER) y0 - 2 * d else y0
+                val mid = y0 + child.height / 2f
+                c.drawLine(x, top, x, if (row.tree == 2) mid else y0 + child.height, paint)
+                c.drawLine(x, mid, child.left + child.translationX + tv.right - 2 * d, mid, paint)
+            }
+        }
+    }
+
     /** 태그로 모아 볼 때 문서들 위의 폴더 머리글 한 줄 */
     private inner class HeaderHolder(v: View) : RecyclerView.ViewHolder(v) {
         private val chip: View = v.findViewById(R.id.groupChip)
         private val icon: ImageView = v.findViewById(R.id.groupIcon)
         private val name: TextView = v.findViewById(R.id.groupName)
         private val count: TextView = v.findViewById(R.id.groupCount)
+        private val basePad = v.paddingLeft
 
         fun bind(r: Row) {
+            // 폴더 계단: 깊은 폴더일수록 오른쪽으로
+            itemView.setPadding(basePad + dp(STEP_DP) * r.indent, itemView.paddingTop, itemView.paddingRight, itemView.paddingBottom)
             icon.setImageDrawable(r.folder)
             name.text = r.title
             count.text = r.sub
@@ -1951,9 +2065,10 @@ class MainActivity : AppCompatActivity() {
         private val check: ImageView = v.findViewById(R.id.check)
         private val drag: ImageView = v.findViewById(R.id.drag)
         /** 목록 보기에서만 있다 (큰 아이콘 보기에는 없음) */
-        private val tree: TreeLineView? = v.findViewById(R.id.tree)
+        private val tree: View? = v.findViewById(R.id.tree)
         private var job: Job? = null
         private var source: Thumbs.Source? = null
+        private val basePad = v.paddingLeft
 
         init {
             if (isGrid) thumb.ratio = 1.25f
@@ -1965,6 +2080,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         fun bind(r: Row) {
+            // 폴더 계단 아래 줄: 맨 아래 폴더만큼 들여 쓴다 (큰 아이콘 보기는 그대로)
+            if (!isGrid) itemView.setPadding(basePad + dp(STEP_DP) * r.indent, itemView.paddingTop, itemView.paddingRight, itemView.paddingBottom)
             name.text = r.title
             val s = if (isGrid) r.short else r.sub
             sub.text = s
@@ -1974,7 +2091,7 @@ class MainActivity : AppCompatActivity() {
             badge.isVisible = !r.isFolder && ext.isNotEmpty() && ext.length <= 4
             badge.text = ext
             badge.backgroundTintList = ColorStateList.valueOf(color)
-            tree?.let { it.isVisible = r.tree != 0; it.last = r.tree == 2 }
+            tree?.isVisible = r.tree != 0
             star.isVisible = r.star != null
             if (r.star != null) {
                 star.setImageResource(if (r.star) R.drawable.ic_star else R.drawable.ic_star_border)
@@ -2053,6 +2170,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
+        /** 폴더 계단에서 한 칸 들여 쓰는 너비 (dp) */
+        private const val STEP_DP = 18
+
         /** 경로 줄에 폴더 그림으로 보일 폴더 수 (지금 폴더 + 그 위 두 폴더) */
         private const val CRUMBS_SHOWN = 3
 
@@ -2065,6 +2185,8 @@ class MainActivity : AppCompatActivity() {
         private val FOLDER_COLOR = Color.parseColor("#E8A317")
         private const val MANUAL_LABEL = "직접 정한 순서"
         private const val MANUAL_ID = 200
+        private const val FOLDERS_UP_ID = 300
+        private const val FOLDERS_DOWN_ID = 301
         /** 선택 표시만 다시 그리라는 알림 */
         private val SELECTION = Any()
     }

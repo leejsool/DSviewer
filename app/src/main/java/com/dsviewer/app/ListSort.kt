@@ -56,10 +56,12 @@ internal object ListSort {
     }
 
     /**
-     * 목록을 정렬한다. 저장소 줄이 있으면 그대로. 폴더는 문서 앞에, 같은 값이면 이름순.
+     * 목록을 정렬한다. 저장소 줄이 있으면 그대로. 폴더는 문서 앞에 ([foldersFirst]가 false면 문서 뒤에), 같은 값이면 이름순.
      * 폴더에는 크기·종류 기준이 의미가 없어 이름순으로 한다
      */
-    fun <T> sort(rows: List<T>, key: SortKey, desc: Boolean, collator: Comparator<Any>, f: Fields<T>): List<T> {
+    fun <T> sort(
+        rows: List<T>, key: SortKey, desc: Boolean, collator: Comparator<Any>, f: Fields<T>, foldersFirst: Boolean = true,
+    ): List<T> {
         if (rows.any { f.isDrive(it) }) return rows
         val byName = Comparator<T> { a, b -> collator.compare(f.title(a), f.title(b)) }
         fun primary(k: SortKey): Comparator<T> = when (k) {
@@ -73,19 +75,20 @@ internal object ListSort {
         val (folders, docs) = rows.partition { f.isFolder(it) }
         val folderKey = if (key == SortKey.SIZE || key == SortKey.TYPE) null else key
         val sortedFolders = if (folderKey == null) folders.sortedWith(byName) else folders.sortedWith(ordered(folderKey))
-        return sortedFolders + docs.sortedWith(ordered(key))
+        val sortedDocs = docs.sortedWith(ordered(key))
+        return if (foldersFirst) sortedFolders + sortedDocs else sortedDocs + sortedFolders
     }
 
     /**
-     * '직접 정한 순서': 폴더는 문서 앞에, 각각 [order]에 적힌 차례대로. 적혀 있지 않은 줄(새로 즐겨찾기한 문서 등)은 뒤로 가고
+     * '직접 정한 순서': 폴더는 문서 앞에 ([foldersFirst]가 false면 뒤에), 각각 [order]에 적힌 차례대로. 적혀 있지 않은 줄(새로 즐겨찾기한 문서 등)은 뒤로 가고
      * 그들끼리는 들어온 차례([rows]의 차례)를 지킨다. [key]는 줄의 열쇠 (없으면 적혀 있지 않은 것으로 친다)
      */
-    fun <T> sortManual(rows: List<T>, order: List<String>, key: (T) -> String?, f: Fields<T>): List<T> {
+    fun <T> sortManual(rows: List<T>, order: List<String>, key: (T) -> String?, f: Fields<T>, foldersFirst: Boolean = true): List<T> {
         val index = HashMap<String, Int>()
         order.forEachIndexed { i, k -> index.putIfAbsent(k, i) }
         val byOrder = compareBy<T> { r -> key(r)?.let { index[it] } ?: Int.MAX_VALUE }
         val (folders, docs) = rows.partition { f.isFolder(it) }
-        return folders.sortedWith(byOrder) + docs.sortedWith(byOrder)
+        return if (foldersFirst) folders.sortedWith(byOrder) + docs.sortedWith(byOrder) else docs.sortedWith(byOrder) + folders.sortedWith(byOrder)
     }
 
     /**

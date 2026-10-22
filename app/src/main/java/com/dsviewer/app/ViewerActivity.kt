@@ -807,9 +807,21 @@ class ViewerActivity : AppCompatActivity() {
         val (renderFile, strokes) = withContext(Dispatchers.IO) {
             val clean: File
             val found: List<List<Stroke>>?
-            if (PdfInk.containsInk(file)) {
+            // 문서 파일(내 기기 안의 PDF)이 지난번에 보관해 둔 그대로면 PDF를 PDFBox로 다시 읽지 않고 보관본을 쓴다 (큰 PDF는 수 초 걸린다)
+            val origin = if (inkDraft == null && t.draftBase == null && t.type == DocType.PDF && t.review == null && t.uri.scheme == "file")
+                t.uri.path?.let(::File)?.takeIf { it.isFile } else null
+            val hit = origin?.let { InkCache.load(this@ViewerActivity, it) }
+            if (hit != null) {
+                clean = FileUtil.tempFile(this@ViewerActivity, "clean", "pdf")
+                hit.clean.inputStream().use { i -> clean.outputStream().use { o -> i.copyTo(o, 1 shl 16) } }
+                marks.addAll(hit.marks)
+                wrongs.putAll(hit.wrongs)
+                found = hit.strokes
+            } else if (PdfInk.containsInk(file)) {
                 clean = FileUtil.tempFile(this@ViewerActivity, "clean", "pdf")
                 found = PdfInk.extract(file, clean, if (inkDraft == null) marks else null, if (inkDraft == null) wrongs else null)
+                // 다음에는 빨리 열리도록 보관해 둔다
+                if (origin != null) InkCache.store(this@ViewerActivity, origin, clean, found, marks, wrongs)
             } else {
                 clean = file
                 found = null

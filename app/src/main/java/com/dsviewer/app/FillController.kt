@@ -173,7 +173,7 @@ internal class FillController(
         val sizes = host.sizes
         fun commit(c: Int) {
             if (host.ink !== inkDoc || inkDoc.pages.getOrNull(page) !== list) return
-            FillRules.fillStroke(listOf(outline), c or (0xFF shl 24), FillPattern.SOLID)?.let {
+            FillRules.fillStroke(listOf(outline), c or (0xFF shl 24), FillPattern.SOLID, opaque = true)?.let {
                 inkDoc.add(page, it)
                 view.invalidate()
             }

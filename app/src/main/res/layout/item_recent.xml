@@ -11,8 +11,8 @@
     android:paddingHorizontal="12dp"
     android:paddingVertical="6dp">
 
-    <!-- 태그로 모아 볼 때 폴더 머리글에서 이 문서로 이어지는 가지선 -->
-    <com.dsviewer.app.TreeLineView
+    <!-- 폴더 머리글 아래 줄의 가지선 자리 (선은 MainActivity.TreeDecoration이 그린다) -->
+    <View
         android:id="@+id/tree"
         android:layout_width="36dp"
         android:layout_height="match_parent"

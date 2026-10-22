@@ -37,6 +37,20 @@ class ListSortTest {
     private fun manual(rows: List<Item>, order: List<String>) =
         ListSort.sortManual(rows, order, { it.title }, fields).map { it.title }
 
+    @Test fun foldersCanGoBelowTheFiles() {
+        val rows = listOf(Item("b.pdf"), Item("보관", folder = true), Item("a.pdf"), Item("가방", folder = true))
+        val up = ListSort.sort(rows, SortKey.NAME, false, collator, fields).map { it.title }
+        val down = ListSort.sort(rows, SortKey.NAME, false, collator, fields, foldersFirst = false).map { it.title }
+        assertEquals(listOf("가방", "보관", "a.pdf", "b.pdf"), up)
+        assertEquals(listOf("a.pdf", "b.pdf", "가방", "보관"), down)
+    }
+
+    @Test fun manualOrderCanPutFoldersBelowToo() {
+        val rows = listOf(Item("a.pdf"), Item("보관", folder = true), Item("b.pdf"))
+        val got = ListSort.sortManual(rows, listOf("b.pdf", "a.pdf"), { it.title }, fields, foldersFirst = false).map { it.title }
+        assertEquals(listOf("b.pdf", "a.pdf", "보관"), got)
+    }
+
     @Test fun manualOrderFollowsSavedListAndKeepsFoldersFirst() {
         val rows = listOf(Item("a.pdf"), Item("b.pdf"), Item("보관", folder = true), Item("c.pdf"))
         assertEquals(listOf("보관", "c.pdf", "a.pdf", "b.pdf"), manual(rows, listOf("c.pdf", "a.pdf", "b.pdf")))

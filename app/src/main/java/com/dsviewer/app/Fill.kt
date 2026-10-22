@@ -39,7 +39,8 @@ enum class FillPattern(val label: String) {
 }
 
 /** 채우기 획의 무늬 */
-class FillStyle(val pattern: FillPattern)
+/** [opaque]면 곱하기가 아니라 그대로 덮어 칠한다 (네모 덮기: 아래의 글자가 비치지 않게) */
+class FillStyle(val pattern: FillPattern, val opaque: Boolean = false)
 
 /** 칠하기: 누른 자리를 둘러싼 닫힌 영역, 자유 영역: 그린 폐곡선의 가장 바깥 안쪽 */
 enum class FillMode { BUCKET, FREE }
@@ -128,13 +129,13 @@ private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
 private val fillMatrix = Matrix()
 
 /**
- * 채운 영역: 곱하기로 칠해 아래의 선·글자가 그대로 보이게 한다 (형광펜처럼).
+ * 채운 영역: 곱하기로 칠해 아래의 선·글자가 그대로 보이게 한다 (형광펜처럼. 덮는 채우기([FillStyle.opaque])만 그대로 덮는다).
  * 무늬는 영역의 첫 점에 붙인다 (옮겨도 무늬가 영역 위에서 미끄러지지 않게)
  */
 fun drawInkFill(c: Canvas, st: Stroke, alphaMul: Float) = synchronized(fillPaint) {
     val style = st.fill ?: return
     val shape = st.fillShape()
-    fillPaint.blendMode = BlendMode.MULTIPLY
+    fillPaint.blendMode = if (style.opaque) null else BlendMode.MULTIPLY
     val sh = FillTile.shader(style.pattern, st.color)
     if (sh == null) {
         fillPaint.shader = null

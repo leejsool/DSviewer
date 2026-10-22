@@ -822,7 +822,7 @@ object PdfInk {
         ap.bBox = rect
         ap.resources = PDResources()
         val gs = PDExtendedGraphicsState()
-        gs.blendMode = BlendMode.MULTIPLY
+        gs.blendMode = if (style.opaque) BlendMode.NORMAL else BlendMode.MULTIPLY
         val gsName = ap.resources.add(gs)
         val sb = StringBuilder()
         fun n(v: Float) = String.format(java.util.Locale.US, "%.3f", v)
@@ -942,6 +942,11 @@ object PdfInk {
     // 채우기(A)는 점들이 윤곽들 (필압 1이 윤곽의 첫 점), 끝에 |무늬 이름, 구멍이 있으면 |x,y,r;... 을 붙인다
     // 표(X)는 점이 네 모서리, 굵기 자리에 선 굵기, 끝에 |표 모양 ([InkTable.encode])
     // 포스트잇 메모(N)는 점 두 개(접힌 자리, 펼친 자리), 끝에 |글(UTF-8 Base64)|가로,세로|C(접힘) 또는 O(펼침)
+    /** 보관함([InkCache])이 쓰는 획 글 ↔ 획 (그림 바이트와 글에 단 링크는 따로 다룬다) */
+    internal fun encodeStroke(s: Stroke): String = encode(s)
+
+    internal fun decodeStroke(str: String): Stroke? = decode(str)
+
     private fun encode(s: Stroke): String {
         val sb = StringBuilder(s.count * 16 + 32)
         val kind = when {
@@ -982,7 +987,8 @@ object PdfInk {
             holes()
         }
         s.fill?.let {
-            sb.append('|').append(it.pattern.name)
+            // 덮는 채우기는 이름 뒤에 '!'
+            sb.append('|').append(it.pattern.name).append(if (it.opaque) "!" else "")
             holes()
         }
         s.note?.let {
@@ -1022,7 +1028,8 @@ object PdfInk {
                 }
             }
             if (tool == Tool.FILL) {
-                s.fill = FillStyle(FillPattern.of(parts.getOrNull(5)))
+                val fillName = parts.getOrNull(5)
+                s.fill = FillStyle(FillPattern.of(fillName?.removeSuffix("!")), fillName?.endsWith("!") == true)
                 parts.getOrNull(6)?.split(';')?.forEach { h ->
                     val v = h.split(',')
                     if (v.size == 3) s.withHole(v[0].toFloat(), v[1].toFloat(), v[2].toFloat())?.let { s.copyHolesFrom(it) }
