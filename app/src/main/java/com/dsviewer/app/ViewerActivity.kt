@@ -102,7 +102,10 @@ class ViewerActivity : AppCompatActivity() {
     private var current: DocTab? = null
     private val ink get() = current?.ink
     private val saver: DocSaver by lazy {
-        DocSaver(this, { docView }, textEditor, progress, { current }, { createDoc.launch(it) }, ::removeTab, ::updateTabTitle)
+        DocSaver(this, { docView }, textEditor, progress, { current }, { createDoc.launch(it) }, ::removeTab, ::updateTabTitle).also { sv ->
+            // 닫으면서 뒤에 맡긴 저장이 끝났을 때: 되면 자동 저장본을 지우고, 안 되면 마지막 필기까지 자동 저장본에 남긴다
+            sv.onLetGoDone = { t, ok -> if (ok) autoSaver.discard(t) else autoSaver.saveNow(t) }
+        }
     }
     /** 필기 데이터 받기를 이번에 이미 물었는지 */
     private var handwritingAsked = false
@@ -116,7 +119,7 @@ class ViewerActivity : AppCompatActivity() {
 
     private val createDoc = registerForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
         val t = saver.takeSaveTarget()
-        if (uri != null && t != null && t in docs) saver.saveTo(t, uri, overwrite = false)
+        if (uri != null && t != null && t in docs) saver.saveTo(t, uri)
         else saver.closeAfterSave = null
     }
 
@@ -520,7 +523,20 @@ class ViewerActivity : AppCompatActivity() {
             load(t)
             return
         }
-        val meta = drafts.meta(draftId ?: drafts.idOf(uri.toString()))
+        // 방금 닫은 같은 문서를 뒤에서 아직 저장하고 있으면 끝나기를 기다린다 (그 문서의 자동 저장본은 다 쓴 뒤에 지워진다)
+        if (draftId == null && DocSaver.isPending(uri)) {
+            lifecycleScope.launch {
+                DocSaver.awaitPending(uri)
+                if (t in docs) openOrRecover(t, null)
+            }
+            return
+        }
+        openOrRecover(t, draftId)
+    }
+
+    /** 이 문서의 저장하지 않은 필기(자동 저장본)가 있으면 복구하고, 없으면 그냥 연다 */
+    private fun openOrRecover(t: DocTab, draftId: String?) {
+        val meta = drafts.meta(draftId ?: drafts.idOf(t.uri.toString()))
         when {
             meta == null -> load(t)
             draftId != null -> { useDraft(t, meta); load(t) }
@@ -648,12 +664,10 @@ class ViewerActivity : AppCompatActivity() {
             removeTab(t)
             return
         }
-        // 옵션 '자동으로 덮어쓰기 저장'이 켜져 있으면 묻지 않고 원본에 저장한 뒤 닫는다 (저장하지 못하면 평소처럼 묻는다)
-        if (autoOverwriteOn() && saver.canAutoOverwrite(t)) {
-            saver.autoOverwrite(t, showProgress = true) { ok ->
-                if (t !in docs) return@autoOverwrite
-                if (ok && t.ink?.dirty != true) removeTab(t) else askSaveBeforeClose(t)
-            }
+        // 옵션 '자동으로 덮어쓰기 저장'이 켜져 있으면 묻지 않고 원본에 저장하되, 쓰는 일은 뒤에 맡기고 곧바로 닫는다
+        // (못 쓰면 필기가 자동 저장본에 남는다. 맡길 수 없는 탭이면 평소처럼 묻는다)
+        if (autoOverwriteOn() && saver.canAutoOverwrite(t) && saver.overwriteAndLetGo(t)) {
+            removeTab(t)
             return
         }
         askSaveBeforeClose(t)
@@ -695,7 +709,8 @@ class ViewerActivity : AppCompatActivity() {
         }
         docs.removeAt(index)
         // 저장했거나 '저장 안 함'으로 닫았으니 자동 저장본은 더 필요 없다 (열다 만 복구 탭은 남겨 둔다)
-        if (t.ink != null && t.review == null) autoSaver.discard(t)
+        // (뒤에서 원본에 덮어쓰는 중인 탭은 다 쓴 뒤에 지운다: 실패하면 이 자동 저장본에서 복구해야 하므로)
+        if (t.ink != null && t.review == null && !saver.isLetGo(t)) autoSaver.discard(t)
         t.review?.let { review.release(it) }
         t.search?.cancel()
         t.prewarm?.cancel()
@@ -772,28 +787,58 @@ class ViewerActivity : AppCompatActivity() {
     private fun load(t: DocTab) {
         val uri = t.uri
         lifecycleScope.launch {
+            val perf = Perf("열기")
             try {
+                // 방금 닫은 같은 문서를 뒤에서 아직 저장하고 있으면 끝나기를 기다린다 (옛 내용을 열지 않게)
+                DocSaver.awaitPending(uri)
+                perf.step("저장끝기다림")
                 val draftFile = t.draftFile
                 val name = if (draftFile != null || t.review != null) t.name
                 else withContext(Dispatchers.IO) { FileUtil.displayName(this@ViewerActivity, uri) }
                 t.name = name
                 updateTabTitle(t)
+                perf.step("이름")
+                // 지난번에 보던 쪽 (최근 목록은 파일에서 읽으니 화면 스레드 밖에서)
+                val recentPage = withContext(Dispatchers.IO) { Recents.get(this@ViewerActivity, uri.toString())?.lastPage ?: 0 }
+                // 내 기기 안의 PDF이고 보관본이 지금 파일과 맞으면 원본을 캐시로 복사하지 않고 보관본으로 곧바로 연다
+                val early = if (draftFile == null && t.review == null) withContext(Dispatchers.IO) { earlyHit(t, name) } else null
+                if (early != null) {
+                    perf.step("보관본")
+                    t.type = DocType.PDF
+                    updateTabTitle(t)
+                    openPdf(t, null, recentPage, early, perf = perf)
+                    return@launch
+                }
+                // 보관본이 없는 큰 PDF는 복사하는 동안 원본을 먼저 보여 준다 (복사·필기 확인에 1초 안팎 걸린다)
+                val quickShown = draftFile == null && t.review == null && withContext(Dispatchers.IO) { quickCandidate(t, name) }?.let {
+                    showQuick(t, it, recentPage, "문서를 준비하는 중입니다. 잠시 뒤에 필기할 수 있습니다.")
+                } == true
+                perf.step("먼저보기 $quickShown")
+                val sniffer = InkSniffer()
                 val file = withContext(Dispatchers.IO) {
                     // 다른 탭이 쓰고 있을 수 있으므로 오래된 캐시 정리는 첫 탭에서만
                     if (docs.size == 1) FileUtil.cleanOld(this@ViewerActivity)
                     if (draftFile != null) FileUtil.tempFile(this@ViewerActivity, "draft", "pdf").also { (t.draftBase ?: draftFile).copyTo(it, overwrite = true) }
-                    else FileUtil.copyToCache(this@ViewerActivity, uri, name)
+                    else FileUtil.copyToCache(this@ViewerActivity, uri, name, sniffer)
                 }
+                perf.step("복사 ${file.length() shr 10}KB")
+                if (t !in docs) return@launch
                 if (draftFile != null) {  // 자동 저장본은 이미 PDF
-                    openPdf(t, file)
+                    openPdf(t, file, recentPage, null, quickShown, perf = perf)
                     return@launch
                 }
                 t.type = withContext(Dispatchers.IO) { FileUtil.detect(name, contentResolver.getType(uri), file) }
                 updateTabTitle(t)  // 탭 아이콘 색 (PDF 빨강, 한글 파랑 …)
+                perf.step("형식")
                 when (t.type) {
-                    DocType.PDF -> openPdf(t, file)
+                    // 복사하면서 필기가 든 PDF인지 이미 알아냈다
+                    DocType.PDF -> openPdf(t, file, recentPage, null, quickShown, sniffer.found, perf)
                     DocType.UNKNOWN -> fail(t, "지원하지 않는 파일 형식입니다.\n(PDF, 한글, 워드, 파워포인트, 글(txt), 그림 파일을 열 수 있습니다)")
-                    else -> openPdf(t, convert(file, t.type, name))
+                    else -> {
+                        val pdf = convert(file, t.type, name)
+                        perf.step("변환")
+                        openPdf(t, pdf, recentPage, null, perf = perf)
+                    }
                 }
             } catch (e: SecurityException) {
                 fail(t, "파일을 열 권한이 없거나, 암호가 걸린 PDF입니다.")
@@ -803,13 +848,33 @@ class ViewerActivity : AppCompatActivity() {
         }
     }
 
+    /** 복사하기 전에 원본 그대로 먼저 보여 줄 만한 문서인가: 내 기기 안의 큰 PDF (아니면 null) */
+    private fun quickCandidate(t: DocTab, name: String): File? {
+        if (t.uri.scheme != "file" || DocType.ofName(name) != DocType.PDF) return null
+        return t.uri.path?.let(::File)?.takeIf { it.isFile && it.length() >= DEFER_INK_BYTES }
+    }
+
+    /** 문서 파일(내 기기 안의 PDF)을 이 앱이 보관해 둔 필기·화면용 PDF가 지금 파일과 맞으면 그것 (아니면 null) */
+    private fun earlyHit(t: DocTab, name: String): InkCache.Hit? {
+        if (t.uri.scheme != "file" || DocType.ofName(name) != DocType.PDF) return null
+        val origin = t.uri.path?.let(::File)?.takeIf { it.isFile } ?: return null
+        return InkCache.load(this, origin)
+    }
+
     /** 한글·워드·파워포인트·글·그림 → PDF (기기 안에서 변환) */
     private suspend fun convert(file: File, type: DocType, name: String): File = withContext(Dispatchers.Default) {
         DocConvert.toPdf(this@ViewerActivity, file, type, name)
     }
 
-    private suspend fun openPdf(t: DocTab, file: File) {
-        t.sourcePdf = file
+    /**
+     * [file]을 PDF 문서로 연다. [early]는 [load]가 미리 꺼낸 보관본으로, 있으면 원본 파일([file]은 null)을 읽지 않고 보관본으로 연다
+     */
+    private suspend fun openPdf(
+        t: DocTab, file: File?, recentPage: Int, early: InkCache.Hit? = null, quickShown: Boolean = false,
+        /** 복사하면서 [file]에 필기가 들어 있는지 이미 알아냈으면 그 답 (모르면 null: 파일을 훑어 알아낸다) */
+        knownInk: Boolean? = null, perf: Perf = Perf("열기"),
+    ) {
+        if (file != null) t.sourcePdf = file
         // 이 앱으로 저장한 필기가 있으면 꺼내서 편집 가능한 상태로 만든다
         val marks = HashSet<Int>()
         val wrongs = HashMap<Int, String>()
@@ -818,30 +883,31 @@ class ViewerActivity : AppCompatActivity() {
         val (origin, hit, defer) = withContext(Dispatchers.IO) {
             val origin = if (inkDraft == null && t.draftBase == null && t.type == DocType.PDF && t.review == null && t.uri.scheme == "file")
                 t.uri.path?.let(::File)?.takeIf { it.isFile } else null
-            val hit = origin?.let { InkCache.load(this@ViewerActivity, it) }
+            val hit = early ?: origin?.let { InkCache.load(this@ViewerActivity, it) }
             // 보관본이 없는 큰 PDF에 필기가 들어 있으면 필기를 읽는 데 오래 걸리니 문서부터 보여 준다
-            val defer = hit == null && inkDraft == null && t.draftBase == null && t.review == null && t.type == DocType.PDF &&
-                file.length() >= DEFER_INK_BYTES && PdfInk.containsInk(file)
+            val defer = hit == null && file != null && inkDraft == null && t.draftBase == null && t.review == null && t.type == DocType.PDF &&
+                file.length() >= DEFER_INK_BYTES && (knownInk ?: PdfInk.containsInk(file))
             Triple(origin, hit, defer)
         }
-        val quick = defer && showQuick(t, file)
+        perf.step("보관본확인 ${if (hit != null) "맞음" else "없음"}")
+        val quick = quickShown || (defer && file != null && showQuick(t, file, recentPage, "필기를 불러오는 중입니다. 다 읽을 때까지는 보기만 됩니다."))
         if (t !in docs) return
         val (renderFile, strokes) = withContext(Dispatchers.IO) {
             val clean: File
             val found: List<List<Stroke>>?
             if (hit != null) {
-                clean = FileUtil.tempFile(this@ViewerActivity, "clean", "pdf")
-                hit.clean.inputStream().use { i -> clean.outputStream().use { o -> i.copyTo(o, 1 shl 16) } }
+                // 보관본의 화면용 PDF는 고치지도 지우지도 않는 파일이라 복사하지 않고 그대로 쓴다
+                clean = hit.clean
                 marks.addAll(hit.marks)
                 wrongs.putAll(hit.wrongs)
                 found = hit.strokes
-            } else if (PdfInk.containsInk(file)) {
+            } else if (file != null && (knownInk ?: PdfInk.containsInk(file))) {
                 clean = FileUtil.tempFile(this@ViewerActivity, "clean", "pdf")
                 found = PdfInk.extract(file, clean, if (inkDraft == null) marks else null, if (inkDraft == null) wrongs else null)
                 // 다음에는 빨리 열리도록 보관해 둔다
                 if (origin != null) InkCache.store(this@ViewerActivity, origin, clean, found, marks, wrongs)
             } else {
-                clean = file
+                clean = file!!
                 found = null
             }
             if (inkDraft == null) return@withContext clean to found
@@ -853,11 +919,15 @@ class ViewerActivity : AppCompatActivity() {
                 scratch.delete()
             }
         }
+        perf.step("필기읽기")
         t.renderPdf = renderFile
+        // 보관본으로 열면 원본 파일은 읽지 않았으니 화면용 PDF를 원본 자리에도 쓴다 (고치지 않는 파일이라 하나를 같이 써도 된다)
+        if (hit != null) t.sourcePdf = renderFile
         // 보던 쪽 근처만 읽고 먼저 연다 (큰 PDF는 모든 쪽의 크기를 읽는 데만 오래 걸린다. 나머지는 뒤에서)
         // 먼저 보여 준 문서가 있으면 지금 보는 쪽 근처부터, 그 문서에서 이미 읽은 쪽 크기는 다시 읽지 않는다
-        val focus = if (quick) paneOf(t)?.view?.currentPage()?.coerceAtLeast(0) ?: 0 else openFocusPage(t)
+        val focus = if (quick) paneOf(t)?.view?.currentPage()?.coerceAtLeast(0) ?: 0 else openFocusPage(t, recentPage)
         val d = PdfDoc.open(renderFile, t.quickPdf?.knownSizes(), focus)
+        perf.step("PdfDoc열기")
         if (t !in docs) {
             // 읽는 사이 탭이 닫힘
             d.close()
@@ -869,7 +939,7 @@ class ViewerActivity : AppCompatActivity() {
         // 복습한 적 있는 오답은 머리줄에 복습 상태가 보이도록 다시 그린다 (복습 기능 전에 만든 머리줄에는 없다). 저장할 변경으로는 치지 않는다
         for ((_, e) in inkDoc.allWrongs()) if (e.stage > 0) inkDoc.rebuildWrongStrokes(e, notify = false)
         // 탐색기의 '오늘 복습 N개'가 이 문서의 일정을 알도록 색인에 요약해 둔다
-        if (t.review == null) ReviewIndexStore.update(this, t.uri.toString(), t.name, inkDoc.allWrongs().map { it.second })
+        if (t.review == null) ReviewIndexStore.updateLater(this, t.uri.toString(), t.name, inkDoc.allWrongs().map { it.second })
         // 복습용 문서: 쪽마다 문제 그림을 넣는다 (저장하지 않은 필기로 치지 않는다)
         t.review?.populate(inkDoc)
         // 자동 저장본에서 열었으면 아직 저장하지 않은 필기로 (탭에 디스켓 표시, 닫을 때 저장 여부를 묻는다)
@@ -919,21 +989,23 @@ class ViewerActivity : AppCompatActivity() {
             t.startReviewOnLoad = false
             if (current === t) docView.post { wrong.reviewDue() }
         }
+        perf.step("화면에올림")
+        perf.done("쪽=${d.pageCount} 획=${inkDoc.pages.sumOf { it.size }}")
         // 한가할 때 저장 준비를 해 두어 처음 저장도 빠르게
         saver.prewarm(t)
     }
 
-    /** 처음 열 때 보여 줄 쪽 (지난번에 보던 쪽, 탭에 보던 자리가 있거나 복습 문서면 첫 쪽 근처) */
-    private fun openFocusPage(t: DocTab): Int =
-        if (t.viewState != null || t.review != null) 0 else Recents.get(this, t.uri.toString())?.lastPage ?: 0
+    /** 처음 열 때 보여 줄 쪽 (탭에 보던 자리가 있거나 복습 문서면 첫 쪽 근처, 아니면 지난번에 보던 쪽 [recent]) */
+    private fun openFocusPage(t: DocTab, recent: Int): Int =
+        if (t.viewState != null || t.review != null) 0 else recent
 
     /**
      * 필기가 든 큰 PDF를 처음 열 때, 필기를 읽는 동안 [file] 그대로를 먼저 보여 준다 (쓰기는 막고 보기만).
      * 못 열면 false: 예전처럼 필기를 다 읽은 뒤에 연다
      */
-    private suspend fun showQuick(t: DocTab, file: File): Boolean {
+    private suspend fun showQuick(t: DocTab, file: File, recentPage: Int, notice: String): Boolean {
         val d = try {
-            PdfDoc.open(file, focusPage = openFocusPage(t))
+            PdfDoc.open(file, focusPage = openFocusPage(t, recentPage))
         } catch (e: Exception) {
             return false
         }
@@ -949,7 +1021,7 @@ class ViewerActivity : AppCompatActivity() {
             p.view.inkLoading = true
         }
         resumeLastPage(t, d.pageCount)
-        if (current === t) Toast.makeText(this, "필기를 불러오는 중입니다. 다 읽을 때까지는 보기만 됩니다.", Toast.LENGTH_LONG).show()
+        if (current === t) Toast.makeText(this, notice, Toast.LENGTH_LONG).show()
         return true
     }
 

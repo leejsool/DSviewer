@@ -57,28 +57,60 @@ internal object ReviewIndexStore {
     private const val PREFS = "review_index"
     private const val KEY = "items"
 
-    fun load(ctx: Context): List<ReviewIndexItem> =
+    /** 읽고-고치고-쓰는 일이 겹쳐 서로 덮어쓰지 않도록 모두 이 열쇠를 잡고 한다 */
+    private val lock = Any()
+
+    /** 뒤에서 하나씩 처리하는 줄 ([updateLater]) */
+    private val worker = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "review-index").apply { isDaemon = true }
+    }
+
+    fun load(ctx: Context): List<ReviewIndexItem> = synchronized(lock) {
         ReviewIndex.decode(ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, null).orEmpty())
+    }
 
     private fun save(ctx: Context, items: List<ReviewIndexItem>) {
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, ReviewIndex.encode(items)).apply()
     }
 
     /** [uri] 문서의 오답 일정을 새로 요약해 둔다 (오답이 없으면 색인에서 뺀다) */
-    fun update(ctx: Context, uri: String, name: String, entries: List<WrongEntry>) {
-        // 복습으로 정한 스크랩만 복습 일정에 센다
-        val stats = entries.filter { it.review }.map { StatEntry(it.symbol, it.tags, it.stage, it.dueDay, it.history) }
-        save(ctx, ReviewIndex.upsert(load(ctx), uri, ReviewIndex.summarize(uri, name, stats)))
+    fun update(ctx: Context, uri: String, name: String, entries: List<WrongEntry>) =
+        write(ctx, uri, summarize(uri, name, entries))
+
+    /**
+     * [update]와 같지만 설정 파일을 읽고 쓰는 일을 뒤에서 한다 (문서를 열고 저장하는 화면 스레드에서 쓰는 곳용).
+     * 오답 항목은 부른 순간 요약해 두므로 그 뒤에 고쳐도 상관없고, 뒤에서도 부른 차례대로 하나씩 처리한다
+     */
+    fun updateLater(ctx: Context, uri: String, name: String, entries: List<WrongEntry>) {
+        val item = summarize(uri, name, entries)
+        val app = ctx.applicationContext
+        try {
+            worker.execute { runCatching { write(app, uri, item) } }
+        } catch (e: java.util.concurrent.RejectedExecutionException) {
+            write(app, uri, item)
+        }
     }
 
-    fun remove(ctx: Context, uri: String) = save(ctx, ReviewIndex.upsert(load(ctx), uri, null))
+    /** 복습으로 정한 스크랩만 복습 일정에 센다 */
+    private fun summarize(uri: String, name: String, entries: List<WrongEntry>): ReviewIndexItem? {
+        val stats = entries.filter { it.review }.map { StatEntry(it.symbol, it.tags, it.stage, it.dueDay, it.history) }
+        return ReviewIndex.summarize(uri, name, stats)
+    }
+
+    private fun write(ctx: Context, uri: String, item: ReviewIndexItem?) = synchronized(lock) {
+        save(ctx, ReviewIndex.upsert(load(ctx), uri, item))
+    }
+
+    fun remove(ctx: Context, uri: String) = write(ctx, uri, null)
 
     /** 파일을 옮기거나 이름을 바꿨을 때 */
     fun relink(ctx: Context, old: String, new: String, name: String) {
-        val items = load(ctx)
-        val it = items.firstOrNull { x -> x.uri == old } ?: return
-        save(ctx, ReviewIndex.upsert(items, old, null).let { rest ->
-            ReviewIndex.upsert(rest, new, ReviewIndexItem(new, name, it.unreviewed, it.dueDays))
-        })
+        synchronized(lock) {
+            val items = load(ctx)
+            val it = items.firstOrNull { x -> x.uri == old } ?: return
+            save(ctx, ReviewIndex.upsert(items, old, null).let { rest ->
+                ReviewIndex.upsert(rest, new, ReviewIndexItem(new, name, it.unreviewed, it.dueDays))
+            })
+        }
     }
 }

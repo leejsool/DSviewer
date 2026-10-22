@@ -71,25 +71,21 @@ object PdfInk {
      * 이 앱이 저장한 필기나 북마크가 들어 있는지 빠르게 확인 (PDFBox는 주석·쪽 사전을 압축하지 않고 쓴다).
      * 두 키 모두 /DSViewer로 시작한다
      */
-    fun containsInk(file: File): Boolean {
-        val pattern = "/DSViewer".toByteArray()
-        var matched = 0
-        // 한 바이트씩 읽으면 큰 PDF(수십 MB)에서 느린 기기는 수 초 걸린다: 덩어리로 읽는다
-        val buf = ByteArray(1 shl 16)
-        file.inputStream().use { input ->
-            while (true) {
-                val n = input.read(buf)
-                if (n < 0) return false
-                for (k in 0 until n) {
-                    val b = buf[k]
-                    matched = when {
-                        b == pattern[matched] -> matched + 1
-                        b == pattern[0] -> 1
-                        else -> 0
-                    }
-                    if (matched == pattern.size) return true
-                }
+    fun containsInk(file: File): Boolean = InkSniffer.containsInk(file)
+
+    /**
+     * PDFBox 클래스를 미리 불러 둔다 (처음 쓸 때 클래스를 읽느라 열기·저장이 0.1초 넘게 느려지지 않게).
+     * 앱이 켜질 때 뒤에서 한 번 부른다. 실패해도 상관없다
+     */
+    fun warmUp() {
+        runCatching {
+            val bytes = ByteArrayOutputStream()
+            PDDocument().use { doc ->
+                doc.addPage(PDPage(PDRectangle.LETTER))
+                doc.save(bytes)
             }
+            PDDocument.load(bytes.toByteArray()).use { doc -> doc.pages.forEach { it.annotations } }
+            decode(encode(Stroke(Tool.PEN, 0xFF000000.toInt(), 1f)))
         }
     }
 
@@ -146,7 +142,11 @@ object PdfInk {
      * 원본 [src]에 필기를 주석으로 넣고 [marks] 쪽(0부터)에 북마크를 달아 [out]에 저장.
      * [wrongs]를 주면 오답 쪽 정보를 쪽 사전에 넣고 PDF 목차에 '오답노트' 항목을 새로 쓴다
      */
-    fun save(src: File, out: File, pages: List<List<Stroke>>, marks: Set<Int> = emptySet(), wrongs: WrongSave? = null) {
+    fun save(
+        src: File, out: File, pages: List<List<Stroke>>, marks: Set<Int> = emptySet(), wrongs: WrongSave? = null,
+        /** 단계가 끝날 때마다 단계 이름을 알린다 (걸린 시간 기록용) */
+        step: ((String) -> Unit)? = null,
+    ) {
         // 글 외형을 그린 임시 PDF (다 저장한 뒤에 닫는다)
         var texts: TextForms? = null
         val ink = InkWriter()
@@ -154,7 +154,9 @@ object PdfInk {
         try {
             PDDocument.load(src).use { doc ->
                 if (doc.isEncrypted) doc.isAllSecurityToBeRemoved = true
+                step?.invoke("PDF읽기")
                 texts = renderTexts(doc, pages)
+                step?.invoke("글그리기")
                 for ((i, page) in doc.pages.withIndex()) {
                     val list: MutableList<PDAnnotation> =
                         page.annotations.filterTo(ArrayList()) { !it.cosObject.containsKey(KEY_NAME) }
@@ -187,7 +189,9 @@ object PdfInk {
                 }
                 // 목차가 잘못돼도 필기 저장은 막지 않는다
                 if (wrongs != null) runCatching { writeWrongOutline(doc, wrongs.outline) }
+                step?.invoke("주석만들기")
                 doc.save(out)
+                step?.invoke("PDF쓰기")
             }
         } finally {
             texts?.src?.close()

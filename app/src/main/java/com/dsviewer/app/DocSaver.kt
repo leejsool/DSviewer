@@ -21,8 +21,11 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -250,7 +253,7 @@ internal class DocSaver(
             Toast.makeText(activity, "쪽을 바꾸는 중입니다. 잠시 뒤에 저장해 주세요.", Toast.LENGTH_SHORT).show()
             return
         }
-        if (!asNew && t.canOverwrite && t.type == DocType.PDF) saveTo(t, t.uri, overwrite = true)
+        if (!asNew && t.canOverwrite && t.type == DocType.PDF && t.sourcePdf != null) overwriteHere(t)
         else saveAs(t)
     }
 
@@ -263,6 +266,31 @@ internal class DocSaver(
     fun canAutoOverwrite(t: DocTab): Boolean =
         t.ink?.dirty == true && t.canOverwrite && t.type == DocType.PDF && !t.isNewNote && t.review == null &&
             t.sourcePdf != null && !t.pagesBusy && !t.overwriting
+
+    /** 덮어쓰려고 화면 스레드에서 찍어 둔 것: 필기, 북마크, 오답 정보와 그때까지의 필기 변경 횟수 */
+    private class Capture(
+        val inkDoc: InkDocument, val base: File, val target: Uri,
+        val pages: List<List<Stroke>>, val marks: Set<Int>, val wrongSave: WrongSave?, val seen: Int,
+    )
+
+    /** 지금 상태를 찍고 이 탭을 '덮어쓰는 중'으로 만든다 (끝나면 [Capture]를 쓴 쪽이 `overwriting`을 푼다) */
+    private fun capture(t: DocTab, inkDoc: InkDocument, src: File): Capture {
+        if (current() === t) textEditor.commit()
+        t.overwriting = true
+        return Capture(
+            inkDoc, t.renderPdf ?: src, t.uri, inkDoc.snapshot(), inkDoc.bookmarkedPages(), inkDoc.wrongSave(), inkDoc.changeCount,
+        )
+    }
+
+    /** 덮어쓰기를 끝낸 결과: 성공 여부와, 성공 뒤 뒤에서 할 일(보관본 쓰기, 없으면 null) */
+    private class Written(val ok: Boolean, val after: (() -> Unit)?)
+
+    private suspend fun write(c: Capture, perf: Perf): Written = try {
+        val after = withContext(Dispatchers.IO) { writeOver(c.base, c.target, c.pages, c.marks, c.wrongSave, perf) }
+        Written(true, after)
+    } catch (e: Throwable) {  // 메모리 부족도 앱을 죽이지 않고 이번만 건너뛴다
+        Written(false, null)
+    }
 
     /**
      * 옵션 '자동으로 덮어쓰기 저장': 저장 단추를 누른 것처럼 원본 파일에 덮어쓰되, 아무것도 묻거나 알리지 않는다.
@@ -277,81 +305,200 @@ internal class DocSaver(
             return
         }
         if (showProgress) progress.visibility = View.VISIBLE
-        if (current() === t) textEditor.commit()
-        val target = t.uri
-        val snapshot = inkDoc.snapshot()
-        val marks = inkDoc.bookmarkedPages()
-        val wrongSave = inkDoc.wrongSave()
-        val seen = inkDoc.changeCount
-        t.overwriting = true
-        activity.lifecycleScope.launch {
-            val ok = try {
-                withContext(Dispatchers.IO) { writeOver(t.renderPdf ?: src, target, snapshot, marks, wrongSave) }
-                true
-            } catch (e: Throwable) {  // 메모리 부족도 앱을 죽이지 않고 이번만 건너뛴다
-                false
-            }
+        val c = capture(t, inkDoc, src)
+        launchTracked(c.target) {
+            val perf = Perf("자동저장 ${t.name}")
+            val w = write(c, perf)
             t.overwriting = false
             if (showProgress) progress.visibility = View.GONE
-            if (ok) {
-                if (target.scheme == "file") target.path?.let { MediaScannerConnection.scanFile(activity, arrayOf(it), null, null) }
-                if (inkDoc.changeCount == seen) {
+            if (w.ok) {
+                if (c.target.scheme == "file") c.target.path?.let { MediaScannerConnection.scanFile(activity, arrayOf(it), null, null) }
+                if (inkDoc.changeCount == c.seen) {
                     inkDoc.markSaved()
-                    ReviewIndexStore.update(activity, t.uri.toString(), t.name, inkDoc.allWrongs().map { it.second })
+                    ReviewIndexStore.updateLater(activity, t.uri.toString(), t.name, inkDoc.allWrongs().map { it.second })
                 }
             } else {
                 Toast.makeText(activity, "'${t.name}' 자동 저장에 실패했습니다.", Toast.LENGTH_SHORT).show()
             }
-            done?.invoke(ok)
+            done?.invoke(w.ok)
+            storeCache(c, w, perf)
+            perf.done()
         }
     }
 
     /**
-     * 필기를 얹은 PDF를 임시 파일에 다 쓴 뒤 [target]에 옮긴다. 파일 주소면 같은 폴더의 임시 파일을 바꿔 끼워서
-     * 쓰는 도중 앱이 꺼져도 원본이 반쯤 쓰인 채로 남지 않게 하고, 그럴 수 없으면 (문서 제공자 주소) 덮어쓴다
+     * 저장 단추(원본 위치에 덮어쓰기): [autoOverwrite]처럼 필기를 찍어 두고 뒤에서 쓰므로, 쓰는 동안에도 필기를 계속할 수 있다.
+     * 원본에 쓸 수 없으면 '다른 이름으로 저장'으로 넘어간다. 닫기 전 저장([closeAfterSave])이면 쓰는 것은 뒤에 맡기고 곧바로 닫는다
      */
-    private fun writeOver(src: File, target: Uri, snapshot: List<List<Stroke>>, marks: Set<Int>, wrongSave: WrongSave?) {
-        val tmp = FileUtil.tempFile(activity, "out", "pdf")
-        try {
-            PdfInk.save(src, tmp, snapshot, marks, wrongSave)
-            val dest = if (target.scheme == "file") target.path?.let(::File) else null
-            if (dest != null) {
-                val side = File(dest.parentFile, dest.name + ".tmp")
-                try {
-                    tmp.inputStream().use { i -> side.outputStream().use { o -> i.copyTo(o, 1 shl 16) } }
-                    java.nio.file.Files.move(side.toPath(), dest.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
-                    // 다음에 빨리 열리도록 필기와 화면용 PDF를 보관해 둔다 (src가 필기를 뺀 화면용 PDF일 때)
-                    InkCache.store(activity, dest, src, snapshot, marks, wrongSave?.metas ?: emptyMap())
-                    return
-                } catch (e: Exception) {
-                    side.delete()  // 같은 폴더에 임시 파일을 못 두면 아래처럼 바로 덮어쓴다
-                }
+    private fun overwriteHere(t: DocTab) {
+        val inkDoc = t.ink ?: return
+        val src = t.sourcePdf ?: return
+        if (t.overwriting) {
+            closeAfterSave = null
+            Toast.makeText(activity, "저장하는 중입니다. 잠시 뒤에 다시 눌러 주세요.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (closeAfterSave === t) {
+            closeAfterSave = null
+            if (overwriteAndLetGo(t)) {
+                removeTab(t)
+                return
             }
-            val out = activity.contentResolver.openOutputStream(target, "wt") ?: error("저장 위치를 열 수 없습니다.")
-            out.use { o -> tmp.inputStream().use { it.copyTo(o, 1 shl 16) } }
-        } finally {
-            tmp.delete()
+        }
+        progress.visibility = View.VISIBLE
+        val c = capture(t, inkDoc, src)
+        launchTracked(c.target) {
+            val perf = Perf("저장 ${t.name}")
+            val w = write(c, perf)
+            t.overwriting = false
+            progress.visibility = View.GONE
+            if (w.ok) {
+                if (c.target.scheme == "file") c.target.path?.let { MediaScannerConnection.scanFile(activity, arrayOf(it), null, null) }
+                if (inkDoc.changeCount == c.seen) inkDoc.markSaved()
+                ReviewIndexStore.updateLater(activity, t.uri.toString(), t.name, inkDoc.allWrongs().map { it.second })
+                Toast.makeText(activity, "'${t.name}' 저장했습니다.", Toast.LENGTH_SHORT).show()
+            } else {
+                t.canOverwrite = false
+                Toast.makeText(activity, "원본에 저장할 수 없어 다른 이름으로 저장합니다.", Toast.LENGTH_LONG).show()
+                saveAs(t)
+            }
+            storeCache(c, w, perf)
+            perf.done()
         }
     }
 
-    fun saveTo(t: DocTab, target: Uri, overwrite: Boolean) {
+    /** 뒤에서 덮어쓰는 중에 닫은 탭들 (화면에서는 사라졌고, 다 쓸 때까지 자동 저장본을 지우지 않는다) */
+    private val letGo = HashSet<DocTab>()
+
+    /** 닫은 탭의 덮어쓰기가 끝났을 때 (탭, 성공 여부): 성공이면 자동 저장본을 지우고, 실패하면 자동 저장본에 남긴다 */
+    var onLetGoDone: ((DocTab, Boolean) -> Unit)? = null
+
+    fun isLetGo(t: DocTab) = t in letGo
+
+    /**
+     * 탭을 닫을 때 원본에 덮어쓰는 일을 기다리지 않고 뒤에 맡긴다: 필기를 찍어 두고 곧바로 돌아오니 호출한 쪽은 바로 탭을 닫으면 된다.
+     * 덮어쓸 수 없는 탭이면 false (아무것도 하지 않음). 같은 문서를 곧바로 다시 열면 [awaitPending]으로 이 저장이 끝나기를 기다린다
+     */
+    fun overwriteAndLetGo(t: DocTab): Boolean {
+        val inkDoc = t.ink ?: return false
+        val src = t.sourcePdf ?: return false
+        if (t.overwriting || t.pagesBusy || !t.canOverwrite || t.type != DocType.PDF || t.isNewNote || t.review != null) return false
+        val c = capture(t, inkDoc, src)
+        letGo += t
+        val appContext = activity.applicationContext
+        val name = t.name
+        launchTracked(c.target, bg) {
+            val perf = Perf("닫으며저장 $name")
+            val w = write(c, perf)
+            t.overwriting = false
+            if (w.ok && c.target.scheme == "file") c.target.path?.let { MediaScannerConnection.scanFile(appContext, arrayOf(it), null, null) }
+            if (w.ok) ReviewIndexStore.updateLater(appContext, c.target.toString(), name, inkDoc.allWrongs().map { it.second })
+            else Toast.makeText(appContext, "'$name' 저장에 실패했습니다. 필기는 임시본에 남겨 두었으니 다시 열어 복구해 주세요.", Toast.LENGTH_LONG).show()
+            letGo -= t
+            onLetGoDone?.invoke(t, w.ok)
+            storeCache(c, w, perf)
+            perf.done()
+        }
+        return true
+    }
+
+    /** 성공한 저장 뒤 보관본을 쓴다 (저장이 끝났다고 알린 다음에. 그새 필기가 바뀌었으면 보관본과 어긋나니 쓰지 않는다) */
+    private suspend fun storeCache(c: Capture, w: Written, perf: Perf) {
+        val after = w.after ?: return
+        if (!w.ok) return
+        withContext(Dispatchers.IO) {
+            if (c.inkDoc.changeCount == c.seen) after()
+        }
+        perf.step("보관본쓰기")
+    }
+
+    /** [target] 문서를 쓰는 일을 [scope]에서 돌리고, 같은 문서를 곧바로 열 때 기다릴 수 있게 등록해 둔다 */
+    private fun launchTracked(target: Uri, scope: CoroutineScope = activity.lifecycleScope, block: suspend CoroutineScope.() -> Unit) {
+        val key = target.toString()
+        val job = scope.launch(start = CoroutineStart.LAZY) {
+            val me = coroutineContext[Job]
+            try {
+                block()
+            } finally {
+                if (me != null) pending.remove(key, me)
+            }
+        }
+        pending.add(key, job)
+        job.start()
+    }
+
+    /**
+     * 필기를 얹은 PDF를 [target]에 쓴다. 파일 주소면 같은 폴더의 임시 파일에 바로 다 쓴 뒤 바꿔 끼워서
+     * 쓰는 도중 앱이 꺼져도 원본이 반쯤 쓰인 채로 남지 않게 하고, 그럴 수 없으면 (문서 제공자 주소) 캐시의 임시 파일에 쓴 뒤 덮어쓴다.
+     * 돌려주는 것은 성공 뒤 뒤에서 할 일 (다음에 빨리 열리도록 필기와 화면용 PDF를 보관해 둔다. [src]가 필기를 뺀 화면용 PDF일 때), 없으면 null
+     */
+    private fun writeOver(src: File, target: Uri, snapshot: List<List<Stroke>>, marks: Set<Int>, wrongSave: WrongSave?, perf: Perf): (() -> Unit)? {
+        val dest = if (target.scheme == "file") target.path?.let(::File) else null
+        if (dest != null) {
+            val side = File(dest.parentFile, dest.name + ".tmp")
+            // 같은 폴더에 임시 파일을 둘 수 있는지 먼저 본다 (못 두면 아래처럼 캐시에 쓰고 덮어쓴다)
+            val usable = try {
+                side.outputStream().close()
+                true
+            } catch (e: Exception) {
+                false
+            }
+            if (usable) {
+                try {
+                    PdfInk.save(src, side, snapshot, marks, wrongSave, perf::step)
+                    try {
+                        java.nio.file.Files.move(side.toPath(), dest.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+                    } catch (e: Exception) {
+                        // 바꿔 끼울 수 없으면 다 쓴 파일을 원본 자리에 바로 덮어쓴다
+                        val out = activity.contentResolver.openOutputStream(target, "wt") ?: error("저장 위치를 열 수 없습니다.")
+                        out.use { o -> side.inputStream().use { it.copyTo(o, 1 shl 16) } }
+                        side.delete()
+                    }
+                    perf.step("바꿔끼우기")
+                } catch (e: Throwable) {
+                    side.delete()
+                    throw e
+                }
+                return { InkCache.store(activity, dest, src, snapshot, marks, wrongSave?.metas ?: emptyMap()) }
+            }
+        }
+        val tmp = FileUtil.tempFile(activity, "out", "pdf")
+        try {
+            PdfInk.save(src, tmp, snapshot, marks, wrongSave, perf::step)
+            val out = activity.contentResolver.openOutputStream(target, "wt") ?: error("저장 위치를 열 수 없습니다.")
+            out.use { o -> tmp.inputStream().use { it.copyTo(o, 1 shl 16) } }
+            perf.step("덮어쓰기")
+        } finally {
+            tmp.delete()
+        }
+        return null
+    }
+
+    /** 다른 이름으로 저장 창에서 고른 [target]에 쓴다 (새 노트·한글 문서의 첫 저장 포함) */
+    fun saveTo(t: DocTab, target: Uri) {
         val inkDoc = t.ink ?: return
         val src = t.sourcePdf ?: return
         val snapshot = inkDoc.snapshot()
         val marks = inkDoc.bookmarkedPages()
         val wrongSave = inkDoc.wrongSave()
+        val seen = inkDoc.changeCount
         activity.lifecycleScope.launch {
             progress.visibility = View.VISIBLE
+            val perf = Perf("다른이름저장 ${t.name}")
+            var after: (() -> Unit)? = null
             try {
                 withContext(Dispatchers.IO) {
                     val tmp = FileUtil.tempFile(activity, "out", "pdf")
                     val base = t.renderPdf ?: src
                     try {
-                        PdfInk.save(base, tmp, snapshot, marks, wrongSave)
+                        PdfInk.save(base, tmp, snapshot, marks, wrongSave, perf::step)
                         val out = activity.contentResolver.openOutputStream(target, "wt") ?: error("저장 위치를 열 수 없습니다.")
                         out.use { o -> tmp.inputStream().use { it.copyTo(o, 1 shl 16) } }
-                        // 다음에 빨리 열리도록 필기와 화면용 PDF를 보관해 둔다 (내 기기 안의 파일일 때)
-                        if (target.scheme == "file") target.path?.let { InkCache.store(activity, File(it), base, snapshot, marks, wrongSave?.metas ?: emptyMap()) }
+                        perf.step("덮어쓰기")
+                        // 다음에 빨리 열리도록 필기와 화면용 PDF를 보관해 둔다 (내 기기 안의 파일일 때. 저장을 알린 뒤에 쓴다)
+                        if (target.scheme == "file") target.path?.let { path ->
+                            after = { InkCache.store(activity, File(path), base, snapshot, marks, wrongSave?.metas ?: emptyMap()) }
+                        }
                     } finally {
                         tmp.delete()
                     }
@@ -360,29 +507,28 @@ internal class DocSaver(
                 if (target.scheme == "file") target.path?.let {
                     MediaScannerConnection.scanFile(activity, arrayOf(it), null, null)
                 }
-                if (!overwrite) adoptSavedFile(t, target)
-                inkDoc.markSaved()
-                ReviewIndexStore.update(activity, t.uri.toString(), t.name, inkDoc.allWrongs().map { it.second })
+                adoptSavedFile(t, target)
+                if (inkDoc.changeCount == seen) inkDoc.markSaved()
+                ReviewIndexStore.updateLater(activity, t.uri.toString(), t.name, inkDoc.allWrongs().map { it.second })
                 Toast.makeText(activity, "'${t.name}' 저장했습니다.", Toast.LENGTH_SHORT).show()
                 if (closeAfterSave === t) {
                     closeAfterSave = null
                     removeTab(t)
                 }
             } catch (e: Exception) {
-                if (overwrite) {
-                    t.canOverwrite = false
-                    Toast.makeText(activity, "원본에 저장할 수 없어 다른 이름으로 저장합니다.", Toast.LENGTH_LONG).show()
-                    saveAs(t)
-                } else {
-                    closeAfterSave = null
-                    MaterialAlertDialogBuilder(activity)
-                        .setMessage("저장하지 못했습니다.\n${e.message ?: e.javaClass.simpleName}")
-                        .setPositiveButton("확인", null)
-                        .show()
-                }
+                closeAfterSave = null
+                MaterialAlertDialogBuilder(activity)
+                    .setMessage("저장하지 못했습니다.\n${e.message ?: e.javaClass.simpleName}")
+                    .setPositiveButton("확인", null)
+                    .show()
             } finally {
                 progress.visibility = View.GONE
             }
+            after?.let { run ->
+                withContext(Dispatchers.IO) { if (inkDoc.changeCount == seen) run() }
+                perf.step("보관본쓰기")
+            }
+            perf.done()
         }
     }
 
@@ -435,6 +581,20 @@ internal class DocSaver(
     companion object {
         /** 문서를 다 띄운 뒤 이만큼(ms) 기다렸다가 저장 준비를 시작한다 (열기·첫 필기를 방해하지 않게) */
         private const val PREWARM_DELAY_MS = 3000L
+
+        /** 닫은 뒤에도 끝까지 마쳐야 하는 저장을 돌리는 곳 (화면이 닫혀도 계속된다) */
+        private val bg = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
+        /** 지금 쓰는 중인 문서 주소 → 그 일. 같은 문서를 곧바로 열 때 옛 내용을 열지 않으려고 기다린다 */
+        private val pending = PendingWrites()
+
+        /** [uri] 문서를 지금 쓰는 중인가 */
+        fun isPending(uri: Uri) = pending.isPending(uri.toString())
+
+        /** [uri] 문서를 쓰는 중이면 끝나기를 기다린다 */
+        suspend fun awaitPending(uri: Uri) {
+            pending.await(uri.toString())
+        }
         /** 펜 획이 이보다 적으면 저장 준비를 하지 않는다 (300획을 새로 만드는 데 0.2초 안쪽) */
         private const val PREWARM_MIN_STROKES = 300
 

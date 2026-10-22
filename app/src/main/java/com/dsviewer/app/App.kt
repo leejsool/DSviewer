@@ -11,5 +11,7 @@ class App : Application() {
         EqRenderer.init(assets)
         TextFont.init(this)
         CrashLog.install(this)
+        // 처음 문서를 열거나 저장할 때 PDFBox 클래스를 읽느라 느려지지 않게 뒤에서 미리 불러 둔다
+        Thread({ PdfInk.warmUp() }, "pdfbox-warmup").apply { priority = Thread.MIN_PRIORITY; isDaemon = true }.start()
     }
 }

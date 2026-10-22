@@ -68,12 +68,25 @@ object FileUtil {
 
     private fun docsDir(ctx: Context) = File(ctx.cacheDir, "docs").apply { mkdirs() }
 
-    /** 원본을 앱 캐시로 복사 (PdfRenderer는 탐색 가능한 파일이 필요) */
-    fun copyToCache(ctx: Context, uri: Uri, name: String): File {
+    /**
+     * 원본을 앱 캐시로 복사 (PdfRenderer는 탐색 가능한 파일이 필요).
+     * [sniffer]를 주면 복사하는 덩어리를 거기에도 넣어, 복사가 끝난 뒤 파일을 다시 읽지 않고 필기가 든 PDF인지 안다
+     */
+    fun copyToCache(ctx: Context, uri: Uri, name: String, sniffer: InkSniffer? = null): File {
         val safe = FileNames.safe(name).takeLast(80)
         val f = File(docsDir(ctx), "src_${System.currentTimeMillis()}_$safe")
         val input = ctx.contentResolver.openInputStream(uri) ?: error("파일을 열 수 없습니다.")
-        input.use { i -> f.outputStream().use { o -> i.copyTo(o, 1 shl 16) } }
+        input.use { i ->
+            f.outputStream().use { o ->
+                val buf = ByteArray(1 shl 18)
+                while (true) {
+                    val n = i.read(buf)
+                    if (n < 0) break
+                    o.write(buf, 0, n)
+                    sniffer?.feed(buf, n)
+                }
+            }
+        }
         return f
     }
 
