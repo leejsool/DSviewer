@@ -128,6 +128,25 @@
             app:iconTint="?attr/colorOnSurfaceVariant" />
     </LinearLayout>
 
+    <!-- 추천 태그 줄 (최근 파일·즐겨찾기 탭): 자주 나오는 제목 낱말을 # 태그로. 누르면 그 낱말이 든 문서만 (MainActivity.renderTags) -->
+    <HorizontalScrollView
+        android:id="@+id/tagBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="?attr/colorSurfaceContainer"
+        android:scrollbars="none"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:id="@+id/tagRow"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="12dp"
+            android:paddingBottom="8dp" />
+    </HorizontalScrollView>
+
     <!-- 선택 모드: 닫기 · 고른 수 · 모두 선택 (목록 줄 자리에) -->
     <LinearLayout
         android:id="@+id/selectBar"

@@ -13,6 +13,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.ceil
+import kotlin.math.max
+import kotlin.math.min
 
 /**
  * 채우기 도구의 비동기 일: 칠하기(누른 곳을 둘러싼 닫힌 영역 찾기)와 자유 영역 마무리, 그리는 중인 영역 보여 주기.
@@ -154,8 +157,81 @@ internal class FillController(
         }
     }
 
+    /**
+     * 네모 덮기를 다 끌음: 끈 네모를 한 색으로 채운 획을 남긴다 (필기 아래, PDF 글 위에 깔려 안의 내용을 가린다).
+     * [auto]면 네모 바로 바깥 둘레에서 가장 많은 색을 따온다 ([CoverColor]), 못 따오거나 [auto]가 아니면 [color].
+     * 아주 작게 끌었으면 버린다. 실행 취소 가능
+     */
+    fun finishCover(page: Int, st: Stroke, auto: Boolean, color: Int) {
+        val inkDoc = host.ink ?: return
+        if (st.count < 4) return
+        val b = FillRules.strokeBounds(st)
+        if (FillRules.isTooSmall(b, host.scale, density)) return
+        val outline = floatArrayOf(b[0], b[1], b[2], b[1], b[2], b[3], b[0], b[3])
+        val list = inkDoc.pages[page]
+        val d = host.doc
+        val sizes = host.sizes
+        fun commit(c: Int) {
+            if (host.ink !== inkDoc || inkDoc.pages.getOrNull(page) !== list) return
+            FillRules.fillStroke(listOf(outline), c or (0xFF shl 24), FillPattern.SOLID)?.let {
+                inkDoc.add(page, it)
+                view.invalidate()
+            }
+        }
+        if (!auto || d == null || page !in sizes.indices) {
+            commit(color)
+            return
+        }
+        val entry = page to st
+        pending.add(entry)
+        // 둘레(네모 밖 띠)가 들어오도록 조금 넓게 그려, 그 띠에서 색을 센다
+        val pageW = sizes[page].width
+        val pageH = sizes[page].height
+        val l0 = max(0f, b[0] - COVER_PAD)
+        val t0 = max(0f, b[1] - COVER_PAD)
+        val r0 = min(pageW, b[2] + COVER_PAD)
+        val b0 = min(pageH, b[3] + COVER_PAD)
+        val k = (1600f / max(r0 - l0, b0 - t0)).coerceIn(1f, 4f)
+        val w = max(1, ceil((r0 - l0) * k).toInt())
+        val h = max(1, ceil((b0 - t0) * k).toInt())
+        val sources = list.filter { it.note == null && it.tape == null && it.tool != Tool.HIGHLIGHTER && it.tool != Tool.LASER }
+        scope.launch {
+            val sampled = try {
+                val bmp = withContext(d.dispatcher) { d.render(page, k, l0, t0, w, h) }
+                withContext(Dispatchers.Default) {
+                    try {
+                        val c = Canvas(bmp)
+                        c.scale(k, k)
+                        c.translate(-l0, -t0)
+                        host.drawInk(c, sources)
+                        val px = IntArray(w * h)
+                        bmp.getPixels(px, 0, w, 0, 0, w, h)
+                        CoverColor.dominant(
+                            px, w, h,
+                            ((b[0] - l0) * k).toInt(), ((b[1] - t0) * k).toInt(), ((b[2] - l0) * k).toInt(), ((b[3] - t0) * k).toInt(),
+                            gap = max(1, (COVER_GAP * k).toInt()), thick = max(2, (COVER_PAD * k).toInt()),
+                        )
+                    } finally {
+                        bmp.recycle()
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                Log.w(TAG, "덮을 색 따기 실패", e)
+                null
+            }
+            pending.remove(entry)
+            view.invalidate()
+            commit(sampled ?: color)
+        }
+    }
+
     private companion object {
         const val TAG = "FillController"
+        /** 네모 덮기: 둘레 색을 셀 띠의 폭과 네모에서 띄우는 간격 (pt) */
+        const val COVER_PAD = 4f
+        const val COVER_GAP = 1.5f
         /** 칠하기용 쪽 그림의 화소 수·배율 한도 */
         const val FILL_MAX_PX = 4_500_000f
         const val FILL_MAX_K = 4f

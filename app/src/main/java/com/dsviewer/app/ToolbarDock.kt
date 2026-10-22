@@ -82,18 +82,26 @@ class ToolbarDock(
         handle.setOnTouchListener { _, ev -> onHandleTouch(ev) }
     }
 
-    /** 도구 아이콘 크기를 [scale]배로 (툴바 두께도 함께). 정사각형이라 가로·세로 툴바에 같다 */
+    /**
+     * 도구 아이콘 크기를 [scale]배로 (툴바 두께도 함께). 단추는 툴바 방향으로 좁게 (가로 툴바 기준 너비 36dp × 높이 44dp,
+     * 아이콘은 24dp) 붙여 놓아 아이콘 사이가 좁다. 세로 툴바에서는 너비와 높이가 맞바뀐 채로 둔다
+     */
     fun setIconScale(scale: Float) {
         iconScale = scale
         for (i in 0 until content.childCount) {
             val b = content.getChildAt(i) as? ImageButton ?: continue
+            val vertical = b.getTag(R.id.tag_vertical) == true
+            val along = dp(36f * scale)
+            val across = dp(44f * scale)
             val lp = b.layoutParams
-            lp.width = dp(44f * scale)
-            lp.height = dp(44f * scale)
+            lp.width = if (vertical) across else along
+            lp.height = if (vertical) along else across
+            (lp as? ViewGroup.MarginLayoutParams)?.let { it.setMargins(0, 0, 0, 0); it.marginStart = 0; it.marginEnd = 0 }
             b.layoutParams = lp
             b.scaleType = ImageView.ScaleType.FIT_CENTER
-            val pad = dp(10f * scale)
-            b.setPadding(pad, pad, pad, pad)
+            val padAlong = dp(6f * scale)
+            val padAcross = dp(10f * scale)
+            if (vertical) b.setPadding(padAcross, padAlong, padAcross, padAlong) else b.setPadding(padAlong, padAcross, padAlong, padAcross)
         }
         if (docked) dock(side)
     }

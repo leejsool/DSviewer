@@ -66,7 +66,8 @@ class MainActivity : AppCompatActivity() {
         ALL("모든 문서", R.drawable.ic_doc),
         FOLDER("폴더", R.drawable.ic_folder),
     }
-    private enum class Kind { FOLDER, DRIVE, DOC }
+    /** HEADER: 태그로 모아 볼 때 문서들 위에 붙는 폴더 머리글 */
+    private enum class Kind { FOLDER, DRIVE, DOC, HEADER }
 
     private class Row(
         val title: String,
@@ -94,6 +95,8 @@ class MainActivity : AppCompatActivity() {
         /** 잠근 문서: 썸네일을 가린다 */
         val locked: Boolean = false,
     ) {
+        /** 폴더 머리글 아래 문서의 가지선: 0 없음, 1 중간(├), 2 마지막(└) */
+        var tree = 0
         val isFolder get() = kind == Kind.FOLDER || kind == Kind.DRIVE
         /** 선택 모드에서 쓰는 열쇠 */
         val key get() = docUri ?: vfolder?.let { "vf:${it.id}" }
@@ -117,6 +120,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var viewButton: MaterialButton
     private lateinit var searchItem: MenuItem
     private lateinit var selectBar: View
+    private lateinit var tagBar: View
+    private lateinit var tagScroll: HorizontalScrollView
+    private lateinit var tagRow: LinearLayout
     private lateinit var selectCount: TextView
     private lateinit var selectAll: MaterialButton
     private lateinit var actionBar: View
@@ -132,6 +138,10 @@ class MainActivity : AppCompatActivity() {
     private var rows: List<Row> = emptyList()
     private var emptyMsg = ""
     private var query = ""
+    /** 최근 파일·즐겨찾기에서 고른 추천 태그 (null = 안 고름). 탭을 바꾸면 풀린다 */
+    private var tagFilter: String? = null
+    /** 태그로 모아 볼 때 문서(uri)가 속한 폴더 머리글 */
+    private var groupOf: Map<String, Group> = emptyMap()
     private var loadJob: Job? = null
     /** 위 폴더로 돌아갈 때 이전 스크롤 위치를 되살린다 */
     private val scrollStates = HashMap<String, Parcelable?>()
@@ -165,6 +175,7 @@ class MainActivity : AppCompatActivity() {
             when {
                 selecting -> endSelection()
                 searchItem.isActionViewExpanded -> searchItem.collapseActionView()
+                tagFilter != null -> setTag(null)
                 else -> goUp()
             }
         }
@@ -198,6 +209,9 @@ class MainActivity : AppCompatActivity() {
         sortButton = findViewById(R.id.sortButton)
         viewButton = findViewById(R.id.viewButton)
         selectBar = findViewById(R.id.selectBar)
+        tagBar = findViewById(R.id.tagBar)
+        tagScroll = tagBar as HorizontalScrollView
+        tagRow = findViewById(R.id.tagRow)
         selectCount = findViewById(R.id.selectCount)
         selectAll = findViewById(R.id.selectAll)
         actionBar = findViewById(R.id.actionBar)
@@ -238,6 +252,7 @@ class MainActivity : AppCompatActivity() {
         tabs.listener = object : ChromeTabBar.Listener {
             override fun onTabSelected(index: Int) {
                 endSelection()
+                tagFilter = null
                 tab = Tab.entries[index]
                 prefs.edit().putString("tabName", tab.name).apply()
                 adapter.submit(emptyList())
@@ -333,6 +348,7 @@ class MainActivity : AppCompatActivity() {
         newFolderButton.isVisible = tab == Tab.FAVORITE
         updateSortButton()
         updateFilterButton()
+        renderTags()
         if (needAccess) {
             progress.isVisible = false
             show(emptyList(), "")
@@ -345,11 +361,11 @@ class MainActivity : AppCompatActivity() {
                 progress.isVisible = false
                 barLabel = { n -> if (n == 0) "최근 연 문서" else "최근 연 문서 ${n}개" }
                 crumbs = null
-                show(recentRows(), "최근에 연 파일이 없습니다.\n'모든 문서'나 '폴더' 탭에서 문서를 골라 보세요.")
+                show(if (tagFilter != null) taggedRows() else recentRows(), "최근에 연 파일이 없습니다.\n'모든 문서'나 '폴더' 탭에서 문서를 골라 보세요.")
             }
             Tab.FAVORITE -> {
                 progress.isVisible = false
-                val rows = favoriteRows()
+                val rows = if (tagFilter != null) taggedRows() else favoriteRows()
                 val path = FavFolders.path(FavFolders.list(this), favDir)
                 barLabel = { listOf("즐겨찾기").plus(path.map { it.name }).joinToString("  ›  ") }
                 crumbs = favCrumbs(path)
@@ -422,9 +438,112 @@ class MainActivity : AppCompatActivity() {
     private fun applyFilter() {
         val q = query.trim()
         val shown = ListSort.filterByTitle(rows, q, rowFields)
-        adapter.submit(shown)
+        adapter.submit(if (tab == Tab.FAVORITE) withGroups(shown) else shown)
         emptyText.text = if (q.isEmpty()) emptyMsg else "'$q' 이름의 문서가 없습니다."
         emptyText.isVisible = shown.isEmpty() && !progress.isVisible && !permCard.isVisible
+    }
+
+    // ================= 추천 태그 =================
+    // 최근 파일·즐겨찾기 탭: 제목에 자주 나오는 낱말을 '# 태그'로 보여 주고, 하나를 누르면 그 낱말이 든 문서만 모아 보인다
+    // (즐겨찾기 탭에서는 즐겨찾기 폴더별로 묶는다)
+
+    /** 태그로 모아 볼 때 문서가 속한 폴더 하나 (머리글로 보임) */
+    private class Group(val id: String, val name: String, val icon: Drawable, val onClick: (() -> Unit)?)
+
+    /** 태그를 뽑을 제목들: 가까운 때에 연 것부터 (즐겨찾기 탭은 즐겨찾기한 문서만) */
+    private fun tagTitles() = Recents.list(this).filter { tab != Tab.FAVORITE || it.star }.map { it.name }
+
+    /** 태그 줄을 그린다. 최근 파일·즐겨찾기 탭에서 공통 낱말이 있을 때만 보이고, 없어진 태그를 골라 둔 상태면 푼다 */
+    private fun renderTags() {
+        val tagTab = tab == Tab.RECENT || tab == Tab.FAVORITE
+        val tags = if (tagTab) TitleTags.extract(tagTitles()) else emptyList()
+        if (tagFilter != null && tagFilter !in tags) tagFilter = null
+        tagBar.isVisible = tagTab && !selecting && tags.isNotEmpty()
+        tagRow.removeAllViews()
+        for (t in tags) tagRow.addView(tagChip(t, t == tagFilter))
+    }
+
+    private fun tagChip(tag: String, on: Boolean): View {
+        fun color(attr: Int, fallback: Int) = com.google.android.material.color.MaterialColors.getColor(this, attr, fallback)
+        val bg = android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = dp(18).toFloat()
+            setColor(
+                if (on) color(com.google.android.material.R.attr.colorSecondaryContainer, Color.LTGRAY)
+                else color(com.google.android.material.R.attr.colorSurface, Color.WHITE)
+            )
+            setStroke(dp(1), color(com.google.android.material.R.attr.colorOutlineVariant, Color.LTGRAY))
+        }
+        return TextView(this).apply {
+            text = "# $tag"
+            setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_LabelLarge)
+            setTextColor(
+                if (on) color(com.google.android.material.R.attr.colorOnSecondaryContainer, Color.BLACK)
+                else color(com.google.android.material.R.attr.colorOnSurface, Color.BLACK)
+            )
+            if (on) setTypeface(typeface, android.graphics.Typeface.BOLD)
+            background = bg
+            gravity = android.view.Gravity.CENTER
+            setPadding(dp(14), 0, dp(14), 0)
+            isSingleLine = true
+            contentDescription = if (on) "$tag 태그 (눌러서 풀기)" else "$tag 태그로 모아 보기"
+            setOnClickListener { setTag(if (on) null else tag) }
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(36)).apply { marginEnd = dp(8) }
+        }
+    }
+
+    /** 태그를 고르거나([t]) 푼다(null) */
+    private fun setTag(t: String?) {
+        endSelection()
+        tagFilter = t
+        refresh()
+        list.scrollToPosition(0)
+    }
+
+    /** 태그가 제목에 든 문서들. 즐겨찾기 탭은 폴더 위치와 상관없이 즐겨찾기 전체에서 찾고, 어느 폴더 것인지 [groupOf]에 적어 둔다 (최근 파일 탭은 묶지 않는다) */
+    private fun taggedRows(): List<Row> {
+        val tag = tagFilter ?: return emptyList()
+        val key = sortKey()
+        val locked = Locks.locked(this)
+        val favFolders = FavFolders.list(this).associateBy { it.id }
+        val groups = HashMap<String, Group>()
+        val out = ArrayList<Row>()
+        for (i in Recents.list(this)) {
+            if ((tab == Tab.FAVORITE && !i.star) || !TitleTags.matches(i.name, tag)) continue
+            val row = itemRow(i, key, locked) ?: continue
+            if (tab == Tab.FAVORITE) groups[i.uri] = favGroup(i, favFolders)
+            out += row
+        }
+        groupOf = groups
+        return out
+    }
+
+    private fun favGroup(i: Recents.Item, folders: Map<String, FavFolder>): Group {
+        val f = i.folder?.let { folders[it] }
+        return if (f != null) Group(f.id, f.name, FolderDrawable(f.color, f.pattern)) { tagFilter = null; openFavDir(f.id) }
+        else Group("", "즐겨찾기", FolderDrawable(FOLDER_COLOR, TapePattern.SOLID)) { tagFilter = null; openFavRoot() }
+    }
+
+    /**
+     * 즐겨찾기 목록: 문서들을 폴더별로 묶어 폴더 머리글을 끼운다
+     * (즐겨찾기 폴더 줄은 맨 위, 폴더 차례는 정렬된 문서가 처음 나오는 차례, 문서에는 가지선 표시)
+     */
+    private fun withGroups(all: List<Row>): List<Row> {
+        val folders = all.filter { it.isFolder }
+        val docs = all.filter { !it.isFolder }
+        val byGroup = LinkedHashMap<String, Pair<Group, MutableList<Row>>>()
+        for (r in docs) {
+            val g = r.docUri?.let { groupOf[it] } ?: Group("", "기타", FolderDrawable(FOLDER_COLOR, TapePattern.SOLID), null)
+            byGroup.getOrPut(g.id) { g to ArrayList() }.second += r
+        }
+        val out = ArrayList<Row>(folders)
+        for ((g, list) in byGroup.values) {
+            out += Row(g.name, "${list.size}개", Kind.HEADER, { g.onClick?.invoke() }, folder = g.icon)
+            list.forEachIndexed { n, r ->
+                r.tree = if (n == list.lastIndex) 2 else 1
+                out += r
+            }
+        }
+        return out
     }
 
     /** 최근에 연 문서 */
@@ -456,7 +575,10 @@ class MainActivity : AppCompatActivity() {
                 folder = FolderDrawable(f.color, f.pattern), opened = f.time, modified = f.time, vfolder = f,
             )
         }
-        items.filter { where(it) == favDir }.forEach { i -> itemRow(i, key, locked)?.let { out += it } }
+        val here = items.filter { where(it) == favDir }
+        val byId = folders.associateBy { it.id }
+        groupOf = here.associate { it.uri to favGroup(it, byId) }
+        here.forEach { i -> itemRow(i, key, locked)?.let { out += it } }
         return out
     }
 
@@ -811,7 +933,12 @@ class MainActivity : AppCompatActivity() {
         val state = list.layoutManager?.onSaveInstanceState()
         if (grid) list.setPadding((8 * d).toInt(), (4 * d).toInt(), (8 * d).toInt(), (12 * d).toInt())
         else list.setPadding(0, (4 * d).toInt(), 0, (4 * d).toInt())
-        list.layoutManager = GridLayoutManager(this, spanCount())
+        val lm = GridLayoutManager(this, spanCount())
+        // 폴더 머리글은 한 줄을 다 쓴다
+        lm.spanSizeLookup = object : GridLayoutManager.SpanSizeLookup() {
+            override fun getSpanSize(position: Int) = if (adapter.items.getOrNull(position)?.kind == Kind.HEADER) lm.spanCount else 1
+        }
+        list.layoutManager = lm
         state?.let { list.layoutManager?.onRestoreInstanceState(it) }
         viewButton.setIconResource(if (grid) R.drawable.ic_view_list else R.drawable.ic_grid_view)
         val label = if (grid) "목록으로 보기" else "큰 아이콘으로 보기"
@@ -877,7 +1004,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateBack() {
-        backCallback.isEnabled = selecting || searchItem.isActionViewExpanded ||
+        backCallback.isEnabled = selecting || searchItem.isActionViewExpanded || tagFilter != null ||
             (tab == Tab.FOLDER && !permCard.isVisible && canGoUp()) ||
             (tab == Tab.FAVORITE && favDir != null)
     }
@@ -1343,6 +1470,7 @@ class MainActivity : AppCompatActivity() {
         if (!selecting) {
             selecting = true
             pathBar.isVisible = false
+            tagBar.isVisible = false
             selectBar.isVisible = true
             actionBar.isVisible = true
             adapter.notifyDataSetChanged()
@@ -1358,6 +1486,7 @@ class MainActivity : AppCompatActivity() {
         selectBar.isVisible = false
         actionBar.isVisible = false
         pathBar.isVisible = !permCard.isVisible
+        renderTags()
         adapter.notifyDataSetChanged()
         updateBack()
     }
@@ -1747,16 +1876,16 @@ class MainActivity : AppCompatActivity() {
     private fun saveManualOrder() {
         if (!manualOn() || query.isNotBlank()) return
         val shown = adapter.items.mapNotNull { it.key }
-        rows = adapter.items
+        rows = adapter.items.filter { it.kind != Kind.HEADER }
         FavOrder.save(this, ListSort.mergeOrder(FavOrder.load(this), shown))
     }
 
     /** 손잡이를 보일 때: 직접 정한 순서로 보는 중이고, 고르는 중이나 찾는 중이 아닐 때 */
-    private fun canReorder() = manualOn() && !selecting && query.isBlank()
+    private fun canReorder() = manualOn() && !selecting && query.isBlank() && tagFilter == null
 
     // ================= 목록 어댑터 =================
 
-    private inner class RowAdapter : RecyclerView.Adapter<RowHolder>() {
+    private inner class RowAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
         var items: List<Row> = emptyList()
             private set
 
@@ -1769,22 +1898,48 @@ class MainActivity : AppCompatActivity() {
         /** [from]번째 줄을 [to]번째로 옮긴다 (폴더와 문서는 서로 넘나들 수 없다) */
         fun move(from: Int, to: Int): Boolean {
             if (from !in items.indices || to !in items.indices || items[from].isFolder != items[to].isFolder) return false
+            // 폴더 머리글을 넘나들 수 없다 (같은 폴더 안에서만)
+            if (items[from].kind == Kind.HEADER || items[to].kind == Kind.HEADER) return false
             items = items.toMutableList().also { it.add(to, it.removeAt(from)) }
             notifyItemMoved(from, to)
             return true
         }
 
         override fun getItemCount() = items.size
-        override fun getItemViewType(position: Int) = if (grid) 1 else 0
-        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) =
-            RowHolder(layoutInflater.inflate(if (viewType == 1) R.layout.item_grid else R.layout.item_recent, parent, false), viewType == 1)
-        override fun onBindViewHolder(holder: RowHolder, position: Int) = holder.bind(items[position])
-        override fun onBindViewHolder(holder: RowHolder, position: Int, payloads: MutableList<Any>) {
-            // 선택만 바뀌었으면 체크 표시만 (썸네일을 다시 읽지 않게)
-            if (payloads.isNotEmpty() && payloads.all { it === SELECTION }) holder.bindSelection(items[position])
-            else holder.bind(items[position])
+        override fun getItemViewType(position: Int) = if (items[position].kind == Kind.HEADER) 2 else if (grid) 1 else 0
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder =
+            if (viewType == 2) HeaderHolder(layoutInflater.inflate(R.layout.item_group, parent, false))
+            else RowHolder(layoutInflater.inflate(if (viewType == 1) R.layout.item_grid else R.layout.item_recent, parent, false), viewType == 1)
+        override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
+            when (holder) {
+                is HeaderHolder -> holder.bind(items[position])
+                is RowHolder -> holder.bind(items[position])
+            }
         }
-        override fun onViewRecycled(holder: RowHolder) = holder.unbind()
+        override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int, payloads: MutableList<Any>) {
+            // 선택만 바뀌었으면 체크 표시만 (썸네일을 다시 읽지 않게)
+            if (holder is RowHolder && payloads.isNotEmpty() && payloads.all { it === SELECTION }) holder.bindSelection(items[position])
+            else onBindViewHolder(holder, position)
+        }
+        override fun onViewRecycled(holder: RecyclerView.ViewHolder) {
+            if (holder is RowHolder) holder.unbind()
+        }
+    }
+
+    /** 태그로 모아 볼 때 문서들 위의 폴더 머리글 한 줄 */
+    private inner class HeaderHolder(v: View) : RecyclerView.ViewHolder(v) {
+        private val chip: View = v.findViewById(R.id.groupChip)
+        private val icon: ImageView = v.findViewById(R.id.groupIcon)
+        private val name: TextView = v.findViewById(R.id.groupName)
+        private val count: TextView = v.findViewById(R.id.groupCount)
+
+        fun bind(r: Row) {
+            icon.setImageDrawable(r.folder)
+            name.text = r.title
+            count.text = r.sub
+            chip.contentDescription = "${r.title} 폴더, 문서 ${r.sub}"
+            chip.setOnClickListener { if (!selecting) r.onClick() }
+        }
     }
 
     private inner class RowHolder(v: View, private val isGrid: Boolean) : RecyclerView.ViewHolder(v) {
@@ -1795,6 +1950,8 @@ class MainActivity : AppCompatActivity() {
         private val star: ImageView = v.findViewById(R.id.star)
         private val check: ImageView = v.findViewById(R.id.check)
         private val drag: ImageView = v.findViewById(R.id.drag)
+        /** 목록 보기에서만 있다 (큰 아이콘 보기에는 없음) */
+        private val tree: TreeLineView? = v.findViewById(R.id.tree)
         private var job: Job? = null
         private var source: Thumbs.Source? = null
 
@@ -1817,6 +1974,7 @@ class MainActivity : AppCompatActivity() {
             badge.isVisible = !r.isFolder && ext.isNotEmpty() && ext.length <= 4
             badge.text = ext
             badge.backgroundTintList = ColorStateList.valueOf(color)
+            tree?.let { it.isVisible = r.tree != 0; it.last = r.tree == 2 }
             star.isVisible = r.star != null
             if (r.star != null) {
                 star.setImageResource(if (r.star) R.drawable.ic_star else R.drawable.ic_star_border)

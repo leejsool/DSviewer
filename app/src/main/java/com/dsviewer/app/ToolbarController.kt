@@ -110,6 +110,7 @@ internal class ToolbarController(
             Toast.makeText(activity, "복사했습니다. '붙여넣기'로 원하는 페이지에 붙일 수 있습니다.", Toast.LENGTH_SHORT).show()
         }
         findViewById<View>(R.id.selectionImage).setOnClickListener { onSelectionImage(it) }
+        findViewById<View>(R.id.selectionOrder).setOnClickListener { showOrderMenu(it) }
         findViewById<View>(R.id.selectionColor).setOnClickListener { v ->
             val initial = docView.selectionColor ?: return@setOnClickListener
             ColorPickerPopup(activity, initial, recentColors(Tool.PEN)) { c, done ->
@@ -126,6 +127,29 @@ internal class ToolbarController(
         val lassoMode = prefs.getInt("lassoMode", if (prefs.getBoolean("lassoRect", false)) 1 else 0)
         docView.lassoRect = lassoMode == 1
         docView.lassoTap = lassoMode == 2
+    }
+
+
+    /** 선택 막대 ▸ 순서: 겹쳐 있어 가려진 것을 앞으로 꺼내거나 뒤로 보낸다 */
+    private fun showOrderMenu(anchor: View) {
+        val popup = android.widget.PopupMenu(activity, anchor)
+        popup.menu.add(0, 0, 0, "맨 앞으로").setIcon(R.drawable.ic_order_front)
+        popup.menu.add(0, 1, 1, "한 칸 앞으로").setIcon(R.drawable.ic_order_forward)
+        popup.menu.add(0, 2, 2, "한 칸 뒤로").setIcon(R.drawable.ic_order_backward)
+        popup.menu.add(0, 3, 3, "맨 뒤로").setIcon(R.drawable.ic_order_back)
+        popup.setForceShowIcon(true)
+        popup.setOnMenuItemClickListener { item ->
+            val mode = ZMove.entries[item.itemId]
+            if (!docView.reorderSelection(mode)) {
+                val msg = when (mode) {
+                    ZMove.FRONT, ZMove.FORWARD -> "이미 맨 앞이거나, 앞에 겹친 것이 없습니다."
+                    ZMove.BACK, ZMove.BACKWARD -> "이미 맨 뒤이거나, 뒤에 겹친 것이 없습니다."
+                }
+                Toast.makeText(activity, msg, Toast.LENGTH_SHORT).show()
+            }
+            true
+        }
+        popup.show()
     }
 
 
@@ -371,6 +395,9 @@ internal class ToolbarController(
         docView.eraserMode = prefs.getString("eraserMode", null)
             ?.let { n -> EraserMode.entries.firstOrNull { it.name == n } } ?: EraserMode.STROKE
         docView.eraseHlOnly = prefs.getBoolean("eraseHlOnly", false)
+        docView.eraserCover = prefs.getBoolean("eraserCover", false)
+        docView.coverAuto = prefs.getBoolean("coverAuto", true)
+        docView.coverColor = prefs.getInt("coverColor", android.graphics.Color.WHITE)
         docView.scribbleErase = prefs.getBoolean("scribbleErase", true)
         docView.palmErase = prefs.getBoolean("palmErase", true)
         val buttonAction = PenInputRules.ButtonAction.named(prefs.getString("penButton", null))
@@ -387,11 +414,15 @@ internal class ToolbarController(
     /** 지우개 버튼: 획/영역 표시 + 형광펜만이면 형광색 지우개 */
     private fun updateEraserIcon() {
         val area = docView.eraserMode == EraserMode.AREA
-        val mark = getDrawable(if (area) R.drawable.ic_eraser_mark_area else R.drawable.ic_eraser_mark_stroke)
+        val cover = docView.eraserCover
+        val mark = getDrawable(
+            if (cover) R.drawable.ic_eraser_mark_cover else if (area) R.drawable.ic_eraser_mark_area else R.drawable.ic_eraser_mark_stroke
+        )
         val body = getDrawable(if (docView.eraseHlOnly) R.drawable.ic_eraser_body_hl else R.drawable.ic_eraser_body)
         val button = toolButtons.getValue(Tool.ERASER)
         button.setImageDrawable(LayerDrawable(arrayOf(mark, body)))
-        button.contentDescription = (if (area) "영역 지우개" else "획 지우개") + if (docView.eraseHlOnly) " (형광펜만)" else ""
+        button.contentDescription = (if (cover) "네모 덮기" else if (area) "영역 지우개" else "획 지우개") +
+            if (docView.eraseHlOnly && !cover) " (형광펜만)" else ""
     }
 
     /** 선택 버튼: 자유 선택이면 올가미, 네모 선택이면 점선 네모, 대상 선택이면 손가락 */
@@ -416,38 +447,51 @@ internal class ToolbarController(
             }
             Tool.ERASER -> {
                 val hl = docView.eraseHlOnly
-                addOption(R.drawable.ic_eraser_stroke, "획 지우개", docView.eraserMode == EraserMode.STROKE) {
+                val cover = docView.eraserCover
+                addOption(R.drawable.ic_eraser_stroke, "획 지우개", !cover && docView.eraserMode == EraserMode.STROKE) {
                     setEraserMode(EraserMode.STROKE)
                 }
-                addOption(R.drawable.ic_eraser_area, "영역 지우개", docView.eraserMode == EraserMode.AREA) {
+                addOption(R.drawable.ic_eraser_area, "영역 지우개", !cover && docView.eraserMode == EraserMode.AREA) {
                     setEraserMode(EraserMode.AREA)
                 }
+                addOption(R.drawable.ic_fill_cover, "네모 덮기", cover) { setEraserCover() }
                 addOptionSeparator()
-                addOption(R.drawable.ic_eraser_body_hl, "형광펜만", hl) {
+                if (cover) {
+                    // 덮는 색: 기본은 네모 둘레에서 자동으로, 스포이트로 화면의 색을 집을 수도 있다
+                    addOption(R.drawable.ic_cover_auto, "둘레 색 자동", docView.coverAuto, closeBar = false) {
+                        docView.coverAuto = true
+                        prefs.edit().putBoolean("coverAuto", true).apply()
+                        toast("네모 바로 바깥의 색으로 덮습니다.")
+                        showOptionBar(Tool.ERASER)
+                    }
+                    addOption(coverEyedropperIcon(), "스포이트", !docView.coverAuto, closeBar = false) { pickCoverColor() }
+                } else addOption(R.drawable.ic_eraser_body_hl, "형광펜만", hl) {
                     docView.eraseHlOnly = !hl
                     prefs.edit().putBoolean("eraseHlOnly", !hl).apply()
                     updateEraserIcon()
                 }
-                addOptionSeparator()
+                if (!cover) addOptionSeparator()
                 // 펜을 든 채 지우기: 좌우로 긁기, 손바닥으로 문지르기 (켜고 끄기)
-                addOption(R.drawable.ic_scribble_erase, "긁어서 지우기", docView.scribbleErase) {
+                if (!cover) addOption(R.drawable.ic_scribble_erase, "긁어서 지우기", docView.scribbleErase) {
                     docView.scribbleErase = !docView.scribbleErase
                     prefs.edit().putBoolean("scribbleErase", docView.scribbleErase).apply()
                     toast(if (docView.scribbleErase) "펜으로 좌우나 위아래로 마구 긁으면 긁은 자리가 지워집니다." else "긁어서 지우기를 껐습니다.")
                 }
-                if (docView.fingerDrawing) {
-                    addOption(R.drawable.ic_palm_erase, "손바닥 지우기", docView.palmErase) {
-                        docView.palmErase = !docView.palmErase
-                        prefs.edit().putBoolean("palmErase", docView.palmErase).apply()
-                        toast(if (docView.palmErase) "손가락으로 쓰기 중 손바닥으로 문지르면 지워집니다." else "손바닥 지우기를 껐습니다.")
+                if (!cover) {
+                    if (docView.fingerDrawing) {
+                        addOption(R.drawable.ic_palm_erase, "손바닥 지우기", docView.palmErase) {
+                            docView.palmErase = !docView.palmErase
+                            prefs.edit().putBoolean("palmErase", docView.palmErase).apply()
+                            toast(if (docView.palmErase) "손가락으로 쓰기 중 손바닥으로 문지르면 지워집니다." else "손바닥 지우기를 껐습니다.")
+                        }
+                    } else {
+                        // 손가락으로 쓰기가 꺼져 있으면 동작하지 않으므로 흐리게 두고, 누르면 켤지 묻는다
+                        addOption(R.drawable.ic_palm_erase, "손바닥 지우기", false, closeBar = false, dimmed = true) { askEnableFingerForPalm() }
                     }
-                } else {
-                    // 손가락으로 쓰기가 꺼져 있으면 동작하지 않으므로 흐리게 두고, 누르면 켤지 묻는다
-                    addOption(R.drawable.ic_palm_erase, "손바닥 지우기", false, closeBar = false, dimmed = true) { askEnableFingerForPalm() }
-                }
-                addOptionSeparator()
-                addOption(R.drawable.ic_eraser_page, if (hl) "쪽 형광펜 모두 지우기" else "쪽 전체 지우기", false) {
-                    confirmClearPage()
+                    addOptionSeparator()
+                    addOption(R.drawable.ic_eraser_page, if (hl) "쪽 형광펜 모두 지우기" else "쪽 전체 지우기", false) {
+                        confirmClearPage()
+                    }
                 }
             }
             Tool.FILL -> {
@@ -567,8 +611,47 @@ internal class ToolbarController(
 
     private fun setEraserMode(m: EraserMode) {
         docView.eraserMode = m
-        prefs.edit().putString("eraserMode", m.name).apply()
+        docView.eraserCover = false
+        prefs.edit().putString("eraserMode", m.name).putBoolean("eraserCover", false).apply()
         updateEraserIcon()
+    }
+
+    /** 지우개 ▸ 네모 덮기: 끌어서 고른 네모를 한 색으로 덮는다 */
+    private fun setEraserCover() {
+        docView.eraserCover = true
+        prefs.edit().putBoolean("eraserCover", true).apply()
+        updateEraserIcon()
+        toast(
+            if (docView.coverAuto) "끌어서 고른 네모를 둘레의 색으로 덮습니다. 안의 글자가 가려집니다."
+            else "끌어서 고른 네모를 스포이트로 고른 색으로 덮습니다. 안의 글자가 가려집니다."
+        )
+    }
+
+    /** 스포이트 칸의 그림: 스포이트로 고른 색이 있으면 그 색 동그라미를 겹친다 */
+    private fun coverEyedropperIcon(): android.graphics.drawable.Drawable {
+        val base = getDrawable(R.drawable.ic_eyedropper)!!.mutate()
+        if (docView.coverAuto) return base
+        val d = resources.displayMetrics.density
+        val dot = android.graphics.drawable.GradientDrawable().apply {
+            shape = android.graphics.drawable.GradientDrawable.OVAL
+            setColor(docView.coverColor)
+            setStroke(maxOf(1, d.toInt()), 0x66000000)
+        }
+        val icon = LayerDrawable(arrayOf(base, dot))
+        icon.setLayerSize(1, (11 * d).toInt(), (11 * d).toInt())
+        icon.setLayerGravity(1, android.view.Gravity.END or android.view.Gravity.BOTTOM)
+        return icon
+    }
+
+    /** 화면의 색을 집어 덮는 색으로 (이때부터 자동이 아니라 그 색으로 덮는다) */
+    private fun pickCoverColor() {
+        Eyedropper.start(activity) { c ->
+            docView.coverColor = c
+            docView.coverAuto = false
+            prefs.edit().putBoolean("coverAuto", false).putInt("coverColor", c).apply()
+            if (optionTool == Tool.ERASER) showOptionBar(Tool.ERASER)
+            toast("고른 색으로 덮습니다.")
+        }
     }
 
     private fun setHlStraight(on: Boolean) {

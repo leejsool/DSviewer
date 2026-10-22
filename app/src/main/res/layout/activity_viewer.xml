@@ -621,6 +621,19 @@
                     app:iconPadding="0dp" />
 
                 <com.google.android.material.button.MaterialButton
+                    android:id="@+id/selectionOrder"
+                    style="?attr/materialButtonTonalStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="2dp"
+                    app:icon="@drawable/ic_order"
+                    android:contentDescription="겹치는 순서"
+                    android:minWidth="44dp"
+                    android:paddingHorizontal="10dp"
+                    android:tooltipText="겹치는 순서 (앞으로·뒤로)"
+                    app:iconPadding="0dp" />
+
+                <com.google.android.material.button.MaterialButton
                     android:id="@+id/selectionImage"
                     style="?attr/materialButtonTonalStyle"
                     android:layout_width="wrap_content"
@@ -846,7 +859,7 @@
             <View
                 android:layout_width="1dp"
                 android:layout_height="28dp"
-                android:layout_marginHorizontal="10dp"
+                android:layout_marginHorizontal="6dp"
                 android:background="?attr/colorOutlineVariant" />
 
             <LinearLayout
@@ -860,7 +873,7 @@
                 android:id="@+id/colorSep"
                 android:layout_width="1dp"
                 android:layout_height="28dp"
-                android:layout_marginHorizontal="10dp"
+                android:layout_marginHorizontal="6dp"
                 android:background="?attr/colorOutlineVariant" />
 
             <!-- 선택 도구: 붙여넣기 (자유/네모 선택은 위 옵션 줄에서) -->

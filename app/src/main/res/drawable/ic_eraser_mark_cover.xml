@@ -1,0 +1,7 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- 네모 덮기: 지우개 끝 아래에 깔린 채운 띠 -->
+    <path android:fillColor="?attr/colorControlNormal" android:fillAlpha="0.5"
+        android:pathData="M3,18.5h18v3h-18z" />
+</vector>

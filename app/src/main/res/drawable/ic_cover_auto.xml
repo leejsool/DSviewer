@@ -1,0 +1,11 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- 둘레 색 자동: 점선 네모 둘레의 색을 따서 안을 채움 -->
+    <path android:strokeColor="?attr/colorControlNormal" android:strokeWidth="1.6"
+        android:pathData="M3,3h18v18h-18z" android:strokeLineJoin="round" />
+    <path android:fillColor="?attr/colorControlNormal" android:fillAlpha="0.35"
+        android:pathData="M8,8h8v8h-8z" />
+    <path android:fillColor="?attr/colorControlNormal"
+        android:pathData="M12,10.2l0.9,1.9l1.9,0.9l-1.9,0.9l-0.9,1.9l-0.9,-1.9l-1.9,-0.9l1.9,-0.9z" />
+</vector>

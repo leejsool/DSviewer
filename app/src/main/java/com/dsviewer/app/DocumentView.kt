@@ -175,6 +175,15 @@ class DocumentView @JvmOverloads constructor(
     var laserFadeMs = 2000L
     /** 획 지우개 / 영역 지우개 */
     var eraserMode = EraserMode.STROKE
+    /** 지우개 도구의 '네모 덮기': 끌어서 고른 네모를 한 색으로 덮는다 (PDF 안의 내용도 가려진다) */
+    var eraserCover = false
+    /** 네모 덮기: 덮는 색을 네모 둘레에서 따온다 (끄면 [coverColor]) */
+    var coverAuto = true
+    /** 네모 덮기: 스포이트로 고른 색 */
+    var coverColor = Color.WHITE
+    /** 네모 덮기에서 끌기 시작한 자리 (쪽 좌표) */
+    private var rectX0 = 0f
+    private var rectY0 = 0f
     /** true면 형광펜 획만 지운다 */
     var eraseHlOnly = false
     /** true면 손가락 한 개로 필기, 두 손가락으로 이동/확대 */
@@ -557,6 +566,7 @@ class DocumentView @JvmOverloads constructor(
         penColor = o.penColor; penWidth = o.penWidth; penStyle = o.penStyle; penSmoothing = o.penSmoothing
         hlColor = o.hlColor; hlWidth = o.hlWidth; hlStraight = o.hlStraight; textMark = o.textMark
         eraserRadiusDp = o.eraserRadiusDp; eraserMode = o.eraserMode; eraseHlOnly = o.eraseHlOnly
+        eraserCover = o.eraserCover; coverAuto = o.coverAuto; coverColor = o.coverColor
         scribbleErase = o.scribbleErase; holdShape = o.holdShape; palmErase = o.palmErase; fingerDrawing = o.fingerDrawing; horizontal = o.horizontal
         laserColor = o.laserColor; laserWidthDp = o.laserWidthDp; laserFadeMs = o.laserFadeMs
         shapeKind = o.shapeKind; shapeGuide = o.shapeGuide; shapeDashed = o.shapeDashed
@@ -1798,9 +1808,7 @@ class DocumentView @JvmOverloads constructor(
                 val tip = ev.getToolType(idx) == MotionEvent.TOOL_TYPE_ERASER
                 val button = stylus && !tip && PenInputRules.buttonDown(samsungButton, ev.buttonState, STYLUS_BUTTON_MASK)
                 applyPenButton(button, ev.getX(idx), ev.getY(idx))
-                penErasing = PenInputRules.penErasing(
-                    tool, tapeErasing, fillErasing, stylus, PenInputRules.eraserInput(tip, button, penButtonAction),
-                )
+                penErasing = erasingNow(stylus, PenInputRules.eraserInput(tip, button, penButtonAction))
                 penMaxMajor = if (fingerPen) ev.getTouchMajor(idx) else 0f
                 curTilt = tilt(ev, idx)
                 startPen(ev.getX(idx), ev.getY(idx), pressure(ev, idx), ev.eventTime)
@@ -1990,12 +1998,19 @@ class DocumentView @JvmOverloads constructor(
         penPointerId = ev.getPointerId(0)
         penIsFinger = true
         applyPenButton(false, downX, downY)
-        penErasing = PenInputRules.penErasing(
-            tool, tapeErasing, fillErasing, false, PenInputRules.eraserInput(false, false, penButtonAction),
-        )
+        penErasing = erasingNow(false, PenInputRules.eraserInput(false, false, penButtonAction))
         penMaxMajor = ev.getTouchMajor(0)
         curTilt = 0f
         startPen(downX, downY, PenInputRules.pressure(false, 0f), downTime)
+    }
+
+    /**
+     * 이번 획을 지우개로 다룰지. 지우개 도구가 '네모 덮기'일 때는 끄는 것이 지우기가 아니라 네모를 고르는 것이다
+     * (스타일러스의 지우개 쪽 끝·버튼으로 지우는 것은 그대로 지운다)
+     */
+    private fun erasingNow(stylus: Boolean, eraserInput: Boolean): Boolean {
+        val erasing = PenInputRules.penErasing(tool, tapeErasing, fillErasing, stylus, eraserInput)
+        return erasing && !(tool == Tool.ERASER && eraserCover && !(stylus && eraserInput))
     }
 
     private fun cancelFingerGesture(ev: MotionEvent) {
@@ -2062,6 +2077,8 @@ class DocumentView @JvmOverloads constructor(
                 }
                 // 자유 영역: 그리는 동안은 선만 (다 그리면 바깥 윤곽 안을 채운 획으로 바꾼다)
                 Tool.FILL -> Stroke(Tool.FILL, fillColor, 0f)
+                // 네모 덮기: 끄는 동안은 네모 모양만 (놓으면 덮는 획으로 바꾼다)
+                Tool.ERASER -> Stroke(Tool.FILL, coverColor, 0f)
                 // 보정 펜은 그린 획을 맞춘 도형으로 바꾸므로 그리는 동안은 사인펜
                 Tool.PEN -> Stroke(Tool.PEN, penColor, penWidth, pen = penStyle)
                 else -> Stroke(Tool.PEN, penColor, penWidth)
@@ -2081,6 +2098,11 @@ class DocumentView @JvmOverloads constructor(
                 st.add(penInput.x, penInput.y, penInput.p)
                 // 자를 따라 긋는 획이 아니면 꾹 누르기를 기다린다
                 if (holdShape && snap == null) armHold(sx, sy)
+            } else if (tool == Tool.ERASER) {
+                // 네모 덮기: 끌기 시작한 자리를 기억하고, 끄는 동안 그 자리와 지금 자리를 두 모서리로 한 네모를 보여 준다
+                rectX0 = hit.second
+                rectY0 = hit.third
+                st.add(rectX0, rectY0, 0f)
             } else if (tool == Tool.FILL) {
                 penInput.begin(PenStyle.FELT, 1f, fillSmoothing, hit.second, hit.third, p, t)
                 st.add(penInput.x, penInput.y, 0f)
@@ -2215,6 +2237,14 @@ class DocumentView @JvmOverloads constructor(
             // 펜: 손떨림 보정·펜 종류에 맞춰 다듬은 점
             if (!penInput.move(px, py, p, t, scale / density, minDist, st.x(last), st.y(last), curTilt)) return
             st.add(penInput.x, penInput.y, penInput.p)
+            lastSx = sx
+            lastSy = sy
+            invalidate()
+            return
+        }
+        if (st.tool == Tool.FILL && tool == Tool.ERASER) {
+            // 네모 덮기: 시작한 자리와 지금 자리가 마주 보는 두 모서리
+            st.setPoints(floatArrayOf(rectX0, rectY0, 0f, px, rectY0, 0f, px, py, 0f, rectX0, py, 0f))
             lastSx = sx
             lastSy = sy
             invalidate()
@@ -2452,7 +2482,8 @@ class DocumentView @JvmOverloads constructor(
                     } else if (st.tool == Tool.TAPE) {
                         if (finishTape(curPage, st)) inkDoc.add(curPage, st)
                     } else if (st.tool == Tool.FILL) {
-                        fillCtl.finishFreeFill(curPage, st)
+                        if (tool == Tool.ERASER) fillCtl.finishCover(curPage, st, coverAuto, coverColor)
+                        else fillCtl.finishFreeFill(curPage, st)
                     } else if (st.tool == Tool.LASER) {
                         // 레이저: 필기에 넣지 않고 잠깐 보였다가 사라진다
                         laser.release(curPage, st)
@@ -2991,6 +3022,24 @@ class DocumentView @JvmOverloads constructor(
         inkDoc.edit(strokes) { strokes.forEach { it.mirror(horizontal, extent) } }
         select(selPage, strokes)
         invalidate()
+    }
+
+    /**
+     * 고른 것의 겹치는 순서를 바꾼다 (실행 취소 가능). 그림은 늘 필기·글 아래에 그려지므로 순서는 같은 층(그림끼리 등) 안에서 바뀐다.
+     * 한 칸 앞·뒤로는 고른 것과 실제로 겹치는 가장 가까운 것 하나를 넘는다. 바뀐 것이 없으면 false
+     */
+    internal fun reorderSelection(mode: ZMove): Boolean {
+        val inkDoc = ink ?: return false
+        if (selection.isEmpty() || selPage !in inkDoc.pages.indices || selBounds.isEmpty) return false
+        val layers = selection.map { inkLayer(it) }.toSet()
+        val b = selBounds
+        val order = ZOrder.move(
+            inkDoc.pages[selPage], mode, { it in selSet },
+            { inkLayer(it) in layers && it.mayTouch(b.left, b.top, b.right, b.bottom) },
+        ) ?: return false
+        inkDoc.reorder(selPage, order)
+        invalidate()
+        return true
     }
 
     /** 선택한 획을 복사해 둔다 */

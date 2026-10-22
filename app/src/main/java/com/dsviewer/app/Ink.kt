@@ -949,6 +949,8 @@ class InkDocument(pageCount: Int) {
         class Move(val strokes: List<Stroke>, val dx: Float, val dy: Float) : Action()
         class AddAll(val page: MutableList<Stroke>, val strokes: List<Stroke>) : Action()
         class Edit(val strokes: List<Stroke>, val before: List<Stroke.State>, val after: List<Stroke.State>) : Action()
+        /** 겹치는 순서 바꾸기: 쪽의 획 목록 차례의 전후 */
+        class Reorder(val page: MutableList<Stroke>, val before: List<Stroke>, val after: List<Stroke>) : Action()
         class Pages(
             val before: List<MutableList<Stroke>>, val after: List<MutableList<Stroke>>,
             val beforeFiles: Any, val afterFiles: Any,
@@ -1114,6 +1116,16 @@ class InkDocument(pageCount: Int) {
         erased(listOf(page to old), listOf(page to new))
     }
 
+    /** [page]쪽 획들의 겹치는 순서를 [order]로 바꾼다 (목록 뒤쪽이 위. 같은 획들의 새 차례여야 한다) */
+    fun reorder(page: Int, order: List<Stroke>) {
+        val list = pages[page]
+        if (order.size != list.size || order == list) return
+        val before = list.toList()
+        list.clear()
+        list.addAll(order)
+        push(Action.Reorder(list, before, order.toList()))
+    }
+
     /** 선택한 획들을 (dx, dy)만큼 옮긴다 */
     fun move(strokes: List<Stroke>, dx: Float, dy: Float) {
         if (strokes.isEmpty() || (dx == 0f && dy == 0f)) return
@@ -1207,6 +1219,7 @@ class InkDocument(pageCount: Int) {
             is Action.Move -> a.strokes.forEach { it.translate(-a.dx, -a.dy) }
             is Action.AddAll -> { val set = a.strokes.toSet(); a.page.removeAll { it in set } }
             is Action.Edit -> a.strokes.forEachIndexed { i, s -> s.restore(a.before[i]) }
+            is Action.Reorder -> { a.page.clear(); a.page.addAll(a.before) }
             is Action.Wrong -> {
                 a.adds.forEach { (p, st) -> p.remove(st) }
                 restoreWrongs(a.list, a.before)
@@ -1230,6 +1243,7 @@ class InkDocument(pageCount: Int) {
             is Action.Move -> a.strokes.forEach { it.translate(a.dx, a.dy) }
             is Action.AddAll -> a.page.addAll(a.strokes)
             is Action.Edit -> a.strokes.forEachIndexed { i, s -> s.restore(a.after[i]) }
+            is Action.Reorder -> { a.page.clear(); a.page.addAll(a.after) }
             is Action.Wrong -> {
                 a.adds.forEach { (p, st) -> p.add(st) }
                 restoreWrongs(a.list, a.after)

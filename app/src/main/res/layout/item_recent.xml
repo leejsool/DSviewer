@@ -11,6 +11,17 @@
     android:paddingHorizontal="12dp"
     android:paddingVertical="6dp">
 
+    <!-- 태그로 모아 볼 때 폴더 머리글에서 이 문서로 이어지는 가지선 -->
+    <com.dsviewer.app.TreeLineView
+        android:id="@+id/tree"
+        android:layout_width="36dp"
+        android:layout_height="match_parent"
+        android:layout_marginStart="-4dp"
+        android:layout_marginTop="-6dp"
+        android:layout_marginBottom="-6dp"
+        android:importantForAccessibility="no"
+        android:visibility="gone" />
+
     <!-- 직접 정한 순서로 볼 때(즐겨찾기) 끌어서 자리를 바꾸는 손잡이 -->
     <ImageView
         android:id="@+id/drag"

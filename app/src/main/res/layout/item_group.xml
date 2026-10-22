@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 태그로 모아 볼 때 문서들 위의 폴더 머리글: 폴더 그림 · 폴더 이름 · 문서 수 (문서들은 아래에 가지선으로 이어진다) -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:paddingStart="8dp"
+    android:paddingTop="10dp"
+    android:paddingEnd="12dp"
+    android:paddingBottom="2dp">
+
+    <LinearLayout
+        android:id="@+id/groupChip"
+        android:layout_width="wrap_content"
+        android:layout_height="40dp"
+        android:background="@drawable/bg_group_chip"
+        android:foreground="?attr/selectableItemBackground"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="8dp"
+        android:paddingEnd="14dp">
+
+        <ImageView
+            android:id="@+id/groupIcon"
+            android:layout_width="32dp"
+            android:layout_height="26dp"
+            android:importantForAccessibility="no" />
+
+        <TextView
+            android:id="@+id/groupName"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:ellipsize="end"
+            android:maxWidth="260dp"
+            android:singleLine="true"
+            android:textAppearance="?attr/textAppearanceTitleMedium" />
+
+        <TextView
+            android:id="@+id/groupCount"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:textAppearance="?attr/textAppearanceBodySmall" />
+    </LinearLayout>
+</LinearLayout>
