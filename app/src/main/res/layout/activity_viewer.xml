@@ -538,19 +538,33 @@
                     android:layout_marginHorizontal="6dp"
                     android:textAppearance="?attr/textAppearanceLabelLarge" />
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/selectionColor"
-                    style="?attr/materialButtonTonalStyle"
+                <!-- 순서: 색 · 반전 · 대칭 · 순서 · 복사 · 저장 · 삭제. 단추마다 위에 이름표 -->
+                <LinearLayout
+                    android:id="@+id/selectionColorBox"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginEnd="2dp"
-                    app:icon="@drawable/ic_palette"
+                    android:gravity="center_horizontal"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/SymCaption"
+                        android:text="색" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/selectionColor"
+                        style="?attr/materialButtonTonalStyle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:contentDescription="색"
+                        android:minWidth="44dp"
+                        android:paddingHorizontal="10dp"
+                        android:tooltipText="색"
+                        app:icon="@drawable/ic_palette"
                     app:iconTint="@null"
-                    android:contentDescription="색"
-                    android:minWidth="44dp"
-                    android:paddingHorizontal="10dp"
-                    android:tooltipText="색"
-                    app:iconPadding="0dp" />
+                        app:iconGravity="textStart"
+                        app:iconPadding="0dp" />
+                </LinearLayout>
 
                 <!-- 좌우·상하 반전: 이름표 '반전' 아래 한 묶음 -->
                 <LinearLayout
@@ -578,6 +592,7 @@
                             android:paddingHorizontal="10dp"
                             android:tooltipText="좌우 반전"
                             app:icon="@drawable/ic_flip_h"
+                            app:iconGravity="textStart"
                             app:iconPadding="0dp" />
 
                         <com.google.android.material.button.MaterialButton
@@ -590,73 +605,135 @@
                             android:paddingHorizontal="10dp"
                             android:tooltipText="상하 반전"
                             app:icon="@drawable/ic_flip_v"
+                            app:iconGravity="textStart"
                             app:iconPadding="0dp" />
                     </com.google.android.material.button.MaterialButtonToggleGroup>
                 </LinearLayout>
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/selectionSymmetry"
-                    style="?attr/materialButtonTonalStyle"
+                <LinearLayout
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginEnd="2dp"
-                    app:icon="@drawable/ic_symmetry"
-                    android:contentDescription="대칭"
-                    android:minWidth="44dp"
-                    android:paddingHorizontal="10dp"
-                    android:tooltipText="대칭"
-                    app:iconPadding="0dp" />
+                    android:gravity="center_horizontal"
+                    android:orientation="vertical">
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/selectionCopy"
-                    style="?attr/materialButtonTonalStyle"
+                    <TextView
+                        style="@style/SymCaption"
+                        android:text="대칭" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/selectionSymmetry"
+                        style="?attr/materialButtonTonalStyle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:contentDescription="대칭"
+                        android:minWidth="44dp"
+                        android:paddingHorizontal="10dp"
+                        android:tooltipText="대칭"
+                        app:icon="@drawable/ic_symmetry"
+                        app:iconGravity="textStart"
+                        app:iconPadding="0dp" />
+                </LinearLayout>
+
+                <LinearLayout
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginEnd="2dp"
-                    app:icon="@drawable/ic_copy"
-                    android:contentDescription="복사"
-                    android:minWidth="44dp"
-                    android:paddingHorizontal="10dp"
-                    android:tooltipText="복사"
-                    app:iconPadding="0dp" />
+                    android:gravity="center_horizontal"
+                    android:orientation="vertical">
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/selectionOrder"
-                    style="?attr/materialButtonTonalStyle"
+                    <TextView
+                        style="@style/SymCaption"
+                        android:text="순서" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/selectionOrder"
+                        style="?attr/materialButtonTonalStyle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:contentDescription="겹치는 순서"
+                        android:minWidth="44dp"
+                        android:paddingHorizontal="10dp"
+                        android:tooltipText="겹치는 순서 (앞으로·뒤로)"
+                        app:icon="@drawable/ic_order"
+                        app:iconGravity="textStart"
+                        app:iconPadding="0dp" />
+                </LinearLayout>
+
+                <LinearLayout
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginEnd="2dp"
-                    app:icon="@drawable/ic_order"
-                    android:contentDescription="겹치는 순서"
-                    android:minWidth="44dp"
-                    android:paddingHorizontal="10dp"
-                    android:tooltipText="겹치는 순서 (앞으로·뒤로)"
-                    app:iconPadding="0dp" />
+                    android:gravity="center_horizontal"
+                    android:orientation="vertical">
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/selectionImage"
-                    style="?attr/materialButtonTonalStyle"
+                    <TextView
+                        style="@style/SymCaption"
+                        android:text="복사" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/selectionCopy"
+                        style="?attr/materialButtonTonalStyle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:contentDescription="복사"
+                        android:minWidth="44dp"
+                        android:paddingHorizontal="10dp"
+                        android:tooltipText="복사"
+                        app:icon="@drawable/ic_copy"
+                        app:iconGravity="textStart"
+                        app:iconPadding="0dp" />
+                </LinearLayout>
+
+                <LinearLayout
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginEnd="2dp"
-                    app:icon="@drawable/ic_image"
-                    android:contentDescription="이미지로 복사·저장"
-                    android:minWidth="44dp"
-                    android:paddingHorizontal="10dp"
-                    android:tooltipText="이미지로 복사·저장"
-                    app:iconPadding="0dp" />
+                    android:gravity="center_horizontal"
+                    android:orientation="vertical">
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/selectionDelete"
-                    style="?attr/materialButtonTonalStyle"
+                    <TextView
+                        style="@style/SymCaption"
+                        android:text="저장" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/selectionImage"
+                        style="?attr/materialButtonTonalStyle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:contentDescription="이미지로 복사·저장"
+                        android:minWidth="44dp"
+                        android:paddingHorizontal="10dp"
+                        android:tooltipText="이미지로 복사·저장"
+                        app:icon="@drawable/ic_image"
+                        app:iconGravity="textStart"
+                        app:iconPadding="0dp" />
+                </LinearLayout>
+
+                <LinearLayout
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    app:icon="@drawable/ic_delete"
-                    android:contentDescription="삭제"
-                    android:minWidth="44dp"
-                    android:paddingHorizontal="10dp"
-                    android:tooltipText="삭제"
-                    app:iconPadding="0dp" />
+                    android:layout_marginEnd="0dp"
+                    android:gravity="center_horizontal"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/SymCaption"
+                        android:text="삭제" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/selectionDelete"
+                        style="?attr/materialButtonTonalStyle"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:contentDescription="삭제"
+                        android:minWidth="44dp"
+                        android:paddingHorizontal="10dp"
+                        android:tooltipText="삭제"
+                        app:icon="@drawable/ic_delete"
+                        app:iconGravity="textStart"
+                        app:iconPadding="0dp" />
+                </LinearLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 

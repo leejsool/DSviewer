@@ -1401,7 +1401,7 @@ internal class ToolbarController(
         selectionCount = count
         selectionBar.findViewById<TextView>(R.id.selectionCount).text = "${count}개"
         // 그림만 골랐으면 색 버튼을 뺀다 (그림에는 색을 입힐 수 없음)
-        selectionBar.findViewById<View>(R.id.selectionColor).visibility =
+        selectionBar.findViewById<View>(R.id.selectionColorBox).visibility =
             if (docView.selectionColor != null) View.VISIBLE else View.GONE
         selectionBar.visibility = View.VISIBLE
         selectionBar.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
