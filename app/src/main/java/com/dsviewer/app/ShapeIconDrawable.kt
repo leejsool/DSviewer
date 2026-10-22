@@ -161,6 +161,12 @@ class ShapeIconDrawable(
             ShapeKind.RECTANGLE -> canvas.drawRect(2.5f, 7f, 21.5f, 17f, line)
             ShapeKind.RHOMBUS -> poly(canvas, 12f, 2.5f, 20f, 12f, 12f, 21.5f, 4f, 12f)
             ShapeKind.PARALLELOGRAM -> poly(canvas, 2.5f, 18f, 16.5f, 18f, 21.5f, 6f, 7.5f, 6f)
+            // 직선과 양 끝의 두 점
+            ShapeKind.LINE_2PT -> {
+                canvas.drawLine(4f, 19f, 20f, 5f, line)
+                canvas.drawCircle(4f, 19f, 1.9f, dot)
+                canvas.drawCircle(20f, 5f, 1.9f, dot)
+            }
             // 원 위의 세 점
             ShapeKind.CIRCLE_3PT -> {
                 canvas.drawCircle(12f, 12f, 8.5f, line)

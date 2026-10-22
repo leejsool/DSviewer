@@ -202,26 +202,43 @@ class DocumentView @JvmOverloads constructor(
     private var holdSx = 0f
     private var holdSy = 0f
     private val holdRun = Runnable { snapHeldStroke() }
-    /** 읽기 모드: 펜도 손가락처럼 넘기고 확대만 한다 (필기·지우기·선택 없음) */
-    var readOnly = false
+    /**
+     * 큰 PDF의 필기를 뒤에서 읽는 동안: 문서만 먼저 보여 주므로 쓰기를 막는다 (읽기 모드처럼 넘기기·확대만).
+     * 문서를 새로 설정하거나 비우면 풀린다
+     */
+    var inkLoading = false
         set(v) {
             if (field == v) return
             if (v && penPointerId != -1) endPen(commit = true)
             field = v
-            if (v) {
-                clearSelection()
-                cancelNotePlacement()
-                cancelWrongPick()
-                clearWrongRect()
-                symmetry.cancel()
-                ruler.hide()
-            }
-            // 마지막 쪽 아래 '빈 쪽 추가' 단추는 읽기 모드에서 숨긴다 (그만큼 스크롤 길이가 바뀐다)
-            if (doc != null) {
-                clamp()
-                invalidate()
-            }
+            applyReadOnly()
         }
+    /** 읽기 모드: 펜도 손가락처럼 넘기고 확대만 한다 (필기·지우기·선택 없음) */
+    var readOnly = false
+        get() = field || inkLoading
+        set(v) {
+            if (field == v) return
+            if (v && penPointerId != -1) endPen(commit = true)
+            field = v
+            applyReadOnly()
+        }
+
+    /** 읽기 모드나 필기 읽는 중이 바뀐 뒤의 정리 */
+    private fun applyReadOnly() {
+        if (readOnly) {
+            clearSelection()
+            cancelNotePlacement()
+            cancelWrongPick()
+            clearWrongRect()
+            symmetry.cancel()
+            ruler.hide()
+        }
+        // 마지막 쪽 아래 '빈 쪽 추가' 단추는 읽기 모드에서 숨긴다 (그만큼 스크롤 길이가 바뀐다)
+        if (doc != null) {
+            clamp()
+            invalidate()
+        }
+    }
     /**
      * 필기 숨기기 (읽기 모드에서만 뜻이 있다): 원래 문서만 보인다. 필기·그림·글 상자·포스트잇·오답 배지·테이프가 다 가려지고,
      * 그 위의 터치도 문서로 넘어간다. 파일에는 아무 영향이 없다. 쓰기 모드에서는 안 보이는 채로 쓰는 일이 없게 늘 보인다
@@ -689,6 +706,7 @@ class DocumentView @JvmOverloads constructor(
         ruler.hide()
         cancelRendering()
         doc?.removeSizesListener(sizesListener)
+        inkLoading = false
         doc = null
         ink = null
         warmPages.clear()
@@ -762,6 +780,7 @@ class DocumentView @JvmOverloads constructor(
         ruler.hide()
         cancelRendering()
         doc?.removeSizesListener(sizesListener)
+        inkLoading = false
         doc = d
         d.addSizesListener(sizesListener)
         ink = inkDoc

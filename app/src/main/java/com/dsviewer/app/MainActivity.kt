@@ -94,6 +94,8 @@ class MainActivity : AppCompatActivity() {
         val vfolder: FavFolder? = null,
         /** 잠근 문서: 썸네일을 가린다 */
         val locked: Boolean = false,
+        /** 기기 폴더·저장소 줄이면 그 폴더 (문서를 끌어다 놓아 옮길 수 있음) */
+        val dir: File? = null,
     ) {
         /** 폴더 머리글 아래 문서의 가지선: 0 없음, 1 중간(├), 2 마지막(└) */
         var tree = 0
@@ -406,7 +408,7 @@ class MainActivity : AppCompatActivity() {
                     val rec = Recents.list(this).associateBy { it.uri }
                     val locked = Locks.locked(this)
                     if (d == null) roots.map { r ->
-                        Row(r.name, r.file.path, Kind.DRIVE, { openDir(r.file) }, folder = FolderDrawable(DocColors.HWP, TapePattern.SOLID), short = "")
+                        Row(r.name, r.file.path, Kind.DRIVE, { openDir(r.file) }, folder = FolderDrawable(DocColors.HWP, TapePattern.SOLID), short = "", dir = r.file)
                     }
                     else DocFiles.list(d).map { fileRow(it, showPath = false, rec, key, locked) }
                 }
@@ -658,7 +660,7 @@ class MainActivity : AppCompatActivity() {
     private fun fileRow(e: Entry, showPath: Boolean, rec: Map<String, Recents.Item>, key: SortKey, locked: Set<String>): Row {
         if (e.isDir) return Row(
             e.name, "", Kind.FOLDER, { openDir(e.file) },
-            folder = FolderDrawable(FOLDER_COLOR, TapePattern.SOLID), modified = e.time,
+            folder = FolderDrawable(FOLDER_COLOR, TapePattern.SOLID), modified = e.time, dir = e.file,
         )
         val info = "${date(e.time)} · ${Formatter.formatShortFileSize(this, e.size)}"
         val sub = if (showPath) "${e.file.parentFile?.let(::shortPath) ?: ""} · $info" else info
@@ -1876,10 +1878,30 @@ class MainActivity : AppCompatActivity() {
             base = selected.toSet()
         }
 
+        /** 손가락이 있는 폴더 줄: 이 줄에서 손을 떼면 고른 문서를 그 폴더로 옮긴다 (없으면 -1) */
+        private fun setDrop(pos: Int) {
+            val old = dropPos
+            if (old == pos) return
+            dropPos = pos
+            if (old >= 0) adapter.notifyItemChanged(old, SELECTION)
+            if (pos >= 0) {
+                adapter.notifyItemChanged(pos, SELECTION)
+                selectCount.text = "'${adapter.items[pos].title}' 폴더로 옮기기 (손을 떼면 이동)"
+            } else onSelectionChanged()
+        }
+
         private fun update() {
             val child = list.findChildViewUnder(x, y) ?: return
             val pos = list.getChildAdapterPosition(child)
-            if (pos == RecyclerView.NO_POSITION || pos == last) return
+            if (pos == RecyclerView.NO_POSITION) return
+            // 폴더 위로 끌어 가면 고르기를 멈추고 그 폴더를 놓을 자리로 보여 준다
+            if (adapter.items.getOrNull(pos)?.let { canDropOn(it) } == true) {
+                setDrop(pos)
+                last = pos
+                return
+            }
+            setDrop(-1)
+            if (pos == last) return
             last = pos
             val items = adapter.items
             val now = DragSelect.select(base, anchor, pos) { items.getOrNull(it)?.key }
@@ -1892,7 +1914,10 @@ class MainActivity : AppCompatActivity() {
             if (!active) return false
             when (e.actionMasked) {
                 MotionEvent.ACTION_MOVE -> return true
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> active = false
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    active = false
+                    setDrop(-1)
+                }
             }
             return false
         }
@@ -1908,11 +1933,61 @@ class MainActivity : AppCompatActivity() {
                         list.postOnAnimation(scroller)
                     }
                 }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> active = false
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    active = false
+                    val target = if (e.actionMasked == MotionEvent.ACTION_UP) adapter.items.getOrNull(dropPos) else null
+                    setDrop(-1)
+                    if (target != null) dropSelectedOn(target)
+                }
             }
         }
 
         override fun onRequestDisallowInterceptTouchEvent(disallowIntercept: Boolean) {}
+    }
+
+    /** 끌어다 놓은 문서를 받을 수 있는 줄: 폴더 탭의 폴더·저장소, 즐겨찾기 탭의 즐겨찾기 폴더 */
+    private fun canDropOn(r: Row) = when (tab) {
+        Tab.FOLDER -> r.dir != null
+        Tab.FAVORITE -> r.vfolder != null && r.key !in selected
+        else -> false
+    }
+
+    /** 끌던 줄: [dragSelect]가 폴더 위에 있다고 본 줄의 번호 (아니면 -1) */
+    private var dropPos = -1
+
+    /** 꾹 눌러 끌어 폴더 위에서 뗐다: 고른 문서(와 즐겨찾기 폴더)를 [target] 폴더로 옮긴다 */
+    private fun dropSelectedOn(target: Row) {
+        val sel = selectedRows()
+        if (sel.isEmpty()) return
+        if (tab == Tab.FAVORITE) {
+            val folder = target.vfolder ?: return
+            val all = FavFolders.list(this)
+            val inside = sel.mapNotNull { it.vfolder?.id }.flatMap { FavFolders.subtree(all, it) }.toSet()
+            if (folder.id in inside) {
+                android.widget.Toast.makeText(this, "폴더를 그 안의 폴더로는 옮길 수 없습니다", android.widget.Toast.LENGTH_SHORT).show()
+                onSelectionChanged()
+                return
+            }
+            for (r in sel) {
+                r.docUri?.let { Recents.setFolder(this, it, folder.id) }
+                r.vfolder?.let { f -> FavFolders.get(this, f.id)?.let { FavFolders.update(this, it.copy(parent = folder.id)) } }
+            }
+            finishAction("${sel.size}개를 '${folder.name}'(으)로 옮겼습니다")
+            return
+        }
+        val dest = target.dir ?: return
+        val files = sel.mapNotNull { it.docUri }.map(Uri::parse).filter { it.scheme == "file" }.map { File(it.path!!) }
+        if (files.isEmpty()) {
+            android.widget.Toast.makeText(this, "이 문서는 폴더로 옮길 수 없습니다", android.widget.Toast.LENGTH_SHORT).show()
+            onSelectionChanged()
+            return
+        }
+        lifecycleScope.launch {
+            val failed = withContext(Dispatchers.IO) {
+                files.count { f -> runCatching { FileOps.move(this@MainActivity, f, dest) }.isFailure }
+            }
+            finishAction(if (failed == 0) "${files.size}개를 '${target.title}'(으)로 옮겼습니다" else "${failed}개는 옮기지 못했습니다")
+        }
     }
 
     // ================= 직접 정한 순서 (즐겨찾기) =================
@@ -2116,7 +2191,8 @@ class MainActivity : AppCompatActivity() {
             check.isVisible = selecting && r.selectable
             drag.isVisible = r.selectable && canReorder()
             check.setImageResource(if (on) R.drawable.ic_check_circle else R.drawable.ic_circle_outline)
-            itemView.isActivated = selecting && on
+            // 끌던 문서를 놓을 폴더도 선택한 것처럼 짙게
+            itemView.isActivated = (selecting && on) || (dropPos >= 0 && bindingAdapterPosition == dropPos)
             // 선택 중에는 별을 눌러도 바뀌지 않게
             val onStar = r.onStar
             if (onStar != null && !selecting) star.setOnClickListener { onStar() }

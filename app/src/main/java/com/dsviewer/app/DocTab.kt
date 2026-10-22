@@ -10,6 +10,12 @@ internal class DocTab(var uri: Uri, var canOverwrite: Boolean, var isNewNote: Bo
     var type = DocType.UNKNOWN
     var pdf: PdfDoc? = null
     var ink: InkDocument? = null
+    /**
+     * 필기가 든 큰 PDF를 처음 열 때, 필기를 읽는 동안 먼저 보여 주는 원본 문서와 빈 필기 (쓰기는 막고 보기만).
+     * 필기를 다 읽으면 [pdf]·[ink]로 바꾸고 닫는다
+     */
+    var quickPdf: PdfDoc? = null
+    var quickInk: InkDocument? = null
     /** 앱 캐시에 복사한 원본 PDF (저장할 때 이 파일에 필기를 얹는다) */
     var sourcePdf: File? = null
     /** 화면에 그리는 PDF (필기를 뺀 사본이거나 [sourcePdf] 그대로) */

@@ -22,6 +22,8 @@ enum class ShapeKind(val label: String) {
     /** 두 점을 잇는 원호, 가운데를 비워 길이를 쓴다 */
     LENGTH_MARK("길이 표시"),
     LINE("일차"),
+    /** 점 두 개를 차례로 찍으면 그 두 점을 잇는 직선 */
+    LINE_2PT("두 점 직선"),
     QUADRATIC("이차"),
     CUBIC("삼차"),
     QUARTIC("사차"),
@@ -66,6 +68,7 @@ enum class ShapeKind(val label: String) {
 
     /** 획을 긋지 않고 점을 하나씩 찍어 그리는 도형의 점 수 (아니면 0) */
     val tapPoints get() = when (this) {
+        LINE_2PT -> 2
         CIRCLE_3PT, TRI_3PT -> 3
         QUAD_4PT -> 4
         else -> 0
@@ -133,6 +136,8 @@ object ShapeFit {
         val n = kind.tapPoints
         if (n == 0 || pts.size < n * 2) return null
         val one = when (kind) {
+            ShapeKind.LINE_2PT -> if (hypot((pts[2] - pts[0]).toDouble(), (pts[3] - pts[1]).toDouble()) < 2) null
+                else floatArrayOf(pts[0], pts[1], pts[2], pts[3])
             ShapeKind.CIRCLE_3PT -> circumcircle(pts)
             ShapeKind.TRI_3PT -> closedPolygon(pts, 3)
             ShapeKind.QUAD_4PT -> closedPolygon(quadOrder(pts), 4)

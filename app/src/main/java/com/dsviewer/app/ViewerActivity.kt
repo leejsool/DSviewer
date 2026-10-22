@@ -446,7 +446,7 @@ class ViewerActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        docs.forEach { it.pdf?.close() }
+        docs.forEach { it.pdf?.close(); it.quickPdf?.close() }
         if (isFinishing) MlKitInkRecognizer.release()
         openTabs = 0
         openUris = emptySet()
@@ -595,6 +595,12 @@ class ViewerActivity : AppCompatActivity() {
             docView.prefetchTextIfWanted()
             syncPagePanel()
             progress.visibility = View.GONE
+        } else if (t.quickPdf != null && t.quickInk != null) {
+            // 필기를 읽는 중: 문서만 먼저 (쓰기는 막고)
+            docView.setDocument(t.quickPdf!!, t.quickInk!!, t.viewState)
+            docView.inkLoading = true
+            pagePanel.clear()
+            progress.visibility = View.VISIBLE
         } else {
             docView.clearDocument()
             pagePanel.clear()
@@ -699,6 +705,8 @@ class ViewerActivity : AppCompatActivity() {
         updateAddButton()
         docTabs.removeTab(index)
         t.pdf?.close()
+        t.quickPdf?.close()
+        t.quickPdf = null
         if (docs.isEmpty()) {
             // 마지막 탭을 닫으면 뷰어를 닫고 탐색기로
             if (fromBrowser) startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
@@ -806,13 +814,21 @@ class ViewerActivity : AppCompatActivity() {
         val marks = HashSet<Int>()
         val wrongs = HashMap<Int, String>()
         val inkDraft = if (t.draftBase != null) t.draftFile else null  // 가벼운 자동 저장본: 필기는 이 파일에서, 문서는 file에서
-        val (renderFile, strokes) = withContext(Dispatchers.IO) {
-            val clean: File
-            val found: List<List<Stroke>>?
-            // 문서 파일(내 기기 안의 PDF)이 지난번에 보관해 둔 그대로면 PDF를 PDFBox로 다시 읽지 않고 보관본을 쓴다 (큰 PDF는 수 초 걸린다)
+        // 문서 파일(내 기기 안의 PDF)이 지난번에 보관해 둔 그대로면 PDF를 PDFBox로 다시 읽지 않고 보관본을 쓴다 (큰 PDF는 수 초 걸린다)
+        val (origin, hit, defer) = withContext(Dispatchers.IO) {
             val origin = if (inkDraft == null && t.draftBase == null && t.type == DocType.PDF && t.review == null && t.uri.scheme == "file")
                 t.uri.path?.let(::File)?.takeIf { it.isFile } else null
             val hit = origin?.let { InkCache.load(this@ViewerActivity, it) }
+            // 보관본이 없는 큰 PDF에 필기가 들어 있으면 필기를 읽는 데 오래 걸리니 문서부터 보여 준다
+            val defer = hit == null && inkDraft == null && t.draftBase == null && t.review == null && t.type == DocType.PDF &&
+                file.length() >= DEFER_INK_BYTES && PdfInk.containsInk(file)
+            Triple(origin, hit, defer)
+        }
+        val quick = defer && showQuick(t, file)
+        if (t !in docs) return
+        val (renderFile, strokes) = withContext(Dispatchers.IO) {
+            val clean: File
+            val found: List<List<Stroke>>?
             if (hit != null) {
                 clean = FileUtil.tempFile(this@ViewerActivity, "clean", "pdf")
                 hit.clean.inputStream().use { i -> clean.outputStream().use { o -> i.copyTo(o, 1 shl 16) } }
@@ -839,8 +855,9 @@ class ViewerActivity : AppCompatActivity() {
         }
         t.renderPdf = renderFile
         // 보던 쪽 근처만 읽고 먼저 연다 (큰 PDF는 모든 쪽의 크기를 읽는 데만 오래 걸린다. 나머지는 뒤에서)
-        val focus = if (t.viewState != null || t.review != null) 0 else Recents.get(this, t.uri.toString())?.lastPage ?: 0
-        val d = PdfDoc.open(renderFile, focusPage = focus)
+        // 먼저 보여 준 문서가 있으면 지금 보는 쪽 근처부터, 그 문서에서 이미 읽은 쪽 크기는 다시 읽지 않는다
+        val focus = if (quick) paneOf(t)?.view?.currentPage()?.coerceAtLeast(0) ?: 0 else openFocusPage(t)
+        val d = PdfDoc.open(renderFile, t.quickPdf?.knownSizes(), focus)
         if (t !in docs) {
             // 읽는 사이 탭이 닫힘
             d.close()
@@ -886,8 +903,13 @@ class ViewerActivity : AppCompatActivity() {
         t.pdf = d
         t.ink = inkDoc
         updateTabTitle(t)  // 복구한 필기면 디스켓 표시
-        for (p in panesOf(t)) p.view.setDocument(d, inkDoc, sharedState(p, t))
-        resumeLastPage(t, d.pageCount)
+        // 먼저 보여 준 문서에서 넘어올 때는 보던 자리 그대로
+        for (p in panesOf(t)) p.view.setDocument(d, inkDoc, (if (quick) p.view.viewState() else null) ?: sharedState(p, t))
+        if (quick) {
+            t.quickPdf?.close()
+            t.quickPdf = null
+            t.quickInk = null
+        } else resumeLastPage(t, d.pageCount)
         if (current === t) {
             syncPagePanel()
             progress.visibility = View.GONE
@@ -899,6 +921,36 @@ class ViewerActivity : AppCompatActivity() {
         }
         // 한가할 때 저장 준비를 해 두어 처음 저장도 빠르게
         saver.prewarm(t)
+    }
+
+    /** 처음 열 때 보여 줄 쪽 (지난번에 보던 쪽, 탭에 보던 자리가 있거나 복습 문서면 첫 쪽 근처) */
+    private fun openFocusPage(t: DocTab): Int =
+        if (t.viewState != null || t.review != null) 0 else Recents.get(this, t.uri.toString())?.lastPage ?: 0
+
+    /**
+     * 필기가 든 큰 PDF를 처음 열 때, 필기를 읽는 동안 [file] 그대로를 먼저 보여 준다 (쓰기는 막고 보기만).
+     * 못 열면 false: 예전처럼 필기를 다 읽은 뒤에 연다
+     */
+    private suspend fun showQuick(t: DocTab, file: File): Boolean {
+        val d = try {
+            PdfDoc.open(file, focusPage = openFocusPage(t))
+        } catch (e: Exception) {
+            return false
+        }
+        if (t !in docs) {
+            d.close()
+            return true
+        }
+        val blank = InkDocument(d.pageCount)
+        t.quickPdf = d
+        t.quickInk = blank
+        for (p in panesOf(t)) {
+            p.view.setDocument(d, blank, sharedState(p, t))
+            p.view.inkLoading = true
+        }
+        resumeLastPage(t, d.pageCount)
+        if (current === t) Toast.makeText(this, "필기를 불러오는 중입니다. 다 읽을 때까지는 보기만 됩니다.", Toast.LENGTH_LONG).show()
+        return true
     }
 
     /** 보던 쪽을 최근 목록에 적어 둔다 (다음에 열면 그 쪽에서 이어 본다). 복습 문서·아직 안 열린 문서·떠 있지 않은 탭은 건너뛴다 */
@@ -2655,8 +2707,13 @@ class ViewerActivity : AppCompatActivity() {
         pane.tab = t
         val d = t.pdf
         val inkDoc = t.ink
+        val quick = t.quickPdf
+        val quickInk = t.quickInk
         if (d != null && inkDoc != null) pane.view.setDocument(d, inkDoc, state)
-        else pane.view.clearDocument()
+        else if (quick != null && quickInk != null) {
+            pane.view.setDocument(quick, quickInk, state)
+            pane.view.inkLoading = true
+        } else pane.view.clearDocument()
     }
 
     /** 고른 칸에만 위쪽에 파란 줄 (분할 보기가 아니면 없음) */
@@ -3075,6 +3132,8 @@ class ViewerActivity : AppCompatActivity() {
     companion object {
         /** 원본·화면용 PDF를 동시에 고치는 것은 둘을 합친 크기가 이 이하일 때만 (메모리) */
         private const val PARALLEL_EDIT_MAX_BYTES = 40L shl 20
+        /** 이 크기 이상의 PDF에 필기가 들어 있고 보관본이 없으면, 필기를 읽는 동안 문서부터 먼저 보여 준다 */
+        private const val DEFER_INK_BYTES = 4L shl 20
         /** 넘기지 않은 채 이만큼(ms) 지나면 쪽 번호가 흐려지며 사라진다 */
         private const val PAGE_LABEL_SHOW_MS = 2500L
 

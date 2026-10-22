@@ -23,6 +23,15 @@ class ShapeTapTest {
     }
 
     @Test
+    fun lineThroughTwoPoints() {
+        val c = ShapeFit.fromPoints(ShapeKind.LINE_2PT, floatArrayOf(5f, 6f, 40f, 90f))!!.curves[0]
+        assertEquals(listOf(5f, 6f, 40f, 90f), c.toList())
+        assertEquals(2, ShapeKind.LINE_2PT.tapPoints)
+        // 거의 한 점이면 선이 되지 않는다
+        assertNull(ShapeFit.fromPoints(ShapeKind.LINE_2PT, floatArrayOf(5f, 6f, 5.5f, 6.5f)))
+    }
+
+    @Test
     fun collinearPointsMakeNoShape() {
         assertNull(ShapeFit.fromPoints(ShapeKind.CIRCLE_3PT, floatArrayOf(0f, 0f, 10f, 10f, 20f, 20f)))
         assertNull(ShapeFit.fromPoints(ShapeKind.TRI_3PT, floatArrayOf(0f, 0f, 10f, 10f, 20f, 20f)))

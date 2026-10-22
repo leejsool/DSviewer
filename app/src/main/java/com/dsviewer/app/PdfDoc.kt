@@ -77,18 +77,27 @@ class PdfDoc private constructor(
 
     /** 작업 스레드에서: [index]쪽의 실제 크기를 적고, 어림과 다르면 새 목록을 내놓고 알린다 */
     private fun note(index: Int, w: Float, h: Float) {
-        known[index] = true
         val cur = work[index]
-        if (abs(cur.width - w) <= 0.5f && abs(cur.height - h) <= 0.5f) return
-        work[index] = SizeF(w, h)
-        sizes = work.toList()
-        // 여러 쪽이 잇따라 달라져도 한 번에 알린다 (그때마다 쪽 배치를 다시 하지 않게)
-        if (notifyPending.compareAndSet(false, true)) {
-            MAIN.postDelayed({
-                notifyPending.set(false)
-                if (!closed) for (l in listeners) l.run()
-            }, 250)
+        if (abs(cur.width - w) > 0.5f || abs(cur.height - h) > 0.5f) {
+            work[index] = SizeF(w, h)
+            sizes = work.toList()
+            // 여러 쪽이 잇따라 달라져도 한 번에 알린다 (그때마다 쪽 배치를 다시 하지 않게)
+            if (notifyPending.compareAndSet(false, true)) {
+                MAIN.postDelayed({
+                    notifyPending.set(false)
+                    if (!closed) for (l in listeners) l.run()
+                }, 250)
+            }
         }
+        // 크기를 내놓은 뒤에 읽었다고 적는다 ([knownSizes]가 다른 스레드에서 읽는다)
+        known[index] = true
+    }
+
+    /** 실제로 읽은 쪽의 크기 (아직 어림인 쪽은 null): 같은 쪽 구성의 다른 PDF를 열 때 [open]의 힌트로 쓴다 */
+    fun knownSizes(): List<SizeF?> {
+        val s = sizes
+        val k = known.copyOf()
+        return List(s.size) { if (k.getOrElse(it) { false }) s[it] else null }
     }
 
     /** 아직 못 읽은 쪽의 크기를 [order] 차례로 뒤에서 읽는다. 한 번에 짧게만 하고 줄 맨 뒤로 다시 서서 그리는 일이 끼어들게 한다 */

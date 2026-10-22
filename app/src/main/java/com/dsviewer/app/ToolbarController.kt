@@ -1562,18 +1562,17 @@ internal class ToolbarController(
         // 보조선 화살표: 직선·곡선·돼지꼬리
         ShapeKind.ARROW to listOf(ShapeKind.ARROW, ShapeKind.ARROW_CURVE, ShapeKind.ARROW_PIGTAIL),
         // 다항: 직선(일차)·이차·삼차·사차
-        ShapeKind.LINE to listOf(ShapeKind.LINE, ShapeKind.QUADRATIC, ShapeKind.CUBIC, ShapeKind.QUARTIC),
+        ShapeKind.LINE to listOf(ShapeKind.LINE, ShapeKind.LINE_2PT, ShapeKind.QUADRATIC, ShapeKind.CUBIC, ShapeKind.QUARTIC),
         ShapeKind.CIRCLE to listOf(
-            ShapeKind.CIRCLE, ShapeKind.CIRCLE_CR, ShapeKind.ELLIPSE, ShapeKind.SECTOR, ShapeKind.SEMICIRCLE,
-            ShapeKind.CIRCLE_3PT,
+            ShapeKind.CIRCLE, ShapeKind.CIRCLE_CR, ShapeKind.CIRCLE_3PT, ShapeKind.ELLIPSE, ShapeKind.SECTOR, ShapeKind.SEMICIRCLE,
         ),
         ShapeKind.TRIANGLE to listOf(
             ShapeKind.TRIANGLE, ShapeKind.TRI_EQUILATERAL, ShapeKind.TRI_RIGHT,
             ShapeKind.TRI_ISOSCELES, ShapeKind.TRI_RIGHT_ISOSCELES, ShapeKind.TRI_3PT,
         ),
         ShapeKind.QUADRILATERAL to listOf(
-            ShapeKind.QUADRILATERAL, ShapeKind.SQUARE, ShapeKind.RECTANGLE,
-            ShapeKind.RHOMBUS, ShapeKind.PARALLELOGRAM, ShapeKind.QUAD_4PT, ShapeKind.RECT_DIAG,
+            ShapeKind.QUADRILATERAL, ShapeKind.SQUARE, ShapeKind.RECT_DIAG, ShapeKind.RECTANGLE,
+            ShapeKind.RHOMBUS, ShapeKind.PARALLELOGRAM, ShapeKind.QUAD_4PT,
         ),
     )
     private val shapeOrder = listOf(
