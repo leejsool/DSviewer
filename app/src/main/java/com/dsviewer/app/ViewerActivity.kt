@@ -973,8 +973,8 @@ class ViewerActivity : AppCompatActivity() {
         t.pdf = d
         t.ink = inkDoc
         updateTabTitle(t)  // 복구한 필기면 디스켓 표시
-        // 먼저 보여 준 문서에서 넘어올 때는 보던 자리 그대로
-        for (p in panesOf(t)) p.view.setDocument(d, inkDoc, (if (quick) p.view.viewState() else null) ?: sharedState(p, t))
+        // 먼저 보여 준 문서에서 넘어올 때는 보던 자리 그대로, 새 쪽 그림이 나올 때까지 먼저 보여 준 그림을 둔다 (하얗게 번쩍이지 않게)
+        for (p in panesOf(t)) p.view.setDocument(d, inkDoc, (if (quick) p.view.viewState() else null) ?: sharedState(p, t), keepPicture = quick)
         if (quick) {
             t.quickPdf?.close()
             t.quickPdf = null

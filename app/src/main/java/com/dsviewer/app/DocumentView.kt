@@ -492,6 +492,17 @@ class DocumentView @JvmOverloads constructor(
         override fun sizeOf(key: Int, value: Bitmap) = value.byteCount
     }
     private val baseJobs = HashMap<Int, Job>()
+    /**
+     * 먼저 보여 준 문서에서 넘겨받은 쪽 그림: 새 문서의 쪽 그림이 나올 때까지 하얀 쪽 대신 보여 준다
+     * (느린 기기에서 문서를 바꿔 끼울 때 화면이 한 번 하얗게 번쩍이지 않게). 새 그림이 나온 쪽과 멀어진 쪽은 버린다
+     */
+    private val staleBase = HashMap<Int, Bitmap>()
+    /**
+     * [staleBase]의 그림에 필기가 이미 그려져 있다 (원본 PDF를 그린 것): 그 그림을 보여 주는 동안 획은 겹쳐 그리지 않는다.
+     * 쪽마다 넘겨받을 때의 획 수·마지막 획을 적어 두고, 그사이 필기가 바뀐 쪽은 획을 그린다 (새로 쓴 획이 안 보이지 않게)
+     */
+    private val staleInk = HashMap<Int, Pair<Int, Stroke?>>()
+    private fun inkSig(inkDoc: InkDocument, page: Int) = inkDoc.pages[page].let { it.size to it.lastOrNull() }
 
     private class Detail(val page: Int, val region: RectF, val bmp: Bitmap)
 
@@ -712,6 +723,8 @@ class DocumentView @JvmOverloads constructor(
         warmPages.clear()
         sizes = emptyList()
         baseCache.evictAll()
+        staleBase.clear()
+        staleInk.clear()
         details = emptyList()
         invalidate()
     }
@@ -747,6 +760,8 @@ class DocumentView @JvmOverloads constructor(
             level >= android.content.ComponentCallbacks2.TRIM_MEMORY_BACKGROUND
         if (critical) {
             baseCache.evictAll()
+            staleBase.clear()
+            staleInk.clear()
             details = emptyList()
         } else {
             baseCache.trimToSize(baseCache.size() / 2)
@@ -774,7 +789,13 @@ class DocumentView @JvmOverloads constructor(
         zoomAnimator?.cancel()
     }
 
-    fun setDocument(d: PdfDoc, inkDoc: InkDocument, state: ViewState? = null) {
+    /**
+     * [keepPicture]면 지금 보이는 쪽 그림을 새 문서의 그림이 나올 때까지 그대로 보여 준다 (쪽 크기가 같을 때만).
+     * 먼저 보여 준 원본을 필기 있는 문서로 바꿀 때 쓰고, 그 그림에는 필기가 이미 그려져 있다
+     */
+    fun setDocument(d: PdfDoc, inkDoc: InkDocument, state: ViewState? = null, keepPicture: Boolean = false) {
+        val oldSizes = sizes
+        val carry = if (keepPicture && d.sizes.size == oldSizes.size) baseCache.snapshot().filterKeys { d.sizes[it] == oldSizes[it] } else emptyMap()
         clearSelection()
         clearLaser()
         ruler.hide()
@@ -792,6 +813,8 @@ class DocumentView @JvmOverloads constructor(
         layoutPages()
         zoom = 1f
         baseCache.evictAll()
+        staleBase.clear()
+        staleInk.clear()
         details = emptyList()
         if (width > 0) {
             baseScale = fitScale()
@@ -803,6 +826,12 @@ class DocumentView @JvmOverloads constructor(
             } else if (pageLayout.horizontal) offX = pageLayout.offsetForUnit(0, scale, width.toFloat())
             clamp()
             scheduleDetail()
+            // 보이는 쪽과 앞뒤 한 쪽의 그림만 넘겨받는다 (나머지는 어차피 다시 그린다)
+            val range = visibleRange()
+            if (!range.isEmpty()) for ((i, bmp) in carry) if (i >= range.first - 1 && i <= range.last + 1) {
+                staleBase[i] = bmp
+                staleInk[i] = inkSig(inkDoc, i)
+            }
         }
         lastReportedPage = -1
         invalidate()
@@ -833,11 +862,18 @@ class DocumentView @JvmOverloads constructor(
         clearSelection()
         baseJobs.values.forEach { it.cancel() }
         baseJobs.clear()
+        // 크기가 바뀐 쪽의 그림만 버린다. 나머지 쪽은 그려 둔 그림을 그대로 보여 주고, 배율이 달라졌으면
+        // 그리기에서 늘려 보여 주는 동안 맞는 크기로 다시 그린다 (모두 버리면 보던 쪽이 하얗게 번쩍인다)
+        val changed = fresh.indices.filter { fresh[it] != sizes[it] }.toHashSet()
         sizes = fresh
         layoutPages()
         baseScale = fitScale()
-        baseCache.evictAll()
-        details = emptyList()
+        for (i in changed) {
+            baseCache.remove(i)
+            staleBase.remove(i)
+            staleInk.remove(i)
+        }
+        details = details.filter { it.page !in changed }
         if (spot != null) scrollToPageY(spot.first, spot.second) else clamp()
         scheduleDetail()
         invalidate()
@@ -1050,12 +1086,18 @@ class DocumentView @JvmOverloads constructor(
             val r = pageRect(i, tmpRect)
             canvas.drawRect(r, pagePaint)
             val bmp = baseCache.get(i)
+            // 새 문서의 그림이 아직 없으면 먼저 보여 준 문서의 그림을 그대로 (필기도 그 그림에 들어 있다)
+            val stale = if (bmp == null) staleBase[i] else null
             if (bmp != null) {
                 canvas.drawBitmap(bmp, null, r, bmpPaint)
                 // 배율 단계가 바뀌었으면 있는 그림을 늘려 보여 주는 동안 맞는 크기로 다시 그린다
                 val want = sizes[i].width * baseRenderScale(i)
                 if (bmp.width < want * 0.9f || bmp.width > want * 1.5f) requestBase(i)
-            } else requestBase(i)
+            } else {
+                if (stale != null) canvas.drawBitmap(stale, null, r, bmpPaint)
+                requestBase(i)
+            }
+            val inkBaked = stale != null && staleInk[i]?.let { it == inkSig(inkDoc, i) } == true
             for (det in details) {
                 if (det.page != i) continue
                 val dst = RectF(
@@ -1080,7 +1122,7 @@ class DocumentView @JvmOverloads constructor(
             searchHits[i]?.forEach { canvas.drawRect(it, hitPaint) }
             val dragging = (moving || resizing || rotating) && selPage == i
             // 그림을 먼저, 채우기를 그 위에, 나머지 필기는 맨 위에 (배지·포스트잇은 바깥 여백까지 그려야 해서 따로)
-            if (!hideInk) {
+            if (!hideInk && !inkBaked) {
                 // 획 목록을 한 번만 훑으며 화면 밖 획을 빼고 겹치는 차례(층)별로 모은다
                 val inView = canvas.getClipBounds(clipTmp)
                 warmPages.add(i)
@@ -1149,6 +1191,10 @@ class DocumentView @JvmOverloads constructor(
             for (p in ViewportMath.prefetchPages(range.first, range.last, sizes.size)) if (baseCache.get(p) == null) requestBase(p)
             cancelUnneededJobs(range.first - 1, range.last + 1)
             trimFarInkCaches(range)
+            if (staleBase.isNotEmpty()) {
+                staleBase.keys.retainAll { it >= range.first - 1 && it <= range.last + 1 }
+                staleInk.keys.retainAll(staleBase.keys)
+            }
         }
         if (penPointerId != -1 && penErasing) {
             canvas.drawCircle(lastSx, lastSy, if (palmErasing) palmRadius else eraserRadiusDp * density, cursorPaint)
@@ -1525,6 +1571,8 @@ class DocumentView @JvmOverloads constructor(
                 val bmp = withContext(d.dispatcher) { d.render(i, s, 0f, 0f, w, h) }
                 if (doc !== d) return@launch  // 그사이 다른 탭으로 바뀜
                 baseCache.put(i, bmp)
+                staleBase.remove(i)
+                staleInk.remove(i)
                 invalidate()
             } catch (e: CancellationException) {
                 throw e
