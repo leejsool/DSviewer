@@ -24,7 +24,7 @@ import kotlin.math.roundToInt
  * key는 설정 저장 이름 (칸 이전 버전의 한 개 값 이름과 같음).
  */
 enum class WidthKind(val min: Float, val max: Float, val step: Float, val defaults: FloatArray, val key: String) {
-    PEN(0.3f, 4f, 0.05f, floatArrayOf(0.6f, 1.2f, 2.2f), "penWidth"),
+    PEN(0.3f, 8.5f, 0.05f, floatArrayOf(0.6f, 1.2f, 2.2f), "penWidth"),
     HIGHLIGHTER(4f, 30f, 0.5f, floatArrayOf(8f, 14f, 22f), "hlWidth"),
     ERASER(6f, 40f, 1f, floatArrayOf(8f, 14f, 24f), "eraserRadius"),
     /** 레이저는 확대와 상관없이 화면에서 늘 같은 굵기 (dp) */
