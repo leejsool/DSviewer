@@ -22,6 +22,8 @@ object Recents {
         val thumbFile: String? = null,
         /** 마지막으로 보던 쪽 (0부터). 0이면 처음부터. 다시 열면 이 쪽에서 이어 본다 */
         val lastPage: Int = 0,
+        /** [lastPage]쪽 안에서 화면 맨 위에 걸쳐 있던 높이 (pt). 다시 열면 그 높이가 화면 맨 위에 온다 */
+        val lastY: Float = 0f,
     )
 
     private const val PREFS = "recents"
@@ -37,7 +39,7 @@ object Recents {
                 Item(
                     o.getString("uri"), o.getString("name"), o.getLong("time"), o.optBoolean("star"),
                     o.optString("folder").ifEmpty { null }, o.optInt("thumbPage"), o.optString("thumbFile").ifEmpty { null },
-                    o.optInt("lastPage"),
+                    o.optInt("lastPage"), o.optDouble("lastY", 0.0).toFloat(),
                 )
             }
         }.getOrDefault(emptyList())
@@ -59,10 +61,12 @@ object Recents {
         update(ctx, uri) { if (star) it.copy(star = true) else it.copy(star = false, folder = null, thumbPage = 0, thumbFile = null) }
     }
 
-    /** 문서를 닫거나 떠날 때 보던 [page]쪽(0부터)을 적어 둔다. 최근 목록에 없는 문서면 아무것도 하지 않는다 */
-    fun setLastPage(ctx: Context, uri: String, page: Int) {
-        if (get(ctx, uri)?.lastPage == page) return
-        update(ctx, uri) { it.copy(lastPage = page.coerceAtLeast(0)) }
+    /** 문서를 닫거나 떠날 때 화면 맨 위에 걸친 [page]쪽(0부터)과 그 쪽 안 높이 [y]를 적어 둔다. 최근 목록에 없는 문서면 아무것도 하지 않는다 */
+    fun setLastPage(ctx: Context, uri: String, page: Int, y: Float) {
+        val p = page.coerceAtLeast(0)
+        val cur = get(ctx, uri) ?: return
+        if (cur.lastPage == p && cur.lastY == y) return
+        update(ctx, uri) { it.copy(lastPage = p, lastY = y) }
     }
 
     fun setFolder(ctx: Context, uri: String, folder: String?) = update(ctx, uri) { it.copy(folder = folder) }
@@ -104,6 +108,7 @@ object Recents {
             it.folder?.let { f -> o.put("folder", f) }
             if (it.thumbPage != 0) o.put("thumbPage", it.thumbPage)
             if (it.lastPage != 0) o.put("lastPage", it.lastPage)
+            if (it.lastY != 0f) o.put("lastY", it.lastY.toDouble())
             it.thumbFile?.let { f -> o.put("thumbFile", f) }
             arr.put(o)
         }

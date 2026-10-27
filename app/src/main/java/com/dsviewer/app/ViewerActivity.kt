@@ -974,7 +974,13 @@ class ViewerActivity : AppCompatActivity() {
         t.ink = inkDoc
         updateTabTitle(t)  // 복구한 필기면 디스켓 표시
         // 먼저 보여 준 문서에서 넘어올 때는 보던 자리 그대로, 새 쪽 그림이 나올 때까지 먼저 보여 준 그림을 둔다 (하얗게 번쩍이지 않게)
-        for (p in panesOf(t)) p.view.setDocument(d, inkDoc, (if (quick) p.view.viewState() else null) ?: sharedState(p, t), keepPicture = quick)
+        // 자리는 스크롤 위치가 아니라 쪽으로 넘긴다 (쪽 크기 어림이 두 문서에서 다르면 같은 스크롤 위치가 다른 쪽이 된다)
+        for (p in panesOf(t)) {
+            p.view.setDocument(
+                d, inkDoc, (if (quick) p.view.viewState() else null) ?: sharedState(p, t), keepPicture = quick,
+                spot = if (quick) p.view.topSpot() else null,
+            )
+        }
         if (quick) {
             t.quickPdf?.close()
             t.quickPdf = null
@@ -1025,19 +1031,23 @@ class ViewerActivity : AppCompatActivity() {
         return true
     }
 
-    /** 보던 쪽을 최근 목록에 적어 둔다 (다음에 열면 그 쪽에서 이어 본다). 복습 문서·아직 안 열린 문서·떠 있지 않은 탭은 건너뛴다 */
+    /**
+     * 보던 자리를 최근 목록에 적어 둔다 (다음에 열면 거기서 이어 본다). 복습 문서·아직 안 열린 문서·떠 있지 않은 탭은 건너뛴다.
+     * 다시 열 때 화면 맨 위에 놓으므로 적는 것도 화면 맨 위에 걸친 쪽이다 (가운데 쪽을 적으면 쪽이 작게 보이는 문서는 열 때마다 밀린다)
+     */
     private fun rememberPage(t: DocTab) {
         if (t.review != null || t.pdf == null) return
-        val page = paneOf(t)?.view?.currentPage() ?: return
-        if (page >= 0) Recents.setLastPage(this, t.uri.toString(), page)
+        val (page, y) = paneOf(t)?.view?.topSpot() ?: return
+        if (page >= 0) Recents.setLastPage(this, t.uri.toString(), page, y)
     }
 
     /** 지난번에 보던 쪽에서 이어 본다 (이 탭을 이미 보던 자리가 있으면 그대로). 알림의 '처음부터'로 첫 쪽으로 돌아갈 수 있다 */
     private fun resumeLastPage(t: DocTab, pageCount: Int) {
         if (t.viewState != null || t.review != null) return
-        val page = Recents.get(this, t.uri.toString())?.lastPage ?: return
+        val item = Recents.get(this, t.uri.toString()) ?: return
+        val page = item.lastPage
         if (page <= 0 || page >= pageCount) return
-        for (p in panesOf(t)) p.view.doOnLayout { p.view.scrollToPage(page) }
+        for (p in panesOf(t)) p.view.doOnLayout { p.view.scrollToPageY(page, item.lastY) }
         if (current === t) Notice.show(this, "${page + 1}쪽에서 이어서 봅니다.", "처음부터") { paneOf(t)?.view?.scrollToPage(0) }
     }
 

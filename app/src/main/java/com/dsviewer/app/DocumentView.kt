@@ -791,9 +791,11 @@ class DocumentView @JvmOverloads constructor(
 
     /**
      * [keepPicture]면 지금 보이는 쪽 그림을 새 문서의 그림이 나올 때까지 그대로 보여 준다 (쪽 크기가 같을 때만).
-     * 먼저 보여 준 원본을 필기 있는 문서로 바꿀 때 쓰고, 그 그림에는 필기가 이미 그려져 있다
+     * 먼저 보여 준 원본을 필기 있는 문서로 바꿀 때 쓰고, 그 그림에는 필기가 이미 그려져 있다.
+     * [spot](쪽, 쪽 안 높이)을 주면 [state]의 배율은 그대로 두고 그 자리가 화면 맨 위에 오게 한다
+     * (두 문서의 쪽 크기 어림이 달라도 같은 쪽에 머물게. [state]의 스크롤 위치만으로는 다른 쪽에 갈 수 있다)
      */
-    fun setDocument(d: PdfDoc, inkDoc: InkDocument, state: ViewState? = null, keepPicture: Boolean = false) {
+    fun setDocument(d: PdfDoc, inkDoc: InkDocument, state: ViewState? = null, keepPicture: Boolean = false, spot: Pair<Int, Float>? = null) {
         val oldSizes = sizes
         val carry = if (keepPicture && d.sizes.size == oldSizes.size) baseCache.snapshot().filterKeys { d.sizes[it] == oldSizes[it] } else emptyMap()
         clearSelection()
@@ -824,8 +826,10 @@ class DocumentView @JvmOverloads constructor(
                 offX = state.offX
                 offY = state.offY
             } else if (pageLayout.horizontal) offX = pageLayout.offsetForUnit(0, scale, width.toFloat())
-            clamp()
-            scheduleDetail()
+            if (spot != null) scrollToPageY(spot.first, spot.second) else {
+                clamp()
+                scheduleDetail()
+            }
             // 보이는 쪽과 앞뒤 한 쪽의 그림만 넘겨받는다 (나머지는 어차피 다시 그린다)
             val range = visibleRange()
             if (!range.isEmpty()) for ((i, bmp) in carry) if (i >= range.first - 1 && i <= range.last + 1) {
