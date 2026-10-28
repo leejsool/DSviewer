@@ -376,6 +376,12 @@ class ViewerActivity : AppCompatActivity() {
         updater.onResume()
     }
 
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        // 다른 앱·알림 창에 다녀오면 탐색 바가 다시 나와 있을 수 있다
+        if (hasFocus) applyNavBarHidden()
+    }
+
     override fun onPause() {
         super.onPause()
         // 다른 앱으로 가거나 화면이 꺼지면 치던 글을 쪽에 넣어 둔다
@@ -1742,8 +1748,24 @@ class ViewerActivity : AppCompatActivity() {
             // 가장자리에서 밀면 잠깐 나타났다 사라진다
             ctl.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             ctl.hide(WindowInsetsCompat.Type.systemBars())
-        } else ctl.show(WindowInsetsCompat.Type.systemBars())
+        } else {
+            ctl.show(WindowInsetsCompat.Type.systemBars())
+            applyNavBarHidden()
+        }
         syncPagePanel()
+    }
+
+    /**
+     * '아래 탐색 바 숨기기'가 켜져 있으면 전체 화면이 아니어도 아래 탐색 바(◁ ○ □·제스처 줄)를 숨긴다.
+     * 필기하던 손바닥이 탐색 바를 건드리지 않게. 아래 가장자리에서 밀어 올리면 잠깐 나타났다 사라진다
+     */
+    private fun applyNavBarHidden() {
+        if (fullscreen) return
+        val ctl = WindowCompat.getInsetsController(window, window.decorView)
+        if (prefs.getBoolean(KEY_HIDE_NAV_BAR, false)) {
+            ctl.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            ctl.hide(WindowInsetsCompat.Type.navigationBars())
+        } else ctl.show(WindowInsetsCompat.Type.navigationBars())
     }
 
     // ================= 발표 =================
@@ -3119,6 +3141,11 @@ class ViewerActivity : AppCompatActivity() {
                     prefs.edit().putBoolean("pageKeys", on).apply()
                     true
                 }, "블루투스 키보드나 페이지 터너 페달의 ←/→, PageUp/PageDown, Space 키로 다음·이전 쪽으로 넘깁니다. (Shift+Space는 이전 쪽, 글을 치는 중에는 쓰지 않습니다)"),
+                OptionItem(icon(R.drawable.ic_fullscreen), "아래 탐색 바 숨기기", { prefs.getBoolean(KEY_HIDE_NAV_BAR, false) }, { on ->
+                    prefs.edit().putBoolean(KEY_HIDE_NAV_BAR, on).apply()
+                    applyNavBarHidden()
+                    true
+                }, "켜면 문서를 보는 동안 화면 아래의 탐색 바(뒤로·홈·최근 앱)를 숨겨, 태블릿에서 필기하던 손바닥이 탐색 바를 잘못 누르지 않게 합니다. 아래 가장자리에서 밀어 올리면 잠깐 나타납니다."),
                 OptionItem(icon(R.drawable.ic_timer_play), "발표 타이머", { prefs.getBoolean(KEY_PRESENT_TIMER, false) }, { on ->
                     prefs.edit().putBoolean(KEY_PRESENT_TIMER, on).apply()
                     true
@@ -3227,6 +3254,7 @@ class ViewerActivity : AppCompatActivity() {
         /** 발표 옵션 (둘 다 기본은 끔) */
         private const val KEY_PRESENT_TIMER = "presentTimer"
         private const val KEY_PRESENT_PAGE = "presentPageNumber"
+        private const val KEY_HIDE_NAV_BAR = "hideNavBar"
 
         /** 전체 화면 끝내기 단추(40dp) / 발표 중 도구 단추까지 둘(40dp×2) 옆으로 타이머 칩을 비키는 거리 (dp) */
         private const val EXIT_BUTTON_INSET_DP = 52
