@@ -1,5 +1,6 @@
 package com.dsviewer.app
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -19,5 +20,21 @@ class NoteDefaultsTest {
 
     @Test fun squareScreenCountsAsPortrait() {
         assertTrue(NoteDefaults.portrait(1000, 1000))
+    }
+
+    @Test fun autoOrientFollowsScreen() {
+        assertTrue(NoteDefaults.portrait(NoteDefaults.Orient.AUTO, 1080, 2400))
+        assertFalse(NoteDefaults.portrait(NoteDefaults.Orient.AUTO, 2400, 1080))
+    }
+
+    @Test fun fixedOrientIgnoresScreen() {
+        assertTrue(NoteDefaults.portrait(NoteDefaults.Orient.PORTRAIT, 2400, 1080))
+        assertFalse(NoteDefaults.portrait(NoteDefaults.Orient.LANDSCAPE, 1080, 2400))
+    }
+
+    @Test fun unknownOrientNameFallsBackToAuto() {
+        assertEquals(NoteDefaults.Orient.AUTO, NoteDefaults.orientOf(null))
+        assertEquals(NoteDefaults.Orient.AUTO, NoteDefaults.orientOf("SIDEWAYS"))
+        assertEquals(NoteDefaults.Orient.LANDSCAPE, NoteDefaults.orientOf("LANDSCAPE"))
     }
 }

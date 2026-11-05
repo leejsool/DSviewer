@@ -20,11 +20,14 @@
     <item android:id="@+id/action_pick" android:icon="@drawable/ic_folder"
         android:title="다른 위치에서 열기"
         app:showAsAction="ifRoom|withText" />
-    <item android:id="@+id/action_lock_password"
+    <item android:id="@+id/action_options" android:icon="@drawable/ic_settings"
+        android:title="옵션"
+        app:showAsAction="never" />
+    <item android:id="@+id/action_lock_password" android:icon="@drawable/ic_lock"
         android:title="잠금 암호 바꾸기"
         android:visible="false"
         app:showAsAction="never" />
-    <item android:id="@+id/action_about"
+    <item android:id="@+id/action_about" android:icon="@drawable/ic_info"
         android:title="앱 정보 · 업데이트"
         app:showAsAction="never" />
 </menu>

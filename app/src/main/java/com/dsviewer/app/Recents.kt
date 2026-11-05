@@ -24,6 +24,12 @@ object Recents {
         val lastPage: Int = 0,
         /** [lastPage]쪽 안에서 화면 맨 위에 걸쳐 있던 높이 (pt). 다시 열면 그 높이가 화면 맨 위에 온다 */
         val lastY: Float = 0f,
+        /** 닫을 때 보던 방식 ([ViewMode] 이름: 쓰기·읽기·필기 숨김). null이면 쓰기. 다시 열면 이 방식으로 시작한다 */
+        val viewMode: String? = null,
+        /** 페이지 넘김 방향 (가로 넘김이면 true). null이면 아직 고른 적 없음 (마지막에 고른 방향으로 연다) */
+        val horizontal: Boolean? = null,
+        /** 이 문서를 둘로 나눠 본 채(같은 문서를 두 칸에) 닫았다. 다시 열면 나눠 보기로 시작한다 (둘째 칸 자리는 [SplitPositions]) */
+        val split: Boolean = false,
     )
 
     private const val PREFS = "recents"
@@ -40,6 +46,9 @@ object Recents {
                     o.getString("uri"), o.getString("name"), o.getLong("time"), o.optBoolean("star"),
                     o.optString("folder").ifEmpty { null }, o.optInt("thumbPage"), o.optString("thumbFile").ifEmpty { null },
                     o.optInt("lastPage"), o.optDouble("lastY", 0.0).toFloat(),
+                    o.optString("viewMode").ifEmpty { null },
+                    if (o.has("horizontal")) o.optBoolean("horizontal") else null,
+                    o.optBoolean("split"),
                 )
             }
         }.getOrDefault(emptyList())
@@ -67,6 +76,21 @@ object Recents {
         val cur = get(ctx, uri) ?: return
         if (cur.lastPage == p && cur.lastY == y) return
         update(ctx, uri) { it.copy(lastPage = p, lastY = y) }
+    }
+
+    /** 이 문서를 보던 방식(읽기 모드 [viewMode]·가로 넘김 [horizontal])을 적어 둔다. 최근 목록에 없는 문서면 아무것도 하지 않는다 */
+    fun setViewSettings(ctx: Context, uri: String, viewMode: String, horizontal: Boolean) {
+        val cur = get(ctx, uri) ?: return
+        val mode = viewMode.takeIf { it != "WRITE" }
+        if (cur.viewMode == mode && cur.horizontal == horizontal) return
+        update(ctx, uri) { it.copy(viewMode = mode, horizontal = horizontal) }
+    }
+
+    /** 같은 문서를 둘로 나눠 본 채 닫았는지 적어 둔다 (최근 목록에 없는 문서면 아무것도 하지 않는다) */
+    fun setSplit(ctx: Context, uri: String, split: Boolean) {
+        val cur = get(ctx, uri) ?: return
+        if (cur.split == split) return
+        update(ctx, uri) { it.copy(split = split) }
     }
 
     fun setFolder(ctx: Context, uri: String, folder: String?) = update(ctx, uri) { it.copy(folder = folder) }
@@ -110,6 +134,9 @@ object Recents {
             if (it.lastPage != 0) o.put("lastPage", it.lastPage)
             if (it.lastY != 0f) o.put("lastY", it.lastY.toDouble())
             it.thumbFile?.let { f -> o.put("thumbFile", f) }
+            it.viewMode?.let { m -> o.put("viewMode", m) }
+            it.horizontal?.let { h -> o.put("horizontal", h) }
+            if (it.split) o.put("split", true)
             arr.put(o)
         }
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY, arr.toString()).apply()

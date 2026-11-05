@@ -7,6 +7,25 @@
     android:background="?attr/colorSurfaceContainerHigh"
     android:orientation="vertical">
 
+    <!-- 뷰어의 ＋로 띄웠을 때(새 탭): 맨 위에 뷰어와 같은 문서 탭 줄을 그리고 맨 뒤 '새 탭'을 고른 채로 둔다.
+         아래(body)의 탐색기 화면 전체가 그 '새 탭'의 내용이다. 이때 바탕(root)은 뷰어 탭 줄 색 (MainActivity.setPickMode) -->
+    <com.dsviewer.app.ChromeTabBar
+        android:id="@+id/openTabs"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:paddingStart="6dp"
+        android:paddingTop="6dp"
+        android:paddingEnd="4dp"
+        android:visibility="gone" />
+
+    <LinearLayout
+        android:id="@+id/body"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="?attr/colorSurfaceContainerHigh"
+        android:orientation="vertical">
+
     <com.google.android.material.appbar.MaterialToolbar
         android:id="@+id/toolbar"
         android:layout_width="match_parent"
@@ -295,5 +314,6 @@
             android:paddingHorizontal="8dp"
             android:paddingVertical="4dp" />
     </HorizontalScrollView>
+    </LinearLayout>
     </LinearLayout>
 </LinearLayout>

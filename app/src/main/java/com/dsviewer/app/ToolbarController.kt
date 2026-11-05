@@ -215,7 +215,7 @@ internal class ToolbarController(
                 placeOverlays(side)
                 prefs.edit().putString("toolbarSide", side.name).apply()
             },
-            onTap = { showOptions(1) },
+            onTap = { showOptions(ViewerActivity.OPTIONS_BOTTOM_BAR) },
         )
         dock.setIconScale(toolIconScale())
         val saved = prefs.getString("toolbarSide", null)

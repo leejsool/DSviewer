@@ -1,0 +1,8 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24"
+    android:tint="?attr/colorControlNormal">
+    <!-- 2줄 보기: 작은 네모와 줄이 두 칸으로 나란히 -->
+    <path android:fillColor="@android:color/white"
+        android:pathData="M2.5,4.5h2.5v2.5h-2.5zM6.5,5h4.5v1.5H6.5zM13,4.5h2.5v2.5h-2.5zM17,5h4.5v1.5H17zM2.5,10.75h2.5v2.5h-2.5zM6.5,11.25h4.5v1.5H6.5zM13,10.75h2.5v2.5h-2.5zM17,11.25h4.5v1.5H17zM2.5,17h2.5v2.5h-2.5zM6.5,17.5h4.5v1.5H6.5zM13,17h2.5v2.5h-2.5zM17,17.5h4.5v1.5H17z" />
+</vector>

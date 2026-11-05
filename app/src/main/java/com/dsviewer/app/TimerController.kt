@@ -20,6 +20,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
+import android.view.ViewGroup
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -122,7 +123,8 @@ internal class TimerController(
             maxLines = 1
         }
         val laps = CheckBox(activity).apply {
-            text = "문제별 풀이 시간 기록 (‘다음 문제’ 단추)"
+            // 폭이 모자라면 괄호 앞에서만 줄을 바꾼다 (나머지 띄어쓰기는 줄바꿈 없는 공백)
+            text = keepTogether("문제별 풀이 시간 기록", "(‘다음 문제’ 단추)")
             isChecked = prefs.getBoolean(KEY_LAPS, true)
         }
         val minutesBox = LinearLayout(activity).apply {
@@ -132,6 +134,9 @@ internal class TimerController(
                 orientation = LinearLayout.HORIZONTAL
                 for (m in StudyTimer.PRESET_MINUTES) {
                     addView(smallButton("${m}분") { minutes.setText(m.toString()) }.apply {
+                        // 휴대폰 세로처럼 좁아도 '120분'까지 다 보이게 옆 여백 없이 칸을 나눠 쓴다
+                        setPadding(0, 0, 0, 0)
+                        maxLines = 1
                         layoutParams = LinearLayout.LayoutParams(0, dp(40), 1f).apply { marginEnd = dp(4) }
                     })
                 }
@@ -141,10 +146,11 @@ internal class TimerController(
         val modes = MaterialButtonToggleGroup(activity).apply {
             isSingleSelection = true
             isSelectionRequired = true
-            val a = modeButton("시험 (남은 시간)")
-            val b = modeButton("풀이 (경과 시간)")
-            addView(a)
-            addView(b)
+            // 두 단추가 폭을 반씩 나눠 쓰고, 모자라면 괄호 앞에서 두 줄로 ('시험' / '(남은 시간)')
+            val a = modeButton(keepTogether("시험", "(남은 시간)"))
+            val b = modeButton(keepTogether("풀이", "(경과 시간)"))
+            addView(a, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(b, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             check(a.id)
             addOnButtonCheckedListener { _, id, checked ->
                 if (!checked) return@addOnButtonCheckedListener
@@ -568,7 +574,16 @@ internal class TimerController(
             this.text = text
             isAllCaps = false
             textSize = 14f
+            maxLines = 2
+            setPadding(dp(8), paddingTop, dp(8), paddingBottom)
         }
+
+    /**
+     * [head]와 [tail]을 한 칸 띄워 잇되, 각각의 안에서는 줄을 바꾸지 않는다 (띄어쓰기를 줄바꿈 없는 공백으로).
+     * 폭이 넉넉하면 한 줄, 모자라면 [head] 뒤에서만 줄이 바뀐다
+     */
+    private fun keepTogether(head: String, tail: String) =
+        head.replace(' ', ' ') + " " + tail.replace(' ', ' ')
 
     companion object {
         private const val KEY_STATE = "timerState"

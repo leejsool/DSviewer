@@ -6,12 +6,15 @@ import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import com.google.android.material.color.MaterialColors
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.materialswitch.MaterialSwitch
@@ -25,13 +28,18 @@ class OptionItem(
     val hint: String? = null,
 )
 
-/** 여럿 중 하나를 고르는 항목 (라디오): [labels]마다 설명 [hints], 지금 고른 번호 [get], 고르면 [set] */
+/**
+ * 여럿 중 하나를 고르는 항목 (라디오): [labels]마다 설명 [hints], 지금 고른 번호 [get], 고르면 [set].
+ * [icon]이 있으면 제목 앞에, [icons]가 있으면 각 고를 것의 이름 앞에 아이콘을 둔다
+ */
 class OptionChoice(
     val title: String,
     val labels: List<String>,
     val hints: List<String>,
     val get: () -> Int,
     val set: (Int) -> Unit,
+    val icon: (() -> Drawable?)? = null,
+    val icons: List<() -> Drawable?> = emptyList(),
 )
 
 /**
@@ -45,10 +53,16 @@ class OptionCategory(
     val items: () -> List<OptionItem>,
     val choices: List<OptionChoice> = emptyList(),
     val onReorder: ((from: Int, to: Int) -> Unit)? = null,
+    val extras: List<OptionExtra> = emptyList(),
 ) {
-    constructor(title: String, desc: String, items: List<OptionItem>, choices: List<OptionChoice> = emptyList()) :
-        this(title, desc, { items }, choices)
+    constructor(
+        title: String, desc: String, items: List<OptionItem>, choices: List<OptionChoice> = emptyList(),
+        extras: List<OptionExtra> = emptyList(),
+    ) : this(title, desc, { items }, choices, null, extras)
 }
+
+/** 켜고 끄기·고르기로 나타낼 수 없는 항목: 제목 아래에 [view]가 만든 화면을 그대로 둔다 (목록을 새로 그릴 때마다 새로 만든다) */
+class OptionExtra(val title: String, val view: () -> View)
 
 /**
  * ⋮ ▸ 옵션: 한컴오피스 '사용자 설정'처럼 왼쪽에 범주(상단 툴바 · 하단 툴바 · 편의 옵션), 오른쪽에 그 범주의 항목을
@@ -66,54 +80,157 @@ class OptionsDialog(
     private lateinit var leftCol: LinearLayout
     private lateinit var rightCol: LinearLayout
     private lateinit var scroll: ScrollView
+    private lateinit var body: LinearLayout
+    private lateinit var header: TextView
+    private lateinit var catScroll: HorizontalScrollView
+    private lateinit var divider: View
+    private var dialog: AlertDialog? = null
+    /** 좁은 화면 배치(범주를 위에 가로로, 항목은 그 아래 온 너비로)인지. null = 아직 배치 전 */
+    private var narrow: Boolean? = null
+    /** 휴대폰 (가장 짧은 변이 600dp보다 좁다): 창을 화면 가득에 가깝게 */
+    private val phone get() = a.resources.configuration.smallestScreenWidthDp in 1 until 600
+    /** 범주가 하나뿐이면 범주 목록을 그리지 않는다 */
+    private val showCategories get() = categories.size > 1
+
+    /** 창이 떠 있는지 (화면을 새로 만들 때 다시 띄우려고) */
+    val isShowing get() = dialog?.isShowing == true
+
+    fun dismiss() {
+        dialog?.dismiss()
+    }
 
     fun show(start: Int = 0) {
         selected = start.coerceIn(0, categories.size - 1)
-        leftCol = LinearLayout(a).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, dp(4), dp(8), dp(4))
-        }
+        leftCol = LinearLayout(a)
         rightCol = LinearLayout(a).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(4), dp(4), dp(4), dp(4))
         }
         val outline = MaterialColors.getColor(a.window.decorView, com.google.android.material.R.attr.colorOutlineVariant)
-        val body = LinearLayout(a).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(dp(20), dp(8), dp(20), 0)
-            addView(leftCol, LinearLayout.LayoutParams(dp(130), ViewGroup.LayoutParams.MATCH_PARENT))
-            addView(View(a).apply { setBackgroundColor(outline) }, LinearLayout.LayoutParams(dp(1), ViewGroup.LayoutParams.MATCH_PARENT))
-            scroll = ScrollView(a).apply { addView(rightCol) }
-            addView(scroll, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        divider = View(a).apply { setBackgroundColor(outline) }
+        scroll = ScrollView(a).apply {
+            addView(rightCol)
+            // 아래에 항목이 더 있는 것을 알 수 있게 스크롤 막대를 늘 보인다 (가만히 있어도 흐려지지 않게)
+            isVerticalScrollBarEnabled = true
+            isScrollbarFadingEnabled = false
+            scrollBarStyle = View.SCROLLBARS_OUTSIDE_OVERLAY
         }
-        rebuild()
+        catScroll = HorizontalScrollView(a).apply {
+            isHorizontalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+        }
+        body = LinearLayout(a)
+        // 제목은 창 제목 대신 직접 그린다: 가로로 눕힌 휴대폰처럼 높이가 모자라면 숨겨 항목 자리를 넓힌다
+        header = TextView(a).apply {
+            text = "옵션"
+            textSize = 22f
+            setTextColor(MaterialColors.getColor(a.window.decorView, com.google.android.material.R.attr.colorOnSurface))
+            val side = dp(if (phone) 20 else 24)
+            setPadding(side, dp(if (phone) 18 else 24), side, dp(8))
+        }
         val box = LinearLayout(a).apply {
             orientation = LinearLayout.VERTICAL
+            addView(header)
             addView(body, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(380)))
         }
-        val dialog = MaterialAlertDialogBuilder(a)
-            .setTitle("옵션")
+        val builder = MaterialAlertDialogBuilder(a)
             .setView(box)
             .setNeutralButton("처음 값으로", null)
             .setPositiveButton("닫기", null)
-            .create()
-        dialog.show()
+        // 휴대폰에서는 창 바깥 여백을 줄여 화면을 넉넉히 쓴다 (기본은 위아래 80dp씩 비워 세로 화면에서 항목이 거의 안 보였다)
+        if (phone) builder.setBackgroundInsetStart(dp(8)).setBackgroundInsetEnd(dp(8))
+            .setBackgroundInsetTop(dp(12)).setBackgroundInsetBottom(dp(12))
+        val dlg = builder.create()
+        dialog = dlg
+        dlg.show()
         // '처음 값으로'는 눌러도 창을 닫지 않고 목록만 새로 그린다
-        dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+        dlg.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
             onReset()
             rebuild()
         }
-        // 태블릿에서는 한컴 설정 창처럼 넉넉한 너비로
-        dialog.window?.setLayout(minOf(dp(640), (a.resources.displayMetrics.widthPixels * 0.94f).toInt()), ViewGroup.LayoutParams.WRAP_CONTENT)
+        applySize()
+        // 화면을 돌리면(뷰어는 화면을 새로 만들지 않는다) 새 크기에 맞춰 창 너비·높이와 배치를 다시 정한다
+        val root = a.window.decorView
+        val onResize = View.OnLayoutChangeListener { _, l, t, r, b, ol, ot, or, ob ->
+            if (r - l != or - ol || b - t != ob - ot) body.post { applySize() }
+        }
+        root.addOnLayoutChangeListener(onResize)
+        dlg.setOnDismissListener {
+            root.removeOnLayoutChangeListener(onResize)
+            dialog = null
+        }
+    }
+
+    /** 지금 화면 크기에 맞춰 배치·창 너비·항목 칸 높이를 정한다 */
+    private fun applySize() {
+        val dlg = dialog ?: return
+        val root = a.window.decorView
+        val dm = a.resources.displayMetrics
+        val w = root.width.takeIf { it > 0 } ?: dm.widthPixels
+        val h = root.height.takeIf { it > 0 } ?: dm.heightPixels
+        val bars = ViewCompat.getRootWindowInsets(root)
+            ?.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+        val usableW = w - (bars?.let { it.left + it.right } ?: 0)
+        val usableH = h - (bars?.let { it.top + it.bottom } ?: 0)
+        arrange(narrowNow = usableW / d < 560)
+        // 높이가 모자라면(가로로 눕힌 휴대폰) 제목을 숨긴다
+        val short = usableH / d < 480
+        header.visibility = if (short) View.GONE else View.VISIBLE
+        // 창 바깥 여백 + 아래 단추 줄 + 제목
+        val chrome = dp(if (phone) 24 else 160) + dp(68) + if (short) dp(8) else dp(64)
+        val bodyH = (usableH - chrome).coerceIn(dp(140), dp(if (phone) 560 else 380))
+        (body.layoutParams as LinearLayout.LayoutParams).let {
+            if (it.height != bodyH) {
+                it.height = bodyH
+                body.layoutParams = it
+            }
+        }
+        // 태블릿에서는 한컴 설정 창처럼 넉넉한 너비로, 휴대폰은 화면 가득에 가깝게 (가로로 눕혀도 지나치게 넓지 않게)
+        val winW = if (phone) minOf(usableW, dp(760)) else minOf(dp(640), (usableW * 0.94f).toInt())
+        dlg.window?.setLayout(winW, ViewGroup.LayoutParams.WRAP_CONTENT)
+    }
+
+    /** 넓은 화면: 왼쪽에 범주, 오른쪽에 항목. 좁은 화면(휴대폰 세로): 위에 범주를 가로로, 그 아래 항목을 온 너비로 */
+    private fun arrange(narrowNow: Boolean) {
+        if (narrow == narrowNow) return
+        narrow = narrowNow
+        body.removeAllViews()
+        catScroll.removeAllViews()
+        if (narrowNow) {
+            body.orientation = LinearLayout.VERTICAL
+            body.setPadding(dp(12), 0, dp(12), 0)
+            leftCol.orientation = LinearLayout.HORIZONTAL
+            leftCol.setPadding(dp(4), dp(2), dp(4), dp(8))
+            if (showCategories) {
+                catScroll.addView(leftCol)
+                body.addView(catScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+                body.addView(divider, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)))
+            }
+            body.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        } else {
+            body.orientation = LinearLayout.HORIZONTAL
+            body.setPadding(dp(20), dp(8), dp(20), 0)
+            leftCol.orientation = LinearLayout.VERTICAL
+            leftCol.setPadding(0, dp(4), dp(8), dp(4))
+            if (showCategories) {
+                body.addView(leftCol, LinearLayout.LayoutParams(dp(130), ViewGroup.LayoutParams.MATCH_PARENT))
+                body.addView(divider, LinearLayout.LayoutParams(dp(1), ViewGroup.LayoutParams.MATCH_PARENT))
+            }
+            body.addView(scroll, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        }
+        rebuild()
     }
 
     private fun rebuild() {
         leftCol.removeAllViews()
         categories.forEachIndexed { i, c ->
-            leftCol.addView(categoryRow(c.title, i == selected) {
+            val row = categoryRow(c.title, i == selected) {
                 selected = i
                 rebuild()
-            })
+                scroll.scrollTo(0, 0)
+            }
+            if (narrow == true) leftCol.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(6) })
+            else leftCol.addView(row)
         }
         rightCol.removeAllViews()
         val c = categories[selected]
@@ -126,7 +243,21 @@ class OptionsDialog(
         val box = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
         c.items().forEachIndexed { i, item -> box.addView(itemRow(item, if (c.onReorder != null) i else -1, box, c)) }
         rightCol.addView(box)
+        for (extra in c.extras) rightCol.addView(extraBlock(extra))
         for (choice in c.choices) rightCol.addView(choiceBlock(choice))
+    }
+
+    private fun extraBlock(e: OptionExtra): View = LinearLayout(a).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(12), dp(14), dp(8), dp(6))
+        addView(TextView(a).apply {
+            text = e.title
+            textSize = 15f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurface))
+            setPadding(0, 0, 0, dp(8))
+        })
+        addView(e.view())
     }
 
     private fun choiceBlock(c: OptionChoice): View {
@@ -134,20 +265,39 @@ class OptionsDialog(
             orientation = LinearLayout.VERTICAL
             setPadding(dp(12), dp(14), dp(8), dp(6))
         }
-        box.addView(TextView(a).apply {
+        val titleRow = LinearLayout(a).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        c.icon?.let { ic ->
+            titleRow.addView(ImageView(a).apply {
+                setImageDrawable(ic())
+                scaleType = ImageView.ScaleType.FIT_CENTER
+            }, LinearLayout.LayoutParams(dp(28), dp(28)).apply { marginEnd = dp(10) })
+        }
+        titleRow.addView(TextView(a).apply {
             text = c.title
             textSize = 15f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurface))
         })
+        box.addView(titleRow)
         val group = android.widget.RadioGroup(a).apply { orientation = LinearLayout.VERTICAL }
         val hintColor = MaterialColors.getColor(a.window.decorView, com.google.android.material.R.attr.colorOnSurfaceVariant)
+        val iconSize = dp(24)
+        val iconGap = dp(8)
         c.labels.forEachIndexed { i, label ->
             val row = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
+            val choiceIcon = c.icons.getOrNull(i)?.invoke()?.apply { setBounds(0, 0, iconSize, iconSize) }
             row.addView(android.widget.RadioButton(a).apply {
                 text = label
                 textSize = 15f
                 id = View.generateViewId()
+                // 동그라미와 이름 사이에 아이콘
+                if (choiceIcon != null) {
+                    setCompoundDrawablesRelative(choiceIcon, null, null, null)
+                    compoundDrawablePadding = iconGap
+                }
                 isChecked = i == c.get()
                 setOnClickListener {
                     if (c.get() != i) {
@@ -160,7 +310,8 @@ class OptionsDialog(
                 text = c.hints.getOrNull(i).orEmpty()
                 textSize = 12f
                 setTextColor(hintColor)
-                setPadding(dp(40), 0, dp(8), dp(6))
+                // 설명은 이름 첫 글자에 맞춘다 (아이콘이 있으면 그만큼 더 들여)
+                setPadding(dp(40) + if (choiceIcon != null) iconSize + iconGap else 0, 0, dp(8), dp(6))
             })
             group.addView(row)
         }
@@ -171,8 +322,14 @@ class OptionsDialog(
     private fun categoryRow(title: String, on: Boolean, click: () -> Unit) = TextView(a).apply {
         text = title
         textSize = 15f
-        gravity = Gravity.CENTER_VERTICAL
-        setPadding(dp(12), dp(12), dp(8), dp(12))
+        // 좁은 화면에서 위에 가로로 놓을 때는 글자가 파란 네모 한가운데 오게 좌우 여백을 같게
+        if (narrow == true) {
+            gravity = Gravity.CENTER
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+        } else {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(12), dp(12), dp(8), dp(12))
+        }
         setTextColor(if (on) ContextCompat.getColor(a, R.color.active_stroke) else MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurface))
         if (on) {
             setTypeface(typeface, android.graphics.Typeface.BOLD)

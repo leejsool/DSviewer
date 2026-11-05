@@ -78,6 +78,8 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
     var selectedIndex = -1
         private set
     val tabCount get() = tabs.size
+    /** 맨 뒤의 이만큼 탭('새 탭')은 끌어 옮길 수 없고, 다른 탭을 끌어도 그 뒤로는 못 간다 */
+    var fixedTail = 0
 
     /** 고른 탭 색 = 탭 바로 아래 화면의 바탕색 (기본은 colorSurface) */
     var activeFill = MaterialColors.getColor(this, com.google.android.material.R.attr.colorSurface)
@@ -191,8 +193,11 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
         }
     }
 
+    /** 끌어서 놓을 수 있는 마지막 자리 */
+    private val lastMovable get() = tabs.lastIndex - fixedTail.coerceIn(0, tabs.size)
+
     private fun startDrag(t: TabView, rawX: Float) {
-        if (tabs.size < 2) return
+        if (lastMovable < 1 || tabs.indexOf(t) > lastMovable) return
         dragTab = t
         dragFrom = tabs.indexOf(t)
         dragTo = dragFrom
@@ -216,8 +221,8 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
         val tw = t.width.takeIf { it > 0 } ?: return
         val loc = IntArray(2)
         row.getLocationOnScreen(loc)
-        val desiredLeft = (dragRawX - loc[0] - dragGrab).coerceIn(0f, (tw * (tabs.size - 1)).toFloat())
-        dragTo = ((desiredLeft + tw / 2f) / tw).toInt().coerceIn(0, tabs.lastIndex)
+        val desiredLeft = (dragRawX - loc[0] - dragGrab).coerceIn(0f, (tw * lastMovable).toFloat())
+        dragTo = ((desiredLeft + tw / 2f) / tw).toInt().coerceIn(0, lastMovable)
         t.translationX = desiredLeft - dragFrom * tw
         tabs.forEachIndexed { k, o ->
             if (o === t) return@forEachIndexed
@@ -487,11 +492,15 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
             }
             title.setTextSize(TypedValue.COMPLEX_UNIT_SP, if (c) 12f else 13f)
             if (closable) {
-                val pad = px(if (c) 7f else 9f)
-                close.setPadding(pad, pad, pad, pad)
+                // × 그림은 왼쪽 문서 아이콘과 같은 크기, 좌우 여백도 아이콘처럼 좁게 (누르는 자리는 위아래로 넉넉히)
+                val glyph = if (c) 14f else 16f
+                val padV = px(if (c) 7f else 9f)
+                val padH = px(1f)
+                close.setPadding(padH, padV, padH, padV)
                 (close.layoutParams as LayoutParams).apply {
-                    width = px(if (c) 28f else 34f); height = width
-                    marginStart = px(if (c) 1f else 2f)
+                    width = px(glyph + 2f)
+                    height = px(glyph) + padV * 2
+                    marginStart = px(if (c) 3f else 5f)
                 }
             }
             refreshClose()
@@ -504,7 +513,8 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
             if (closable) close.visibility = if (showClose) View.VISIBLE else View.GONE
             val f = foot.toInt()
             val side = px(if (small) 3f else 4f)
-            setPadding(f + side, px(2f), f + if (showClose) px(2f) else side, 0)
+            // 오른쪽 끝 여백도 왼쪽(아이콘 앞)과 같게
+            setPadding(f + side, px(2f), f + side, 0)
         }
 
         fun setTitle(t: CharSequence) {

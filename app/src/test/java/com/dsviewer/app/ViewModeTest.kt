@@ -25,4 +25,22 @@ class ViewModeTest {
         assertTrue(ViewMode.READ.readOnly && !ViewMode.READ.inkHidden)
         assertTrue(ViewMode.READ_HIDDEN.readOnly && ViewMode.READ_HIDDEN.inkHidden)
     }
+
+    @Test fun openModeDefaultsToWriteAndKeepsRememberedReadMode() {
+        assertEquals(OpenMode.WRITE, OpenMode.of(null))
+        assertEquals(ViewMode.WRITE, ViewMode.startMode(null, OpenMode.WRITE))
+        assertEquals(ViewMode.WRITE, ViewMode.startMode(ViewMode.WRITE, OpenMode.WRITE))
+        assertEquals(ViewMode.READ, ViewMode.startMode(ViewMode.READ, OpenMode.WRITE))           // 지난번 읽기 모드는 그대로
+        assertEquals(ViewMode.READ_HIDDEN, ViewMode.startMode(ViewMode.READ_HIDDEN, OpenMode.READ))
+    }
+
+    @Test fun presentOpenModeStartsInWriteMode() {
+        assertEquals(ViewMode.WRITE, ViewMode.startMode(null, OpenMode.PRESENT))
+        assertEquals(ViewMode.WRITE, ViewMode.startMode(ViewMode.READ_HIDDEN, OpenMode.PRESENT))
+    }
+
+    @Test fun readOpenModeStartsReadingEvenIfLastClosedWriting() {
+        assertEquals(ViewMode.READ, ViewMode.startMode(null, OpenMode.READ))
+        assertEquals(ViewMode.READ, ViewMode.startMode(ViewMode.WRITE, OpenMode.READ))
+    }
 }

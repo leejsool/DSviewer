@@ -111,6 +111,8 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var toolbar: MaterialToolbar
     private lateinit var tabs: ChromeTabBar
+    /** 새 탭으로 띄웠을 때 맨 위에 그리는 뷰어의 문서 탭 줄 (맨 뒤 '새 탭'을 고른 채) */
+    private lateinit var openTabsBar: ChromeTabBar
     private lateinit var list: RecyclerView
     private lateinit var emptyText: TextView
     private lateinit var progress: View
@@ -155,8 +157,10 @@ class MainActivity : AppCompatActivity() {
     private var pickMode = false
     /** 즐겨찾기 탭의 현재 폴더 (null = 즐겨찾기 맨 위) */
     private var favDir: String? = null
-    /** 큰 아이콘으로 보기 */
-    private var grid = false
+    /** 목록 보기 방식 (1줄 · 2줄 · 큰 썸네일). 세로 화면과 가로 화면에서 따로 기억한다 */
+    private var listView = ListView.ONE
+    /** 큰 썸네일로 보기 */
+    private val grid get() = listView == ListView.GRID
     /** 목록 줄의 글: 문서 수를 받아 만든다 */
     private var barLabel: (Int) -> String = { "" }
     /** 불러온 그림을 썸네일로 쓸 문서 */
@@ -201,6 +205,8 @@ class MainActivity : AppCompatActivity() {
 
         toolbar = findViewById(R.id.toolbar)
         tabs = findViewById(R.id.tabs)
+        openTabsBar = findViewById(R.id.openTabs)
+        setupOpenTabs()
         list = findViewById(R.id.list)
         emptyText = findViewById(R.id.emptyText)
         progress = findViewById(R.id.progress)
@@ -228,7 +234,8 @@ class MainActivity : AppCompatActivity() {
 
         list.adapter = adapter
         list.addItemDecoration(TreeDecoration())
-        grid = prefs.getBoolean("grid", false)
+        listView = ListView.of(prefs.getString(listViewKey(), null), prefs.getBoolean("grid", false), isLandscape())
+        extShow = ExtShow.of(prefs.getString(KEY_EXT_SHOW, null))
         applyViewMode()
         list.addOnLayoutChangeListener { _, l, _, r, _, ol, _, or, _ ->
             // 레이아웃 도중에 바꾸면 무시될 수 있어 다음 차례에
@@ -238,11 +245,7 @@ class MainActivity : AppCompatActivity() {
         newFolderButton.setOnClickListener { editFolder(null, favDir) }
         filterButton.setOnClickListener { showFilterDialog() }
         sortButton.setOnClickListener { showSortMenu() }
-        viewButton.setOnClickListener {
-            grid = !grid
-            prefs.edit().putBoolean("grid", grid).apply()
-            applyViewMode()
-        }
+        viewButton.setOnClickListener { showViewMenu() }
         findViewById<View>(R.id.permButton).setOnClickListener { askAccess() }
         setupMenu()
         reorder.attachToRecyclerView(list)
@@ -278,6 +281,8 @@ class MainActivity : AppCompatActivity() {
         onBackPressedDispatcher.addCallback(this, backCallback)
         setPickMode(intent.getBooleanExtra(EXTRA_PICK, false))
         checkDrafts()
+        // 옵션 창을 띄운 채 화면을 돌렸으면 새 방향에 맞춘 창으로 다시 띄운다
+        if (savedInstanceState?.getBoolean(STATE_OPTIONS_OPEN) == true) showOptions()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -289,10 +294,15 @@ class MainActivity : AppCompatActivity() {
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         outState.putString("thumbTarget", thumbTarget)
+        outState.putBoolean(STATE_OPTIONS_OPEN, optionsDialog?.isShowing == true)
     }
 
     override fun onResume() {
         super.onResume()
+        // 뷰어에서 '새 탭'을 닫았거나 뷰어가 끝났으면 문서 고르기도 끝낸다. 아니면 위 탭 줄을 뷰어의 지금 탭들로
+        if (pickMode) {
+            if (ViewerActivity.newTabOpen && ViewerActivity.tabSnapshot.isNotEmpty()) showOpenTabs() else setPickMode(false)
+        }
         updater.onResume()
         // 권한 설정에서 돌아왔거나, 문서를 저장하고 돌아왔을 수 있으므로 매번 새로 읽는다
         refresh()
@@ -306,6 +316,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupMenu() {
         toolbar.inflateMenu(R.menu.main)
+        // ⋮ 메뉴 안의 항목(다른 위치에서 열기 · 옵션 · 앱 정보)에도 아이콘을 보인다
+        @android.annotation.SuppressLint("RestrictedApi")
+        (toolbar.menu as? androidx.appcompat.view.menu.MenuBuilder)?.setOptionalIconsVisible(true)
         searchItem = toolbar.menu.findItem(R.id.action_search)
         (searchItem.actionView as SearchView).apply {
             queryHint = "파일 이름"
@@ -337,6 +350,7 @@ class MainActivity : AppCompatActivity() {
                 R.id.action_open_tabs -> { backToViewer(); true }
                 R.id.action_recover -> { showRecoverDialog(pendingDrafts()); true }
                 R.id.action_review -> { showReviewDialog(); true }
+                R.id.action_options -> { showOptions(); true }
                 R.id.action_lock_password -> { Locks.changePassword(this); true }
                 R.id.action_about -> { updater.show(); true }
                 else -> false
@@ -581,23 +595,41 @@ class MainActivity : AppCompatActivity() {
 
     /**
      * 폴더 계단: [links](맨 위 폴더 … 지금 폴더)를 한 칸씩 더 들여 쓴 폴더 머리글로 늘어놓고,
-     * 지금 폴더 안의 줄들을 그 아래에 가지선으로 잇는다. 빈 폴더도 머리글은 보이고 (안내 글은 그 아래에 따로 뜬다)
+     * 지금 폴더 안의 줄들을 그 아래에 가지선으로 잇는다. 빈 폴더도 머리글은 보이고 (안내 글은 그 아래에 따로 뜬다).
+     * 깊이 들어가도 끝 [FolderChain.MAX_LEVELS]단계만 늘어놓고, 그 위 폴더들은 맨 위 '…' 한 줄로 줄인다
+     * (누르면 줄어든 폴더 중 가장 아래 것으로). 그래서 일정 깊이 이상은 더 들여 쓰지 않는다
      */
     private fun withChain(children: List<Row>, links: List<Link>): List<Row> {
         if (links.isEmpty()) return children
         val out = ArrayList<Row>()
-        links.forEachIndexed { i, l ->
-            val last = i == links.lastIndex
+        val start = FolderChain.start(links.size)
+        if (start > 0) {
+            val above = links[start - 1]
+            out += Row("…", "", Kind.HEADER, { above.onClick?.invoke() }, folder = FolderDrawable(FOLDER_COLOR, TapePattern.SOLID))
+                .also { it.indent = 0 }
+        }
+        val shown = links.drop(start)
+        shown.forEachIndexed { i, l ->
+            val last = i == shown.lastIndex
             val count = if (!last) "" else if (children.isEmpty()) "비어 있음" else "${children.size}개"
             out += Row(l.name, count, Kind.HEADER, { l.onClick?.invoke() }, folder = l.icon).also { it.indent = i }
         }
         children.forEachIndexed { n, r ->
             r.tree = if (n == children.lastIndex) 2 else 1
-            r.indent = links.lastIndex
+            r.indent = shown.lastIndex
             out += r
         }
         return out
     }
+
+    /** 휴대폰 (가장 짧은 변이 600dp보다 좁다): 폴더 계단을 반만 들여 쓰고 맨 위 폴더를 왼쪽 끝에 붙인다 */
+    private val phone get() = resources.configuration.smallestScreenWidthDp in 1 until 600
+
+    /** 폴더 계단 한 단계의 들여쓰기 (dp) */
+    private val stepDp get() = if (phone) STEP_DP / 2 else STEP_DP
+
+    /** 휴대폰에서 머리글을 왼쪽 끝에 붙이며 당긴 만큼, 그 아래 가지선 줄도 당겨 가지선이 폴더 그림 아래에 오게 한다 (px) */
+    private val chainShift get() = if (phone) dp(HEADER_PAD_DP) else 0
 
     /** 최근에 연 문서 */
     private fun recentRows(): List<Row> {
@@ -662,7 +694,8 @@ class MainActivity : AppCompatActivity() {
             e.name, "", Kind.FOLDER, { openDir(e.file) },
             folder = FolderDrawable(FOLDER_COLOR, TapePattern.SOLID), modified = e.time, dir = e.file,
         )
-        val info = "${date(e.time)} · ${Formatter.formatShortFileSize(this, e.size)}"
+        // 용량은 옵션 ▸ 목록 표시에서 끌 수 있다
+        val info = if (prefs.getBoolean(KEY_SHOW_SIZE, true)) "${date(e.time)} · ${Formatter.formatShortFileSize(this, e.size)}" else date(e.time)
         val sub = if (showPath) "${e.file.parentFile?.let(::shortPath) ?: ""} · $info" else info
         val uri = Uri.fromFile(e.file)
         val item = rec[uri.toString()]
@@ -686,7 +719,11 @@ class MainActivity : AppCompatActivity() {
     }
 
 
-    private fun date(t: Long) = DateFormat.format("yyyy.MM.dd HH:mm", Date(t)).toString()
+    /** 목록의 날짜 (옵션 ▸ 목록 표시에서 연월일까지 / 시간까지) */
+    private fun date(t: Long) = DateFormat.format(DateShow.of(prefs.getString(KEY_DATE_SHOW, null)).pattern, Date(t)).toString()
+
+    /** 옵션 ▸ 목록 표시 ▸ 문서 종류 (기본은 아이콘 표시: 'PDF' 표시만 두고 이름에서 확장자를 뺀다) */
+    private var extShow = ExtShow.ICON
 
     /** /storage/emulated/0/Download/학교 → 내장 메모리/Download/학교 */
     private fun shortPath(f: File): String {
@@ -984,10 +1021,37 @@ class MainActivity : AppCompatActivity() {
     /** 정렬 ▸ 폴더를 파일보다 위로(기본) / 아래로 */
     private fun foldersFirst() = prefs.getBoolean("foldersFirst", true)
 
-    private fun spanCount(): Int {
-        // 목록으로 볼 때 가로 화면이면 두 칸으로 나눠 오른쪽도 쓴다
-        val landscape = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-        return ListSort.spanCount(grid, landscape, list.width - list.paddingLeft - list.paddingRight, resources.displayMetrics.density)
+    private fun spanCount(): Int =
+        ListSort.spanCount(listView, list.width - list.paddingLeft - list.paddingRight, resources.displayMetrics.density)
+
+    private fun isLandscape() = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+
+    /** 보기 방식은 세로 화면·가로 화면마다 따로 (가로에서 2줄로 봐도 세로로 돌리면 세로에서 고른 대로) */
+    private fun listViewKey() = if (isLandscape()) "listViewLand" else "listViewPort"
+
+    private fun ListView.icon() = when (this) {
+        ListView.ONE -> R.drawable.ic_view_list
+        ListView.TWO -> R.drawable.ic_view_list_two
+        ListView.GRID -> R.drawable.ic_grid_view
+    }
+
+    /** 보기 단추: 1줄 보기 · 2줄 보기 · 큰 썸네일로 보기 중에서 고른다 (지금 것은 ✓) */
+    private fun showViewMenu() {
+        val popup = android.widget.PopupMenu(this, viewButton)
+        ListView.entries.forEachIndexed { i, v ->
+            popup.menu.add(0, i, i, if (v == listView) "${v.label}  ✓" else v.label).setIcon(v.icon())
+        }
+        popup.setForceShowIcon(true)
+        popup.setOnMenuItemClickListener { item ->
+            val v = ListView.entries[item.itemId]
+            if (v != listView) {
+                listView = v
+                prefs.edit().putString(listViewKey(), v.name).apply()
+                applyViewMode()
+            }
+            true
+        }
+        popup.show()
     }
 
     private fun applyViewMode() {
@@ -1002,8 +1066,9 @@ class MainActivity : AppCompatActivity() {
         }
         list.layoutManager = lm
         state?.let { list.layoutManager?.onRestoreInstanceState(it) }
-        viewButton.setIconResource(if (grid) R.drawable.ic_view_list else R.drawable.ic_grid_view)
-        val label = if (grid) "목록으로 보기" else "큰 아이콘으로 보기"
+        // 단추에는 지금 보기 방식의 그림
+        viewButton.setIconResource(listView.icon())
+        val label = "보기 방식: ${listView.label}"
         viewButton.contentDescription = label
         viewButton.tooltipText = label
         adapter.notifyDataSetChanged()
@@ -1109,12 +1174,12 @@ class MainActivity : AppCompatActivity() {
     private fun newNote() {
         val view = layoutInflater.inflate(R.layout.dialog_new_note, null)
         val orientGroup = view.findViewById<MaterialButtonToggleGroup>(R.id.orientGroup)
-        val lastPaper = prefs.getString("notePaper", null)?.let { n -> Paper.entries.firstOrNull { it.name == n } } ?: Paper.GRID
-        val picker = PaperPicker(this, lastPaper)
+        // 바탕·방향은 ⋮ ▸ 옵션 ▸ 새 노트에서 정한 기본값으로 골라 둔다 (여기서 바꿔 만들어도 기본값은 그대로)
+        val picker = PaperPicker(this, defaultNotePaper())
         view.findViewById<android.widget.FrameLayout>(R.id.paperPickerHost).addView(picker.view)
-        // 방향은 지금 기기가 세로면 세로, 가로면 가로가 기본
         val dm = resources.displayMetrics
-        orientGroup.check(if (NoteDefaults.portrait(dm.widthPixels, dm.heightPixels)) R.id.orientPortrait else R.id.orientLandscape)
+        val orient = NoteDefaults.orientOf(prefs.getString(KEY_NOTE_ORIENT, null))
+        orientGroup.check(if (NoteDefaults.portrait(orient, dm.widthPixels, dm.heightPixels)) R.id.orientPortrait else R.id.orientLandscape)
         view.findViewById<TextView>(R.id.orientLabel).text = "방향 (A4)"
         MaterialAlertDialogBuilder(this)
             .setTitle("새 노트")
@@ -1122,11 +1187,118 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("만들기") { _, _ ->
                 val paper = picker.selected
                 val portrait = orientGroup.checkedButtonId == R.id.orientPortrait
-                prefs.edit().putString("notePaper", paper.name).apply()
                 createNote(paper, portrait)
             }
             .setNegativeButton("취소", null)
             .show()
+    }
+
+    /** 새 노트 바탕 기본값 (옵션에서 정한 것. 예전에는 마지막에 쓴 바탕을 같은 이름표에 적었으므로 그것이 이어진다) */
+    private fun defaultNotePaper(): Paper =
+        prefs.getString(KEY_NOTE_PAPER, null)?.let { n -> Paper.entries.firstOrNull { it.name == n } } ?: Paper.GRID
+
+    /** ⋮ ▸ 옵션: 문서를 열기 전에 정해 둘 것들 (지금은 새 노트의 바탕·방향 기본값) */
+    private fun showOptions() {
+        val note = OptionCategory(
+            "새 노트",
+            "‘새 노트’를 만들 때 처음 골라 둘 바탕과 방향입니다. 만드는 창에서 그때그때 바꿀 수도 있습니다.",
+            items = emptyList(),
+            choices = listOf(
+                OptionChoice(
+                    "방향 기본값",
+                    NoteDefaults.Orient.entries.map { it.label },
+                    NoteDefaults.Orient.entries.map { it.hint },
+                    { NoteDefaults.orientOf(prefs.getString(KEY_NOTE_ORIENT, null)).ordinal },
+                    { i -> prefs.edit().putString(KEY_NOTE_ORIENT, NoteDefaults.Orient.entries[i].name).apply() },
+                    // 세로·가로는 새 노트 창의 방향 단추와 같은 그림
+                    icons = NoteDefaults.Orient.entries.map { o ->
+                        val res = when (o) {
+                            NoteDefaults.Orient.AUTO -> R.drawable.ic_orient_auto
+                            NoteDefaults.Orient.PORTRAIT -> R.drawable.ic_orient_portrait
+                            NoteDefaults.Orient.LANDSCAPE -> R.drawable.ic_orient_landscape
+                        }
+                        val icon: () -> Drawable? = { getDrawable(res)?.mutate() }
+                        icon
+                    },
+                ),
+            ),
+            extras = listOf(
+                OptionExtra("바탕 기본값") {
+                    PaperPicker(this, defaultNotePaper()) { p -> prefs.edit().putString(KEY_NOTE_PAPER, p.name).apply() }.view
+                },
+            ),
+        )
+        fun icon(res: Int): () -> Drawable? = { getDrawable(res)?.mutate() }
+        val listShow = OptionCategory(
+            "목록 표시",
+            "문서 목록의 한 줄에 무엇을 보일지 고릅니다.",
+            items = listOf(
+                OptionItem(icon(R.drawable.ic_storage), "용량 표시", { prefs.getBoolean(KEY_SHOW_SIZE, true) }, { on ->
+                    prefs.edit().putBoolean(KEY_SHOW_SIZE, on).apply()
+                    refresh()
+                    true
+                }, "모든 문서·폴더 탭에서 날짜 뒤에 파일 크기(예: 820kB)를 보입니다."),
+            ),
+            choices = listOf(
+                OptionChoice(
+                    "문서 종류",
+                    ExtShow.entries.map { it.label },
+                    ExtShow.entries.map { it.hint },
+                    { extShow.ordinal },
+                    { i ->
+                        extShow = ExtShow.entries[i]
+                        prefs.edit().putString(KEY_EXT_SHOW, extShow.name).apply()
+                        adapter.notifyDataSetChanged()
+                    },
+                    icon = icon(R.drawable.ic_doc),
+                    icons = listOf(icon(R.drawable.ic_badge_icon), icon(R.drawable.ic_badge_ext), icon(R.drawable.ic_badge_both)),
+                ),
+                OptionChoice(
+                    "날짜",
+                    DateShow.entries.map { it.label },
+                    DateShow.entries.map { "예: " + DateFormat.format(it.pattern, Date()).toString() },
+                    { DateShow.of(prefs.getString(KEY_DATE_SHOW, null)).ordinal },
+                    { i ->
+                        prefs.edit().putString(KEY_DATE_SHOW, DateShow.entries[i].name).apply()
+                        refresh()
+                    },
+                    icon = icon(R.drawable.ic_calendar),
+                    icons = listOf(icon(R.drawable.ic_calendar), icon(R.drawable.ic_clock)),
+                ),
+            ),
+        )
+        val open = OptionCategory(
+            "문서 열기",
+            "문서를 열 때 처음에 어떤 모드로 열지 고릅니다.",
+            items = emptyList(),
+            choices = listOf(
+                OptionChoice(
+                    "처음 모드",
+                    OpenMode.entries.map { it.label },
+                    OpenMode.entries.map { it.hint },
+                    { OpenMode.of(prefs.getString(OpenMode.KEY, null)).ordinal },
+                    { i -> prefs.edit().putString(OpenMode.KEY, OpenMode.entries[i].name).apply() },
+                    icon = icon(R.drawable.ic_doc),
+                    icons = listOf(icon(R.drawable.ic_write_mode), icon(R.drawable.ic_read_mode), icon(R.drawable.ic_present)),
+                ),
+            ),
+        )
+        optionsDialog = OptionsDialog(this, listOf(listShow, open, note)) {
+            prefs.edit().remove(KEY_NOTE_PAPER).remove(KEY_NOTE_ORIENT).remove(OpenMode.KEY)
+                .remove(KEY_EXT_SHOW).remove(KEY_DATE_SHOW).remove(KEY_SHOW_SIZE).apply()
+            extShow = ExtShow.ICON
+            refresh()
+        }.also { it.show() }
+    }
+
+    /** 떠 있는 옵션 창 (화면을 돌리면 탐색기를 새로 만들므로, 새 화면에서 다시 띄운다) */
+    private var optionsDialog: OptionsDialog? = null
+
+    override fun onDestroy() {
+        // 화면을 새로 만들 때 옛 화면에 붙은 창을 거둔다 (떠 있었는지는 onSaveInstanceState에 적어 두었다)
+        optionsDialog?.dismiss()
+        optionsDialog = null
+        super.onDestroy()
     }
 
     private fun createNote(paper: Paper, portrait: Boolean) {
@@ -1164,7 +1336,7 @@ class MainActivity : AppCompatActivity() {
         endSearch()
         val writable = if (newNote) false else if (uri.scheme == "file") File(uri.path ?: "").canWrite()
         else contentResolver.persistedUriPermissions.any { it.uri == uri && it.isWritePermission }
-        // 뷰어가 이미 떠 있으면 그 뷰어에 새 탭으로 연다
+        // 뷰어가 이미 떠 있으면 그 뷰어에 새 탭으로 연다 (새 탭에서 골랐으면 '새 탭' 자리가 그 문서 탭이 된다)
         startActivity(
             Intent(this, ViewerActivity::class.java)
                 .setData(uri)
@@ -1172,29 +1344,88 @@ class MainActivity : AppCompatActivity() {
                 .putExtra(ViewerActivity.EXTRA_WRITABLE, writable)
                 .putExtra(ViewerActivity.EXTRA_FROM_BROWSER, true)
                 .putExtra(ViewerActivity.EXTRA_NEW_NOTE, newNote)
-                .putExtra(ViewerActivity.EXTRA_START_REVIEW, startReview)
+                .putExtra(ViewerActivity.EXTRA_START_REVIEW, startReview),
+            if (pickMode) ViewerActivity.noAnimation(this) else null
         )
         setPickMode(false)
     }
 
-    /** 열린 문서 탭이 있는 뷰어로 돌아간다 */
+    /** 열린 문서 탭이 있는 뷰어로 돌아간다 (새 탭에서 고르던 중이면 '새 탭'을 닫는다) */
     private fun backToViewer() {
-        startActivity(Intent(this, ViewerActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
+        val fromPick = pickMode
+        ViewerActivity.newTabOpen = false
+        startActivity(
+            Intent(this, ViewerActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT),
+            if (fromPick) ViewerActivity.noAnimation(this) else null
+        )
         setPickMode(false)
+    }
+
+    /**
+     * 새 탭 화면 맨 위의 탭 줄: 뷰어의 문서 탭들 + 고른 '새 탭'. 고른 탭은 아래 탐색기 화면 바탕과 이어진다.
+     * 문서 탭을 누르면 '새 탭'은 그대로 둔 채 그 문서로 가고, '새 탭'의 ×(또는 뒤로 가기)는 고르기를 그만두고 돌아간다.
+     * 문서 탭을 닫거나 순서를 바꾸는 것은 뷰어에서 (여기 탭 줄은 뷰어 탭 줄을 그대로 보여 주기만 한다)
+     */
+    private fun setupOpenTabs() {
+        openTabsBar.activeFill = com.google.android.material.color.MaterialColors.getColor(
+            openTabsBar, com.google.android.material.R.attr.colorSurfaceContainerHigh
+        )
+        openTabsBar.listener = object : ChromeTabBar.Listener {
+            override fun onTabSelected(index: Int) {
+                if (index !in ViewerActivity.tabSnapshot.indices) return
+                startActivity(
+                    Intent(this@MainActivity, ViewerActivity::class.java)
+                        .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                        .putExtra(ViewerActivity.EXTRA_SELECT_TAB, index),
+                    ViewerActivity.noAnimation(this@MainActivity)
+                )
+                // 다시 이 화면으로 오면 '새 탭'이 골라져 있게
+                openTabsBar.post { openTabsBar.select(openTabsBar.tabCount - 1) }
+            }
+            override fun onTabClose(index: Int) {
+                if (index == openTabsBar.tabCount - 1) backToViewer()
+            }
+        }
+    }
+
+    /** 위 탭 줄을 뷰어의 지금 탭들로 다시 그린다 */
+    private fun showOpenTabs() {
+        while (openTabsBar.tabCount > 0) openTabsBar.removeTab(0)
+        for (t in ViewerActivity.tabSnapshot) {
+            val i = openTabsBar.addTab(t.name, t.icon, t.tint)
+            openTabsBar.setUnsaved(i, t.unsaved)
+        }
+        val gray = com.google.android.material.color.MaterialColors.getColor(
+            openTabsBar, com.google.android.material.R.attr.colorOnSurfaceVariant
+        )
+        val n = openTabsBar.addTab(ViewerActivity.NEW_TAB_TITLE, R.drawable.ic_folder, gray, closable = true)
+        // 여기서는 끌어서 순서를 바꾸지 않는다 (뷰어 탭 줄과 어긋나지 않게)
+        openTabsBar.fixedTail = openTabsBar.tabCount
+        openTabsBar.select(n)
     }
 
     private fun setPickMode(on: Boolean) {
         pickMode = on
         toolbar.subtitle = if (on) "새 탭에 열 문서를 고르세요" else null
-        // 고르는 중에는 왼쪽 ✕로 취소하고 열려 있던 탭으로 돌아간다 (이 화면에서 기존 탭을 보려면 취소해야 하므로)
-        if (on) {
-            toolbar.setNavigationIcon(R.drawable.ic_close)
-            toolbar.navigationContentDescription = "취소하고 열린 문서로 돌아가기"
-            toolbar.setNavigationOnClickListener { backToViewer() }
+        // 휴대폰 세로처럼 좁으면 학교 로고와 앱 이름을 빼서 안내 글이 잘리지 않게
+        val narrow = on && resources.configuration.screenWidthDp < 600
+        if (narrow) {
+            toolbar.logo = null
+            toolbar.title = null
         } else {
-            toolbar.navigationIcon = null
-            toolbar.setNavigationOnClickListener(null)
+            toolbar.setLogo(R.drawable.logo_school)
+            toolbar.setTitle(R.string.app_name)
         }
+        // 고르기를 그만두는 것은 위 '새 탭'의 ×나 뒤로 가기로
+        toolbar.navigationIcon = null
+        toolbar.setNavigationOnClickListener(null)
+        openTabsBar.isVisible = on
+        // 새 탭일 때는 바탕(상태 표시줄 뒤·탭 줄)을 뷰어 탭 줄 색으로: 뷰어와 한 화면처럼 이어진다
+        findViewById<View>(R.id.root).setBackgroundColor(
+            if (on) getColor(R.color.tab_frame)
+            else com.google.android.material.color.MaterialColors.getColor(toolbar, com.google.android.material.R.attr.colorSurfaceContainerHigh)
+        )
+        if (on) showOpenTabs()
     }
 
     // ================= 오늘 복습 =================
@@ -2297,7 +2528,8 @@ class MainActivity : AppCompatActivity() {
                 if (row.tree == 0 || row.kind == Kind.HEADER) continue
                 val tv = child.findViewById<View>(R.id.tree) ?: continue
                 if (tv.visibility != View.VISIBLE) continue
-                val x = child.left + child.translationX + tv.left + 24 * d
+                // 세로 가지선: 위 폴더 그림의 가운데 아래 (휴대폰은 그림 왼쪽 끝 조금 안쪽으로 당겨 이름 자리를 넓힌다)
+                val x = child.left + child.translationX + tv.left + (if (phone) TREE_LINE_PHONE_DP else TREE_LINE_DP) * d
                 val y0 = child.top + child.translationY
                 // 머리글 바로 아래 첫 줄은 머리글 칸 아래 여백(2dp)까지 이어서 그린다
                 val top = if (adapter.items.getOrNull(pos - 1)?.kind == Kind.HEADER) y0 - 2 * d else y0
@@ -2317,12 +2549,12 @@ class MainActivity : AppCompatActivity() {
         private val basePad = v.paddingLeft
 
         fun bind(r: Row) {
-            // 폴더 계단: 깊은 폴더일수록 오른쪽으로
-            itemView.setPadding(basePad + dp(STEP_DP) * r.indent, itemView.paddingTop, itemView.paddingRight, itemView.paddingBottom)
+            // 폴더 계단: 깊은 폴더일수록 오른쪽으로 (휴대폰은 맨 위 폴더를 왼쪽 끝에 붙이고 반만 들여 쓴다)
+            itemView.setPadding(basePad - chainShift + dp(stepDp) * r.indent, itemView.paddingTop, itemView.paddingRight, itemView.paddingBottom)
             icon.setImageDrawable(r.folder)
             name.text = r.title
             count.text = r.sub
-            chip.contentDescription = "${r.title} 폴더, 문서 ${r.sub}"
+            chip.contentDescription = if (r.title == "…") "더 위 폴더로" else "${r.title} 폴더, 문서 ${r.sub}"
             chip.setOnClickListener { if (!selecting) r.onClick() }
         }
     }
@@ -2352,16 +2584,27 @@ class MainActivity : AppCompatActivity() {
 
         fun bind(r: Row) {
             // 폴더 계단 아래 줄: 맨 아래 폴더만큼 들여 쓴다 (큰 아이콘 보기는 그대로)
-            if (!isGrid) itemView.setPadding(basePad + dp(STEP_DP) * r.indent, itemView.paddingTop, itemView.paddingRight, itemView.paddingBottom)
+            if (!isGrid) {
+                // 가지선 자리: 휴대폰은 좁게 (그만큼 썸네일·이름이 왼쪽으로)
+                tree?.layoutParams?.let { lp ->
+                    val w = dp(if (phone) TREE_WIDTH_PHONE_DP else TREE_WIDTH_DP)
+                    if (lp.width != w) {
+                        lp.width = w
+                        tree.layoutParams = lp
+                    }
+                }
+                val shift = if (r.tree != 0) chainShift else 0
+                itemView.setPadding(basePad - shift + dp(stepDp) * r.indent, itemView.paddingTop, itemView.paddingRight, itemView.paddingBottom)
+            }
             // 태그에 안 맞는 문서는 흐리게
             itemView.alpha = if (r.dim) DIM_ALPHA else 1f
-            name.text = r.title
+            name.text = if (r.isFolder) r.title else DocNames.shown(r.title, extShow)
             val s = if (isGrid) r.short else r.sub
             sub.text = s
             sub.isVisible = s.isNotEmpty()
             val color = DocColors.of(r.title)
-            val ext = r.title.substringAfterLast('.', "").uppercase()
-            badge.isVisible = !r.isFolder && ext.isNotEmpty() && ext.length <= 4
+            val ext = DocNames.ext(r.title).uppercase()
+            badge.isVisible = !r.isFolder && ext.isNotEmpty() && extShow.badge
             badge.text = ext
             badge.backgroundTintList = ColorStateList.valueOf(color)
             tree?.isVisible = r.tree != 0
@@ -2461,6 +2704,13 @@ class MainActivity : AppCompatActivity() {
 
         /** 폴더 계단에서 한 칸 들여 쓰는 너비 (dp) */
         private const val STEP_DP = 18
+        /** 폴더 머리글 줄의 왼쪽 여백 (item_group의 paddingStart) */
+        private const val HEADER_PAD_DP = 8
+        /** 가지선 자리의 너비와 그 안 세로선의 위치 (dp, item_recent의 tree). 휴대폰은 좁게 */
+        private const val TREE_WIDTH_DP = 36
+        private const val TREE_WIDTH_PHONE_DP = 20
+        private const val TREE_LINE_DP = 24
+        private const val TREE_LINE_PHONE_DP = 6
 
         /** 경로 줄에 폴더 그림으로 보일 폴더 수 (지금 폴더 + 그 위 두 폴더) */
         private const val CRUMBS_SHOWN = 3
@@ -2471,6 +2721,14 @@ class MainActivity : AppCompatActivity() {
         private var draftsChecked = false
         /** 뷰어의 ＋ 버튼으로 띄웠을 때: 고른 문서를 새 탭으로 열고, 뒤로 가면 뷰어로 돌아간다 */
         const val EXTRA_PICK = "pick"
+        /** 옵션 ▸ 새 노트: 바탕 기본값([Paper] 이름)과 방향 기본값([NoteDefaults.Orient] 이름) */
+        private const val KEY_NOTE_PAPER = "notePaper"
+        private const val KEY_NOTE_ORIENT = "noteOrient"
+        private const val STATE_OPTIONS_OPEN = "optionsOpen"
+        /** 옵션 ▸ 목록 표시: 문서 종류([ExtShow] 이름) · 날짜([DateShow] 이름) · 용량 보이기 */
+        private const val KEY_EXT_SHOW = "extShow"
+        private const val KEY_DATE_SHOW = "dateShow"
+        private const val KEY_SHOW_SIZE = "showSize"
         private val FOLDER_COLOR = Color.parseColor("#E8A317")
         private const val MANUAL_LABEL = "직접 정한 순서"
         private const val MANUAL_ID = 200

@@ -205,18 +205,53 @@ class ListSortTest {
 
     // ================= 칸 수 =================
 
-    @Test fun listViewHasOneColumnOrTwoInLandscape() {
-        assertEquals(1, ListSort.spanCount(false, false, 1000, 2f))
-        assertEquals(2, ListSort.spanCount(false, true, 1000, 2f))
-        assertEquals(1, ListSort.spanCount(false, false, 0, 2f))       // 너비를 몰라도
+    @Test fun listViewsHaveFixedColumns() {
+        assertEquals(1, ListSort.spanCount(ListView.ONE, 1000, 2f))
+        assertEquals(2, ListSort.spanCount(ListView.TWO, 1000, 2f))
+        assertEquals(1, ListSort.spanCount(ListView.ONE, 0, 2f))       // 너비를 몰라도
+        assertEquals(2, ListSort.spanCount(ListView.TWO, 0, 2f))
     }
 
     @Test fun gridColumnsFitOneHundredFortyDpCells() {
-        assertEquals(3, ListSort.spanCount(true, false, 0, 2f))          // 너비를 모르면 3
-        assertEquals(3, ListSort.spanCount(true, false, 900, 2f))        // 900 / 280 = 3.2
-        assertEquals(2, ListSort.spanCount(true, false, 500, 2f))        // 500 / 280 = 1.7 → 최소 2
-        assertEquals(6, ListSort.spanCount(true, true, 1680, 2f))        // 정확히 6칸
-        assertEquals(5, ListSort.spanCount(true, true, 1679, 2f))
+        assertEquals(3, ListSort.spanCount(ListView.GRID, 0, 2f))          // 너비를 모르면 3
+        assertEquals(3, ListSort.spanCount(ListView.GRID, 900, 2f))        // 900 / 280 = 3.2
+        assertEquals(2, ListSort.spanCount(ListView.GRID, 500, 2f))        // 500 / 280 = 1.7 → 최소 2
+        assertEquals(6, ListSort.spanCount(ListView.GRID, 1680, 2f))       // 정확히 6칸
+        assertEquals(5, ListSort.spanCount(ListView.GRID, 1679, 2f))
+    }
+
+    @Test fun iconModeDropsExtensionFromName() {
+        assertEquals("Summer", DocNames.shown("Summer.pdf", ExtShow.ICON))
+        assertEquals("보고서.v2", DocNames.shown("보고서.v2.hwpx", ExtShow.ICON))
+        assertEquals("Summer.pdf", DocNames.shown("Summer.pdf", ExtShow.EXT))
+        assertEquals("Summer.pdf", DocNames.shown("Summer.pdf", ExtShow.BOTH))
+        assertEquals("README", DocNames.shown("README", ExtShow.ICON))           // 확장자 없음
+        assertEquals("a.backup", DocNames.shown("a.backup", ExtShow.ICON))       // 5글자는 종류 표시가 아니다
+        assertEquals(".pdf", DocNames.shown(".pdf", ExtShow.ICON))               // 이름이 비면 그대로
+    }
+
+    @Test fun folderChainShowsLastThreeLevels() {
+        assertEquals(0, FolderChain.start(1))
+        assertEquals(0, FolderChain.start(3))     // 저장공간 / Download / ClipDown: 모두 보인다
+        assertEquals(1, FolderChain.start(4))     // … / Download / ClipDown / ClipDown_audio
+        assertEquals(3, FolderChain.start(6))
+        assertEquals(0, FolderChain.start(0))
+    }
+
+    @Test fun displayDefaults() {
+        assertEquals(ExtShow.ICON, ExtShow.of(null))
+        assertEquals(ExtShow.BOTH, ExtShow.of("BOTH"))
+        assertEquals(DateShow.DATETIME, DateShow.of(null))
+        assertEquals(false, ExtShow.EXT.badge)
+    }
+
+    @Test fun listViewDefaultsKeepOldLook() {
+        // 고른 적이 없으면 예전처럼: 큰 아이콘을 쓰던 사람은 큰 썸네일, 아니면 세로 1줄·가로 2줄
+        assertEquals(ListView.ONE, ListView.of(null, oldGrid = false, landscape = false))
+        assertEquals(ListView.TWO, ListView.of(null, oldGrid = false, landscape = true))
+        assertEquals(ListView.GRID, ListView.of(null, oldGrid = true, landscape = true))
+        assertEquals(ListView.ONE, ListView.of("ONE", oldGrid = true, landscape = true))
+        assertEquals(ListView.TWO, ListView.of("NOPE", oldGrid = false, landscape = true))
     }
 
     // ================= 옛 계산과 대조 =================

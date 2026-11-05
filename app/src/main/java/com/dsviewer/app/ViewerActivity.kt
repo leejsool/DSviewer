@@ -372,6 +372,8 @@ class ViewerActivity : AppCompatActivity() {
         super.onResume()
         // 둘째 칸에 띄울 문서를 고르러 갔다가 아무것도 안 고르고 돌아왔으면 분할 보기 준비를 거둔다
         pendingSplit = false
+        // 탐색기의 '새 탭'을 닫고(취소하고) 돌아왔으면 탭 줄에서도 거둔다
+        syncNewTab()
         timer.onResume()
         updater.onResume()
     }
@@ -403,6 +405,14 @@ class ViewerActivity : AppCompatActivity() {
         autoOverwriteJob?.cancel()
         if (autoOverwriteOn()) overwriteAll()
         docs.forEach { rememberPage(it) }
+        // 앱을 나가 시스템이 뷰어를 닫아 버려도 다음에 같은 문서를 열면 나눠 보던 채로
+        for (t in docs) {
+            if (t.review != null || t.pdf == null) continue
+            val shown = panesOf(t)
+            if (shown.size > 1) rememberSplitPosition(t, shown.last().view.viewState())
+            Recents.setSplit(this, t.uri.toString(), shown.size > 1)
+        }
+        publishTabs()
     }
 
     /** 옵션 ▸ 자동으로 덮어쓰기 저장 (기본은 켬) */
@@ -432,6 +442,14 @@ class ViewerActivity : AppCompatActivity() {
 
     /** 인텐트의 문서를 탭으로 연다. 열 문서가 없으면 false (탐색기에서 '뷰어로 돌아가기'만 한 경우) */
     private fun handleIntent(intent: Intent): Boolean {
+        // 탐색기의 '새 탭' 화면에서 열린 문서 탭을 눌렀다: 그 탭으로 ('새 탭'은 탭 줄에 남는다)
+        val selectTab = intent.getIntExtra(EXTRA_SELECT_TAB, -1)
+        if (selectTab >= 0) {
+            intent.removeExtra(EXTRA_SELECT_TAB)
+            syncNewTab()
+            docs.getOrNull(selectTab)?.let { docTabs.select(docs.indexOf(it), notify = true) }
+            return true
+        }
         intent.getStringExtra(EXTRA_CAPTURE)?.let { path ->
             intent.removeExtra(EXTRA_CAPTURE)
             val region = intent.getBooleanExtra(EXTRA_CAPTURE_REGION, false)
@@ -471,9 +489,19 @@ class ViewerActivity : AppCompatActivity() {
         docTabs.activeFill = getColor(R.color.doc_bg)  // 고른 탭이 아래 문서 바탕과 이어지게
         docTabs.listener = object : ChromeTabBar.Listener {
             override fun onTabSelected(index: Int) {
+                // 맨 뒤 '새 탭'을 고르면 고르던 탐색기 화면으로
+                if (newTabShown && index == docs.size) {
+                    pickAnotherDocument()
+                    return
+                }
                 docs.getOrNull(index)?.let(::showTab)
             }
             override fun onTabClose(index: Int) {
+                if (newTabShown && index == docs.size) {
+                    newTabOpen = false
+                    syncNewTab()
+                    return
+                }
                 docs.getOrNull(index)?.let(::closeTab)
             }
             override fun onAddTab() = pickAnotherDocument()
@@ -484,11 +512,46 @@ class ViewerActivity : AppCompatActivity() {
         }
     }
 
+    /** 탭 줄 맨 뒤에 '새 탭'을 띄우고 있는지 (문서 탭 번호는 docs와 같고, 이 탭만 docs.size번) */
+    private var newTabShown = false
+
+    /** '새 탭'을 [newTabOpen]에 맞춰 띄우거나 거둔다. 거둘 때 고른 탭이 없어지면 보던 문서 탭을 고른다 */
+    private fun syncNewTab() {
+        if (newTabOpen != newTabShown) {
+            if (newTabOpen) {
+                docTabs.addTab(NEW_TAB_TITLE, R.drawable.ic_folder, TAB_ICON_GRAY, closable = true)
+                docTabs.fixedTail = 1
+            } else {
+                docTabs.removeTab(docs.size)
+                docTabs.fixedTail = 0
+            }
+            newTabShown = newTabOpen
+        }
+        if (!newTabShown && docTabs.selectedIndex !in docs.indices) current?.let { docTabs.select(docs.indexOf(it)) }
+    }
+
+    /** 탐색기의 '새 탭' 화면이 위에 그릴 열린 탭들을 적어 둔다 */
+    private fun publishTabs() {
+        tabSnapshot = docs.map { t ->
+            val tint = when {
+                t.review != null -> REVIEW_TAB_COLOR
+                t.type == DocType.UNKNOWN -> TAB_ICON_GRAY
+                else -> DocColors.of(t.type)
+            }
+            OpenTabInfo(t.name, if (t.review != null) R.drawable.ic_wrong_note else R.drawable.ic_doc, tint, t.ink?.dirty == true && t.review == null)
+        }
+    }
+
     /** [draftId]가 있으면 탐색기에서 고른 복구할 필기: 그 자동 저장본을 연다 */
     private fun openTab(
         uri: Uri, writable: Boolean, newNote: Boolean, draftId: String? = null, review: ReviewSession? = null,
         startReview: Boolean = false,
     ) {
+        // 새 탭에서 문서를 골랐으면 '새 탭' 자리가 그 문서 탭이 된다
+        if (newTabOpen || newTabShown) {
+            newTabOpen = false
+            syncNewTab()
+        }
         docs.firstOrNull { it.uri == uri }?.let {
             // 이미 열려 있는 문서면 그 탭으로 (분할 보기용으로 골랐다면 둘째 칸에)
             if (pendingSplit) {
@@ -514,6 +577,17 @@ class ViewerActivity : AppCompatActivity() {
             t.type = DocType.PDF
         }
         t.startReviewOnLoad = startReview
+        // 이 문서를 지난번에 본 방식(읽기 모드·페이지 넘김 방향)으로. 처음 여는 문서의 넘김 방향은 마지막에 고른 것
+        val saved = if (review == null) Recents.get(this, uri.toString()) else null
+        t.horizontal = saved?.horizontal ?: prefs.getBoolean("horizontalFlow", false)
+        // 탐색기 옵션에서 '읽기 모드(뷰어)로 열기'를 골랐으면 읽기 모드로 (새 노트·복습은 쓰려고 여는 것이니 쓰기)
+        if (!newNote && review == null) {
+            val last = saved?.viewMode?.let { n -> ViewMode.entries.firstOrNull { it.name == n } }
+            val open = OpenMode.current(this)
+            t.viewMode = ViewMode.startMode(last, open)
+            t.presentOnLoad = open == OpenMode.PRESENT && !startReview
+            t.splitOnLoad = saved?.split == true && !t.presentOnLoad && !pendingSplit
+        }
         docs.add(t)
         openTabs = docs.size
         openUris = docs.mapTo(HashSet()) { it.uri.toString() }
@@ -525,6 +599,10 @@ class ViewerActivity : AppCompatActivity() {
             beginSplit(t)
         }
         docTabs.select(docs.lastIndex, notify = true)
+        if (t.viewMode.readOnly && current === t) {
+            val remembered = saved?.viewMode?.let { n -> ViewMode.entries.firstOrNull { it.name == n } }?.readOnly == true
+            toast(if (remembered) "지난번처럼 읽기 모드로 엽니다." else "읽기 모드로 엽니다. 쓰려면 위의 읽기 모드 단추를 누르세요.")
+        }
         if (review != null) {
             load(t)
             return
@@ -608,6 +686,12 @@ class ViewerActivity : AppCompatActivity() {
         }
         current = t
         focused.tab = t
+        // 이 문서를 보던 방식(읽기 모드·페이지 넘김 방향)으로 맞춘다
+        // (발표 중에는 발표 모습 그대로)
+        if (!presenting) {
+            setViewMode(t.viewMode, quiet = true)
+            docView.horizontal = t.horizontal
+        }
         // 더는 어느 칸에도 없는 문서는 획의 화면용 모양을 버린다 (탭을 여럿 열어도 보는 문서만 쥐고 있게)
         leaving?.let { if (it !== t && panesOf(it).isEmpty()) it.ink?.releaseCaches() }
         val d = t.pdf
@@ -699,8 +783,11 @@ class ViewerActivity : AppCompatActivity() {
         val index = docs.indexOf(t)
         if (index < 0) return
         rememberPage(t)
+        saveViewSettings(t)
         val wasCurrent = current === t
         val shownPanes = panesOf(t)
+        // 같은 문서를 둘로 나눠 본 채 닫으면 다음에 열 때 나눠 보기로 시작한다
+        if (t.review == null) Recents.setSplit(this, t.uri.toString(), shownPanes.size > 1)
         val pane = shownPanes.firstOrNull { it === focused } ?: shownPanes.firstOrNull()
         // 같은 문서를 두 칸에 띄운 채 닫으면 둘째 칸이 보던 자리를, 아니면 앞서 나눠 보기를 끌 때 적어 둔 자리를 남긴다
         rememberSplitPosition(t, if (shownPanes.size > 1) shownPanes.last().view.viewState() else t.splitViewState)
@@ -729,7 +816,9 @@ class ViewerActivity : AppCompatActivity() {
         t.quickPdf?.close()
         t.quickPdf = null
         if (docs.isEmpty()) {
-            // 마지막 탭을 닫으면 뷰어를 닫고 탐색기로
+            // 마지막 탭을 닫으면 뷰어를 닫고 탐색기로 (열어 둔 '새 탭'도 함께 끝난다)
+            newTabOpen = false
+            tabSnapshot = emptyList()
             if (fromBrowser) startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
             finish()
             return
@@ -757,10 +846,16 @@ class ViewerActivity : AppCompatActivity() {
             return
         }
         fromBrowser = true
+        // 탭 줄 맨 뒤에 '새 탭'을 붙이고, 그 아래 화면으로 탐색기를 띄운다 (탐색기도 같은 탭 줄을 위에 그린다)
+        newTabOpen = true
+        syncNewTab()
+        docTabs.select(docs.size)
+        publishTabs()
         startActivity(
             Intent(this, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
-                .putExtra(MainActivity.EXTRA_PICK, true)
+                .putExtra(MainActivity.EXTRA_PICK, true),
+            noAnimation(this)
         )
     }
 
@@ -1000,6 +1095,16 @@ class ViewerActivity : AppCompatActivity() {
         if (t.startReviewOnLoad) {
             t.startReviewOnLoad = false
             if (current === t) docView.post { wrong.reviewDue() }
+        }
+        // 탐색기 옵션 '발표 모드로 열기': 다 열리면 바로 발표 (그사이 다른 탭으로 갔으면 하지 않는다)
+        if (t.presentOnLoad) {
+            t.presentOnLoad = false
+            if (current === t) docView.post { if (current === t && t.ink != null) startPresentation() }
+        }
+        // 지난번에 둘로 나눠 본 채 닫은 문서: 첫 칸은 보던 쪽, 둘째 칸은 둘째 칸이 보던 자리로 다시 나눠 본다
+        if (t.splitOnLoad) {
+            t.splitOnLoad = false
+            if (current === t && !split) docView.post { if (current === t && !split && !presenting && t.ink != null) beginSplit(t) }
         }
         perf.step("화면에올림")
         perf.done("쪽=${d.pageCount} 획=${inkDoc.pages.sumOf { it.size }}")
@@ -1699,7 +1804,14 @@ class ViewerActivity : AppCompatActivity() {
      * 읽기 모드: 툴바와 도구 줄을 숨기고, 펜으로도 넘기기·확대만 한다.
      * [ViewMode.READ_HIDDEN]이면 필기도 가려서 원래 문서만 보인다 (읽기 단추를 누를 때마다 쓰기 → 읽기 → 필기 숨김 → 쓰기)
      */
-    private fun setViewMode(mode: ViewMode) {
+    private fun setViewMode(mode: ViewMode, quiet: Boolean = false) {
+        // 보던 문서에 적어 둔다 (탭을 바꾸거나 닫았다 다시 열 때 이 방식으로)
+        current?.let {
+            if (it.viewMode != mode) {
+                it.viewMode = mode
+                saveViewSettings(it)
+            }
+        }
         if (mode == viewMode) return
         val on = mode.readOnly
         if (on) {
@@ -1719,7 +1831,7 @@ class ViewerActivity : AppCompatActivity() {
         findViewById<View>(R.id.toolbar).visibility = if (on) View.GONE else View.VISIBLE
         tools.updateShapeBarForReadMode(on)
         updateActions()
-        toast(
+        if (!quiet) toast(
             when (mode) {
                 ViewMode.READ -> "읽기 모드: 필기하지 않고 넘겨 보기만 합니다."
                 ViewMode.READ_HIDDEN -> "읽기 모드 (필기 숨김): 원래 문서만 보입니다."
@@ -1810,7 +1922,7 @@ class ViewerActivity : AppCompatActivity() {
         for (p in panes) {
             p.view.refitSoon()
             p.view.presenting = false
-            p.view.horizontal = prefs.getBoolean("horizontalFlow", false)
+            p.view.horizontal = p.tab?.horizontal ?: prefs.getBoolean("horizontalFlow", false)
         }
         presentToolsButton.visibility = View.GONE
         findViewById<View>(R.id.toolbar).visibility = View.VISIBLE
@@ -1862,7 +1974,7 @@ class ViewerActivity : AppCompatActivity() {
                 R.id.action_calc -> calc.toggle()
                 R.id.action_timer -> timer.open()
                 R.id.action_draw_lots -> openDrawLots()
-                R.id.action_options -> showOptionsDialog(0)
+                R.id.action_options -> showOptionsDialog(OPTIONS_CONVENIENCE)
                 R.id.action_about -> updater.show()
                 R.id.action_finger -> {
                     docView.fingerDrawing = !docView.fingerDrawing
@@ -2809,6 +2921,7 @@ class ViewerActivity : AppCompatActivity() {
         val state = sharedState(pane, t)
         t.splitViewState = null
         pane.tab = t
+        if (!presenting) pane.view.horizontal = t.horizontal
         val d = t.pdf
         val inkDoc = t.ink
         val quick = t.quickPdf
@@ -2849,6 +2962,7 @@ class ViewerActivity : AppCompatActivity() {
         textEditor.rebind(p.host, p.view)
         noteEditor.rebind(p.host, p.view)
         current = p.tab
+        if (!presenting) p.tab?.let { setViewMode(it.viewMode, quiet = true) }
         updateFocusBars()
         p.tab?.let { docTabs.select(docs.indexOf(it), notify = false) }
         syncPagePanel()
@@ -3055,8 +3169,15 @@ class ViewerActivity : AppCompatActivity() {
         },
     )
 
-    private fun showOptionsDialog(start: Int = 0) {
+    /**
+     * 옵션 창: 편의 옵션 · 상단 툴바 · 하단 툴바 차례. [start]는 처음 펼칠 범주 ([OPTIONS_CONVENIENCE] 등)
+     */
+    private fun showOptionsDialog(start: Int = OPTIONS_CONVENIENCE) {
         fun icon(res: Int) = { getDrawable(res)?.mutate() }
+        // 하단 툴바 단추에 지금 보이는 도구 아이콘 그대로 (단추가 없으면 [fallback])
+        fun toolIcon(t: Tool, fallback: Int) = {
+            tools.toolButtons[t]?.drawable?.constantState?.newDrawable()?.mutate() ?: getDrawable(fallback)?.mutate()
+        }
         val top = OptionCategory(
             "상단 툴바", "탭 줄 오른쪽의 아이콘을 표시하거나 숨깁니다. 왼쪽 손잡이를 위아래로 끌어 순서를 바꿀 수 있습니다. ⋮(더 보기)는 늘 보입니다.",
             {
@@ -3172,6 +3293,8 @@ class ViewerActivity : AppCompatActivity() {
                     ),
                     { if (docView.horizontal) 1 else 0 },
                     { i -> setHorizontalFlow(i == 1) },
+                    icon = icon(R.drawable.ic_page_flow),
+                    icons = listOf(icon(R.drawable.ic_flow_vertical), icon(R.drawable.ic_flow_horizontal)),
                 ),
                 OptionChoice(
                     "펜 옆 버튼을 누른 채 쓸 때",
@@ -3183,10 +3306,20 @@ class ViewerActivity : AppCompatActivity() {
                         for (p in panes) p.view.penButtonAction = action
                         prefs.edit().putString("penButton", action.name).apply()
                     },
+                    icon = toolIcon(Tool.PEN, R.drawable.ic_pen),
+                    // 지우개·선택·레이저는 하단 툴바에 있는 그 도구 아이콘 그대로
+                    icons = PenInputRules.ButtonAction.entries.map { a ->
+                        when (a) {
+                            PenInputRules.ButtonAction.ERASER -> toolIcon(Tool.ERASER, R.drawable.ic_eraser_stroke)
+                            PenInputRules.ButtonAction.LASSO -> toolIcon(Tool.LASSO, R.drawable.ic_lasso)
+                            PenInputRules.ButtonAction.LASER -> toolIcon(Tool.LASER, R.drawable.ic_laser)
+                            PenInputRules.ButtonAction.SWAP -> icon(R.drawable.ic_tool_swap)
+                        }
+                    },
                 ),
             ),
         )
-        OptionsDialog(this, listOf(top, bottom, convenience)) {
+        OptionsDialog(this, listOf(convenience, top, bottom)) {
             prefs.edit().remove("topOrder").remove("hiddenActions").remove("hiddenTools").remove("showRuler").remove("topIconSize").remove("toolIconSize").putBoolean("scribbleErase", true).putBoolean("palmErase", true).apply()
             docView.scribbleErase = true
             docView.palmErase = true
@@ -3213,15 +3346,24 @@ class ViewerActivity : AppCompatActivity() {
      * 다른 탭에 적어 둔 스크롤 위치는 방향이 달라 뜻이 없어지므로 버린다 (그 탭은 첫 쪽부터 열린다)
      */
     private fun setHorizontalFlow(on: Boolean) {
+        // 처음 여는 문서는 마지막에 고른 방향으로
         prefs.edit().putBoolean("horizontalFlow", on).apply()
-        if (docView.horizontal == on) return
-        textEditor.commit()
-        for (t in docs) {
-            if (t !== current) t.viewState = null
-            t.splitViewState = null
+        val t = current ?: return
+        if (t.horizontal != on) {
+            t.horizontal = on
+            saveViewSettings(t)
         }
-        for (p in panes) p.view.horizontal = on
+        if (presenting || docView.horizontal == on) return
+        textEditor.commit()
+        t.splitViewState = null
+        for (p in panesOf(t)) p.view.horizontal = on
         updateActions()
+    }
+
+    /** 이 문서를 보던 방식(읽기 모드·페이지 넘김 방향)을 최근 목록에 적는다. 다음에 열면 이대로 시작한다 */
+    private fun saveViewSettings(t: DocTab) {
+        if (t.review != null) return
+        Recents.setViewSettings(this, t.uri.toString(), t.viewMode.name, t.horizontal)
     }
 
     /** 시스템이 메모리를 아껴 달라고 하면 각 칸의 쪽 그림·획 경로 캐시를 줄인다 */
@@ -3274,6 +3416,10 @@ class ViewerActivity : AppCompatActivity() {
         /** true면 찍은 화면에서 네모로 부분을 골라 그 부분만 넣는다 */
         const val EXTRA_CAPTURE_REGION = "captureRegion"
         private const val MAX_TABS = 6
+        /** 옵션 창 범주의 차례 */
+        const val OPTIONS_CONVENIENCE = 0
+        const val OPTIONS_TOP_BAR = 1
+        const val OPTIONS_BOTTOM_BAR = 2
         /** 보기 ▾ 메뉴로 모은 상단 단추들의 이름표 ([TopAction.key]) */
         private val VIEW_ACTION_KEYS = setOf("twoPage", "split", "pages", "overview", "readMode", "fullscreen")
         /** 분할 보기 단추 메뉴: 지금 문서를 그대로 / 다른 문서 열기 (그 밖의 번호는 열려 있는 다른 문서의 순서) */
@@ -3292,5 +3438,20 @@ class ViewerActivity : AppCompatActivity() {
         /** 열려 있는 탭의 문서 주소 (탐색기가 '복구할 필기'에서 이미 열린 것을 빼려고) */
         var openUris: Set<String> = emptySet()
             private set
+        /** 탐색기에서 고른 열린 탭 번호: 그 탭으로 돌아간다 ('새 탭'은 그대로 둔 채) */
+        const val EXTRA_SELECT_TAB = "selectTab"
+        /** 탭 줄 맨 뒤 '새 탭'의 이름 */
+        const val NEW_TAB_TITLE = "새 탭"
+        /** 탐색기의 '새 탭' 화면 위에 그대로 그리는 열린 문서 탭들 (＋를 누를 때·뷰어가 뒤로 갈 때 새로 적는다) */
+        var tabSnapshot: List<OpenTabInfo> = emptyList()
+            private set
+        /** ＋로 연 '새 탭'이 아직 문서를 고르지 않은 채 열려 있다 (뷰어와 탐색기가 함께 본다) */
+        var newTabOpen = false
+
+        /** 화면을 바꿀 때 움직임 없이 (뷰어 탭 줄과 탐색기의 '새 탭'이 한 화면처럼 보이게) */
+        fun noAnimation(ctx: android.content.Context) = android.app.ActivityOptions.makeCustomAnimation(ctx, 0, 0).toBundle()
     }
+
+    /** 탐색기가 그리는 열린 탭 하나 */
+    class OpenTabInfo(val name: String, val icon: Int, val tint: Int, val unsaved: Boolean)
 }

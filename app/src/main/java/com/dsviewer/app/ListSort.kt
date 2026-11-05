@@ -107,13 +107,80 @@ internal object ListSort {
     }
 
     /**
-     * 목록 칸 수. 목록으로 볼 때는 가로 화면이면 두 칸(오른쪽도 쓴다), 세로면 한 칸.
-     * 큰 아이콘으로 볼 때는 가로 [listWidthPx]를 140dp 칸으로 나눈 수(최소 2), 아직 너비를 모르면(0 이하) 3
+     * 목록 칸 수. 1줄 보기는 한 칸, 2줄 보기는 두 칸.
+     * 큰 썸네일로 볼 때는 가로 [listWidthPx]를 140dp 칸으로 나눈 수(최소 2), 아직 너비를 모르면(0 이하) 3
      */
-    fun spanCount(grid: Boolean, landscape: Boolean, listWidthPx: Int, density: Float): Int {
-        if (!grid) return if (landscape) 2 else 1
-        if (listWidthPx <= 0) return 3
-        return (listWidthPx / (140 * density)).toInt().coerceAtLeast(2)
+    fun spanCount(view: ListView, listWidthPx: Int, density: Float): Int = when (view) {
+        ListView.ONE -> 1
+        ListView.TWO -> 2
+        ListView.GRID -> if (listWidthPx <= 0) 3 else (listWidthPx / (140 * density)).toInt().coerceAtLeast(2)
+    }
+}
+
+/** 탐색기 ⋮ ▸ 옵션 ▸ 목록 표시: 문서 종류를 어떻게 보일지 (예전 버전은 [BOTH]) */
+enum class ExtShow(val label: String, val hint: String) {
+    ICON("아이콘 표시", "이름 오른쪽의 ‘PDF’ 같은 종류 표시만 두고, 이름에서는 확장자를 뺍니다. (Summer.pdf → Summer)"),
+    EXT("확장자 표시", "종류 표시 없이 이름에 확장자를 붙여 보입니다. (Summer.pdf)"),
+    BOTH("모두 표시", "종류 표시도 두고 이름에도 확장자를 붙입니다.");
+
+    /** 이름 오른쪽에 종류 표시를 둘지 */
+    val badge get() = this != EXT
+
+    companion object {
+        fun of(name: String?) = entries.firstOrNull { it.name == name } ?: ICON
+    }
+}
+
+/** 탐색기 ⋮ ▸ 옵션 ▸ 목록 표시: 날짜를 어디까지 보일지 */
+enum class DateShow(val label: String, val pattern: String) {
+    DATE("연월일까지", "yyyy.MM.dd"),
+    DATETIME("시간까지", "yyyy.MM.dd HH:mm");
+
+    companion object {
+        fun of(name: String?) = entries.firstOrNull { it.name == name } ?: DATETIME
+    }
+}
+
+/** 폴더 계단(맨 위 폴더 … 지금 폴더)에서 실제로 늘어놓을 부분 */
+internal object FolderChain {
+    /** 한 번에 보이는 폴더 단계 수 (더 위의 폴더는 '…' 한 줄로 줄인다) */
+    const val MAX_LEVELS = 3
+
+    /** [n]단계 계단에서 보이기 시작하는 단계 번호 (그 앞은 '…'로 줄인다. 0이면 모두 보인다) */
+    fun start(n: Int, max: Int = MAX_LEVELS): Int = (n - max).coerceAtLeast(0)
+}
+
+/** 목록에 보이는 문서 이름의 확장자 (종류 표시에 쓰는 1~4글자, 없으면 빈 글) */
+internal object DocNames {
+    fun ext(title: String): String = title.substringAfterLast('.', "").takeIf { it.length in 1..4 } ?: ""
+
+    /** [show]가 아이콘 표시면 이름에서 확장자를 뺀다 (확장자뿐인 '.pdf' 같은 이름은 그대로) */
+    fun shown(title: String, show: ExtShow): String {
+        if (show != ExtShow.ICON) return title
+        val e = ext(title)
+        if (e.isEmpty()) return title
+        val base = title.dropLast(e.length + 1)
+        return base.ifEmpty { title }
+    }
+}
+
+/** 탐색기 목록을 보는 방식 (오른쪽 위 보기 단추). 세로 화면·가로 화면마다 따로 고른다 */
+enum class ListView(val label: String) {
+    ONE("1줄 보기"),
+    TWO("2줄 보기"),
+    GRID("큰 썸네일로 보기");
+
+    companion object {
+        /**
+         * 저장해 둔 이름 [name]의 보기. 고른 적이 없으면 예전 모습 그대로:
+         * 큰 아이콘을 쓰던 사람([oldGrid])은 큰 썸네일, 아니면 세로 화면 1줄·가로 화면 2줄
+         */
+        fun of(name: String?, oldGrid: Boolean, landscape: Boolean): ListView =
+            entries.firstOrNull { it.name == name } ?: when {
+                oldGrid -> GRID
+                landscape -> TWO
+                else -> ONE
+            }
     }
 }
 

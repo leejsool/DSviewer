@@ -46,6 +46,14 @@ internal class DocTab(var uri: Uri, var canOverwrite: Boolean, var isNewNote: Bo
     var review: ReviewSession? = null
     /** 탐색기의 '오늘 복습'에서 열었으면 다 열린 뒤 바로 오늘 복습할 오답을 복습한다 */
     var startReviewOnLoad = false
+    /** 탐색기 옵션 '발표 모드로 열기': 다 열린 뒤 바로 발표를 시작한다 */
+    var presentOnLoad = false
+    /** 지난번에 이 문서를 둘로 나눠 본 채 닫았다: 다 열린 뒤 나눠 보기를 켠다 (둘째 칸은 그때 보던 자리) */
+    var splitOnLoad = false
+    /** 이 문서를 보는 방식 (쓰기·읽기·필기 숨김). 탭을 고를 때 이대로 맞추고, 최근 목록에 적어 다음에 열 때 이어 간다 */
+    var viewMode = ViewMode.WRITE
+    /** 페이지 넘김 방향: 가로 넘김이면 true (문서마다 따로 기억한다) */
+    var horizontal = false
     /** 문서를 연 뒤 저장 준비(펜 획 주석 재료 미리 만들기, [DocSaver.prewarm]). 탭을 닫으면 멈춘다 */
     var prewarm: Job? = null
 }
