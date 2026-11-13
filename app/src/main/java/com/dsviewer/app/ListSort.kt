@@ -110,6 +110,15 @@ internal object ListSort {
      * 목록 칸 수. 1줄 보기는 한 칸, 2줄 보기는 두 칸.
      * 큰 썸네일로 볼 때는 가로 [listWidthPx]를 140dp 칸으로 나눈 수(최소 2), 아직 너비를 모르면(0 이하) 3
      */
+    /**
+     * 폴더 머리글 아래 문서 [count]개의 가지선 모양 (1 중간 ├, 2 마지막 └). 칸이 [span]개면 칸마다 따로 한 줄기라서
+     * 그 칸의 맨 아래 문서가 └ 이고 나머지는 ├ 이다 (2칸에 문서 3개면 ├ └ / └, 4개면 ├ ├ / └ └)
+     */
+    fun branches(count: Int, span: Int): IntArray {
+        val s = span.coerceAtLeast(1)
+        return IntArray(count) { if (it + s >= count) 2 else 1 }
+    }
+
     fun spanCount(view: ListView, listWidthPx: Int, density: Float): Int = when (view) {
         ListView.ONE -> 1
         ListView.TWO -> 2

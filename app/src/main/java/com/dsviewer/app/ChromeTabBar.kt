@@ -3,6 +3,7 @@ package com.dsviewer.app
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.drawable.GradientDrawable
@@ -145,7 +146,7 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
     fun setIcon(i: Int, icon: Int, tint: Int?) = tabs.getOrNull(i)?.setIcon(icon, tint)
 
     /** 저장하지 않은 변경이 있는 탭에 디스켓 표시 */
-    fun setUnsaved(i: Int, unsaved: Boolean) = tabs.getOrNull(i)?.setUnsaved(unsaved)
+    fun setUnsaved(i: Int, unsaved: Boolean, asDot: Boolean = false) = tabs.getOrNull(i)?.setUnsaved(unsaved, asDot)
 
     /** i번 탭을 고른다. notify면 바뀌었을 때 listener.onTabSelected를 부른다 */
     fun select(i: Int, notify: Boolean = false) {
@@ -523,8 +524,30 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
             title.post { updateMarquee() }
         }
 
-        fun setUnsaved(on: Boolean) {
-            unsaved.visibility = if (on) View.VISIBLE else View.GONE
+        /** 저장 안 됨 표시: 디스켓 그림, [asDot]이면 이름 뒤 자리를 쓰지 않고 문서 아이콘 오른쪽 아래의 빨간 점 */
+        fun setUnsaved(on: Boolean, asDot: Boolean = false) {
+            unsaved.visibility = if (on && !asDot) View.VISIBLE else View.GONE
+            val d = on && asDot
+            if (d != dot) {
+                dot = d
+                invalidate()
+            }
+        }
+
+        private var dot = false
+        private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#E53935") }
+        private val dotRing = Paint(Paint.ANTI_ALIAS_FLAG)
+
+        override fun dispatchDraw(canvas: Canvas) {
+            super.dispatchDraw(canvas)
+            if (!dot || icon.visibility != View.VISIBLE) return
+            // 아이콘이 빨간 PDF 그림이라 탭 바탕색 테두리를 둘러야 점이 보인다
+            val r = px(if (small) 3.5f else 4f).toFloat()
+            val cx = icon.right - r * 0.4f
+            val cy = icon.bottom - r * 0.4f
+            dotRing.color = if (active) activeFill else ((this@ChromeTabBar.background as? android.graphics.drawable.ColorDrawable)?.color ?: activeFill)
+            canvas.drawCircle(cx, cy, r + px(1.5f), dotRing)
+            canvas.drawCircle(cx, cy, r, dotPaint)
         }
 
         fun setIcon(res: Int, tint: Int?) {

@@ -78,8 +78,21 @@ class ToolbarDock(
         overScrollMode = scrollH.overScrollMode
     }
 
+    /** 툴바 반대쪽 끝 손잡이: 앞 손잡이와 똑같이 동작한다 (세로 툴바 아래쪽 끝, 가로 툴바 오른쪽 끝). 손이 닿는 쪽에서 잡을 수 있게 */
+    private val endHandle = ImageView(root.context).apply {
+        scaleType = ImageView.ScaleType.CENTER
+        contentDescription = handle.contentDescription
+        tooltipText = handle.tooltipText
+        background = handle.background?.constantState?.newDrawable()
+    }
+
+    /** 지금 누르거나 끌고 있는 손잡이 */
+    private var activeHandle: ImageView = handle
+
     init {
-        handle.setOnTouchListener { _, ev -> onHandleTouch(ev) }
+        handle.setOnTouchListener { _, ev -> onHandleTouch(handle, ev) }
+        endHandle.setOnTouchListener { _, ev -> onHandleTouch(endHandle, ev) }
+        toolbar.addView(endHandle)
     }
 
     /**
@@ -123,7 +136,7 @@ class ToolbarDock(
             (content.parent as? ViewGroup)?.removeView(content)
             toolbar.removeView(if (v) scrollH else scrollV)
             scroll.addView(content)
-            toolbar.addView(scroll)
+            toolbar.addView(scroll, 1) // 손잡이 둘 사이
         }
         scroll.layoutParams = if (v) LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
         else LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
@@ -136,10 +149,12 @@ class ToolbarDock(
         else content.setPadding(dp(8f), 0, dp(8f), 0)
         for (i in 0 until content.childCount) orient(content.getChildAt(i), v)
 
-        // 손잡이: 가로 툴바는 왼쪽 끝, 세로 툴바는 위쪽 끝
-        handle.layoutParams = if (v) LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(24f))
-        else LinearLayout.LayoutParams(dp(28f), thickness)
-        handle.setImageResource(if (v) R.drawable.ic_drag_handle_v else R.drawable.ic_drag_handle)
+        // 손잡이: 양쪽 끝에 하나씩 (가로 툴바는 왼쪽·오른쪽 끝, 세로 툴바는 위·아래 끝)
+        for (h in listOf(handle, endHandle)) {
+            h.layoutParams = if (v) LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(24f))
+            else LinearLayout.LayoutParams(dp(28f), thickness)
+            h.setImageResource(if (v) R.drawable.ic_drag_handle_v else R.drawable.ic_drag_handle)
+        }
 
         val wrap = ViewGroup.LayoutParams.WRAP_CONTENT
         val match = ViewGroup.LayoutParams.MATCH_PARENT
@@ -205,9 +220,11 @@ class ToolbarDock(
     private var dragging = false
     private val slop = android.view.ViewConfiguration.get(root.context).scaledTouchSlop
 
-    private fun onHandleTouch(ev: MotionEvent): Boolean {
+    private fun onHandleTouch(h: ImageView, ev: MotionEvent): Boolean {
+        val handle = h // 누른 손잡이 (앞·끝)
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                activeHandle = h
                 downX = ev.rawX
                 downY = ev.rawY
                 dragging = false
@@ -239,20 +256,32 @@ class ToolbarDock(
 
     private fun startDrag(ev: MotionEvent) {
         root.getLocationOnScreen(rootLoc)
-        grabX = ev.x + handle.left
-        grabY = ev.y + handle.top
-        // 툴바 앞부분(손잡이 쪽)만 떼어 고스트로. 세로면 위쪽 부분
+        // 툴바에서 잡은 손잡이 쪽 부분만 떼어 고스트로 (앞 손잡이면 앞부분, 끝 손잡이면 끝부분. 세로면 위쪽·아래쪽)
         val full = toolbar.drawToBitmap()
         val keep = dp(360f)
-        val part = if (side.vertical) Bitmap.createBitmap(full, 0, 0, full.width, min(full.height, keep))
-        else Bitmap.createBitmap(full, 0, 0, min(full.width, keep), full.height)
+        val atEnd = activeHandle === endHandle
+        val cropX: Int
+        val cropY: Int
+        val part = if (side.vertical) {
+            val hh = min(full.height, keep)
+            cropX = 0
+            cropY = if (atEnd) full.height - hh else 0
+            Bitmap.createBitmap(full, 0, cropY, full.width, hh)
+        } else {
+            val ww = min(full.width, keep)
+            cropX = if (atEnd) full.width - ww else 0
+            cropY = 0
+            Bitmap.createBitmap(full, cropX, 0, ww, full.height)
+        }
+        grabX = ev.x + activeHandle.left - cropX
+        grabY = ev.y + activeHandle.top - cropY
         ghost = BitmapDrawable(root.resources, part).apply { alpha = 220 }
         root.overlay.add(preview)
         root.overlay.add(ghost!!)
         preview.bounds = Rect()
         target = null
         toolbar.alpha = 0.4f
-        handle.isPressed = true
+        activeHandle.isPressed = true
         moveDrag(ev)
     }
 
@@ -285,7 +314,7 @@ class ToolbarDock(
         ghost?.let { root.overlay.remove(it) }
         ghost = null
         root.overlay.remove(preview)
-        handle.isPressed = false
+        activeHandle.isPressed = false
         toolbar.alpha = 1f
         val t = target
         target = null

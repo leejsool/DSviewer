@@ -212,6 +212,19 @@ class ListSortTest {
         assertEquals(2, ListSort.spanCount(ListView.TWO, 0, 2f))
     }
 
+    @Test fun treeBranchesEndPerColumn() {
+        // 1줄 보기: 마지막 한 줄만 └
+        assertEquals(listOf(1, 1, 2), ListSort.branches(3, 1).toList())
+        assertEquals(listOf(2), ListSort.branches(1, 1).toList())
+        // 2줄 보기: 칸마다 맨 아래가 └ (2개: └ └ / 3개: ├ └ / └ / 4개: ├ ├ / └ └)
+        assertEquals(listOf(2, 2), ListSort.branches(2, 2).toList())
+        assertEquals(listOf(1, 2, 2), ListSort.branches(3, 2).toList())
+        assertEquals(listOf(1, 1, 2, 2), ListSort.branches(4, 2).toList())
+        assertEquals(listOf(1, 1, 1, 2, 2), ListSort.branches(5, 2).toList())
+        assertEquals(listOf(2), ListSort.branches(1, 2).toList())
+        assertEquals(emptyList<Int>(), ListSort.branches(0, 2).toList())
+    }
+
     @Test fun gridColumnsFitOneHundredFortyDpCells() {
         assertEquals(3, ListSort.spanCount(ListView.GRID, 0, 2f))          // 너비를 모르면 3
         assertEquals(3, ListSort.spanCount(ListView.GRID, 900, 2f))        // 900 / 280 = 3.2

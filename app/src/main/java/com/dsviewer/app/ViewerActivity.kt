@@ -538,7 +538,8 @@ class ViewerActivity : AppCompatActivity() {
                 t.type == DocType.UNKNOWN -> TAB_ICON_GRAY
                 else -> DocColors.of(t.type)
             }
-            OpenTabInfo(t.name, if (t.review != null) R.drawable.ic_wrong_note else R.drawable.ic_doc, tint, t.ink?.dirty == true && t.review == null)
+            val dirty = t.ink?.dirty == true && t.review == null
+            OpenTabInfo(t.name, if (t.review != null) R.drawable.ic_wrong_note else R.drawable.ic_doc, tint, dirty && !hideUnsavedMark(t), unsavedAsDot(t))
         }
     }
 
@@ -660,12 +661,19 @@ class ViewerActivity : AppCompatActivity() {
         openTab(Uri.fromFile(file), writable = false, newNote = false, review = s)
     }
 
+    /** 원본 PDF에 덮어쓸 수 있는 탭은 저장 안 됨을 디스켓 대신 빨간 점으로 (한글 변환·새 노트는 저장하며 이름을 정하므로 디스켓) */
+    private fun unsavedAsDot(t: DocTab) = saver.isOverwritable(t)
+
+    /** 자동으로 덮어쓰기 저장이 켜져 있으면 원본 PDF 탭은 곧 저절로 저장되니 저장 안 됨 표시를 감춘다 */
+    private fun hideUnsavedMark(t: DocTab) = unsavedAsDot(t) && autoOverwriteOn()
+
     private fun updateTabTitle(t: DocTab) {
         val i = docs.indexOf(t)
         if (i < 0) return
-        // 저장하지 않은 필기가 있으면 이름 뒤에 디스켓 표시
+        // 저장하지 않은 필기가 있으면 이름 뒤에 디스켓 표시 (원본에 덮어쓸 수 있는 PDF는 아이콘 위 빨간 점, 자동 덮어쓰기가 켜져 있으면 없음)
         docTabs.setTitle(i, t.name)
-        docTabs.setUnsaved(i, t.ink?.dirty == true && t.review == null)
+        val dirty = t.ink?.dirty == true && t.review == null
+        docTabs.setUnsaved(i, dirty && !hideUnsavedMark(t), unsavedAsDot(t))
         val color = if (t.type == DocType.UNKNOWN) TAB_ICON_GRAY else DocColors.of(t.type)
         if (t.review != null) docTabs.setIcon(i, R.drawable.ic_wrong_note, REVIEW_TAB_COLOR)
         else docTabs.setIcon(i, R.drawable.ic_doc, color)
@@ -3236,6 +3244,7 @@ class ViewerActivity : AppCompatActivity() {
             listOf(
                 OptionItem(icon(R.drawable.ic_save), "자동으로 덮어쓰기 저장", { autoOverwriteOn() }, { on ->
                     prefs.edit().putBoolean(KEY_AUTO_OVERWRITE, on).apply()
+                    docs.forEach { updateTabTitle(it) }
                     true
                 }, "켜면 7분마다 그리고 앱을 나가거나 탭을 닫을 때, 저장하지 않은 필기를 물어보지 않고 원본 파일에 덮어씁니다. (새 노트·한글 문서는 해당 없음. 끄면 지금처럼 ‘저장’을 눌러야 합니다)"),
                 OptionItem(icon(R.drawable.ic_scribble_erase), "긁어서 지우기", { docView.scribbleErase }, { on ->
@@ -3453,5 +3462,5 @@ class ViewerActivity : AppCompatActivity() {
     }
 
     /** 탐색기가 그리는 열린 탭 하나 */
-    class OpenTabInfo(val name: String, val icon: Int, val tint: Int, val unsaved: Boolean)
+    class OpenTabInfo(val name: String, val icon: Int, val tint: Int, val unsaved: Boolean, val dot: Boolean = false)
 }

@@ -263,9 +263,11 @@ internal class DocSaver(
     }
 
     /** 물어보지 않고 원본에 덮어쓸 수 있는 탭인가: 저장하지 않은 필기가 있는 PDF이고, 덮어쓸 파일이 있다 (새 노트·한글 문서·복습 풀이는 아니다) */
-    fun canAutoOverwrite(t: DocTab): Boolean =
-        t.ink?.dirty == true && t.canOverwrite && t.type == DocType.PDF && !t.isNewNote && t.review == null &&
-            t.sourcePdf != null && !t.pagesBusy && !t.overwriting
+    fun canAutoOverwrite(t: DocTab): Boolean = t.ink?.dirty == true && isOverwritable(t) && !t.pagesBusy && !t.overwriting
+
+    /** 원본 파일에 그대로 덮어쓸 수 있는 문서인가 (지금 필기가 바뀌었는지는 따지지 않는다). 탭의 저장 표시를 정하는 데 쓴다 */
+    fun isOverwritable(t: DocTab): Boolean =
+        t.canOverwrite && t.type == DocType.PDF && !t.isNewNote && t.review == null && t.sourcePdf != null
 
     /** 덮어쓰려고 화면 스레드에서 찍어 둔 것: 필기, 북마크, 오답 정보와 그때까지의 필기 변경 횟수 */
     private class Capture(

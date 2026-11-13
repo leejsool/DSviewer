@@ -614,12 +614,19 @@ class MainActivity : AppCompatActivity() {
             val count = if (!last) "" else if (children.isEmpty()) "비어 있음" else "${children.size}개"
             out += Row(l.name, count, Kind.HEADER, { l.onClick?.invoke() }, folder = l.icon).also { it.indent = i }
         }
-        children.forEachIndexed { n, r ->
-            r.tree = if (n == children.lastIndex) 2 else 1
+        children.forEach { r ->
+            r.tree = 1
             r.indent = shown.lastIndex
             out += r
         }
+        assignTree(out)
         return out
+    }
+
+    /** 가지선 모양(├ └)을 지금 보기 방식의 칸 수에 맞춰 다시 정한다: 2줄 보기는 칸마다 따로 한 줄기 ([ListSort.branches]) */
+    private fun assignTree(rows: List<Row>) {
+        val run = rows.filter { it.tree != 0 }
+        ListSort.branches(run.size, if (listView == ListView.TWO) 2 else 1).forEachIndexed { i, k -> run[i].tree = k }
     }
 
     /** 휴대폰 (가장 짧은 변이 600dp보다 좁다): 폴더 계단을 반만 들여 쓰고 맨 위 폴더를 왼쪽 끝에 붙인다 */
@@ -1071,6 +1078,7 @@ class MainActivity : AppCompatActivity() {
         val label = "보기 방식: ${listView.label}"
         viewButton.contentDescription = label
         viewButton.tooltipText = label
+        assignTree(adapter.items)
         adapter.notifyDataSetChanged()
     }
 
@@ -1393,7 +1401,7 @@ class MainActivity : AppCompatActivity() {
         while (openTabsBar.tabCount > 0) openTabsBar.removeTab(0)
         for (t in ViewerActivity.tabSnapshot) {
             val i = openTabsBar.addTab(t.name, t.icon, t.tint)
-            openTabsBar.setUnsaved(i, t.unsaved)
+            openTabsBar.setUnsaved(i, t.unsaved, t.dot)
         }
         val gray = com.google.android.material.color.MaterialColors.getColor(
             openTabsBar, com.google.android.material.R.attr.colorOnSurfaceVariant
@@ -2479,6 +2487,7 @@ class MainActivity : AppCompatActivity() {
             // 폴더 머리글을 넘나들 수 없다 (같은 폴더 안에서만)
             if (items[from].kind == Kind.HEADER || items[to].kind == Kind.HEADER) return false
             items = items.toMutableList().also { it.add(to, it.removeAt(from)) }
+            assignTree(items)
             notifyItemMoved(from, to)
             return true
         }
@@ -2531,8 +2540,9 @@ class MainActivity : AppCompatActivity() {
                 // 세로 가지선: 위 폴더 그림의 가운데 아래 (휴대폰은 그림 왼쪽 끝 조금 안쪽으로 당겨 이름 자리를 넓힌다)
                 val x = child.left + child.translationX + tv.left + (if (phone) TREE_LINE_PHONE_DP else TREE_LINE_DP) * d
                 val y0 = child.top + child.translationY
-                // 머리글 바로 아래 첫 줄은 머리글 칸 아래 여백(2dp)까지 이어서 그린다
-                val top = if (adapter.items.getOrNull(pos - 1)?.kind == Kind.HEADER) y0 - 2 * d else y0
+                // 머리글 바로 아래 첫 줄(2줄 보기는 첫 줄의 두 칸 모두)은 머리글 칸 아래 여백(2dp)까지 이어서 그린다
+                val span = (parent.layoutManager as? GridLayoutManager)?.spanCount ?: 1
+                val top = if ((1..span).any { adapter.items.getOrNull(pos - it)?.kind == Kind.HEADER }) y0 - 2 * d else y0
                 val mid = y0 + child.height / 2f
                 c.drawLine(x, top, x, if (row.tree == 2) mid else y0 + child.height, paint)
                 c.drawLine(x, mid, child.left + child.translationX + tv.right - 2 * d, mid, paint)

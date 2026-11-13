@@ -28,6 +28,9 @@ internal object ShapeRecognizer {
 
     private const val DEG = PI / 180
 
+    /** 곧은 선으로 알아봤을 때의 [Result.label] */
+    const val LINE_LABEL = "직선"
+
     /** minSize: 그린 획이 (페이지 좌표로) 이보다 작으면 도형으로 보지 않는다 (글씨·점 보호) */
     fun recognize(st: Stroke, minSize: Float): Result? {
         val p = ShapeFit.resample(st) ?: return null
@@ -153,7 +156,7 @@ internal object ShapeRecognizer {
         val mx = (x0 + xs[n - 1]) / 2; val my = (y0 + ys[n - 1]) / 2
         val hx = cos(snapped) * len / 2; val hy = sin(snapped) * len / 2
         val l = floatArrayOf((mx - hx).toFloat(), (my - hy).toFloat(), (mx + hx).toFloat(), (my + hy).toFloat())
-        return Result("직선", Fitted(listOf(l)))
+        return Result(LINE_LABEL, Fitted(listOf(l)))
     }
 
     // ---------------- 닫힌 도형 ----------------

@@ -197,6 +197,8 @@ class DocumentView @JvmOverloads constructor(
     var holdShape = true
     /** 꾹 누른 획을 맞춘 도형 (손을 떼면 획 대신 이것을 남기고, 다시 움직이면 버린다) */
     private var holdFitted: List<Stroke>? = null
+    /** 꾹 눌러 맞춘 것이 직선이다: 손을 떼기 전까지 풀리지 않고 움직이는 대로 끝점을 따라간다 */
+    private var holdLine = false
     /** 꾹 누르기를 기다리는 중 (이번 획이 일반 펜 획) */
     private var holdArmed = false
     private var holdSx = 0f
@@ -2365,6 +2367,22 @@ class DocumentView @JvmOverloads constructor(
             return
         }
         val st = curStroke ?: return
+        // 꾹 눌러 직선으로 맞춘 뒤에는 풀리지 않는다: 손을 떼지 않고 움직이면 시작점과 지금 점을 잇는 직선이 따라온다
+        // (가로·세로에 5° 안으로 가까우면 딱 맞춘다). 손을 떼면 그 직선이 남는다
+        if (holdLine && holdFitted != null) {
+            val ax = st.x(0)
+            val ay = st.y(0)
+            val ex = toPageX(curPage, sx)
+            val ey = toPageY(curPage, sy)
+            if (hypot(ex - ax, ey - ay) >= HOLD_MIN_LINE_DP * density / scale) {
+                val end = StrokeGeometry.straightHighlighterEnd(ax, ay, ex, ey)
+                holdFitted = ShapeStrokes.build(st, Fitted(listOf(floatArrayOf(ax, ay, end[0], end[1]))), ShapeKind.LINE, GuideStyle.NONE, false, penStyle)
+                invalidate()
+            }
+            lastSx = sx
+            lastSy = sy
+            return
+        }
         // 꾹 누르는 중에 (손떨림이 아니게) 움직이면 맞춘 도형을 버리고 다시 보통 필기, 멈추기를 다시 기다린다
         if (holdArmed && hypot(sx - holdSx, sy - holdSy) > HOLD_SLOP_DP * density) {
             if (holdFitted != null) {
@@ -2460,6 +2478,7 @@ class DocumentView @JvmOverloads constructor(
         removeCallbacks(holdRun)
         holdArmed = false
         holdFitted = null
+        holdLine = false
     }
 
     /** 펜을 멈춘 채 [HOLD_MS]가 지났다: 그린 획이 직선·원·삼각형·사각형·별 같으면 그 도형으로 맞춰 보여 준다 (손을 떼면 확정) */
@@ -2470,6 +2489,7 @@ class DocumentView @JvmOverloads constructor(
             ShapeRecognizer.recognize(st, HOLD_MIN_DP * density / scale)
         } catch (e: Exception) { null } ?: return
         holdFitted = ShapeStrokes.build(st, r.fitted, ShapeKind.LINE, GuideStyle.NONE, false, penStyle)
+        holdLine = r.label == ShapeRecognizer.LINE_LABEL
         performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
         invalidate()
     }
@@ -2705,8 +2725,8 @@ class DocumentView @JvmOverloads constructor(
     }
 
     /**
-     * 긁어 지우기: [st]가 좌우로 마구 긁은 획이면 그 영역에 닿은 필기(펜·형광펜)를 지우고 true.
-     * 긁은 모양이 아니거나 아래에 지울 필기가 없으면 false (보통 획으로 남긴다). 그림·글·테이프는 그대로
+     * 긁어 지우기: [st]가 좌우로 마구 긁은 획이면 그 영역에 닿은 펜 필기를 지우고 true (형광펜은 그대로 둔다).
+     * 긁은 모양이 아니거나 아래에 지울 펜 필기가 없으면 (형광펜만 있는 곳 포함) false (보통 획으로 남긴다). 그림·글·테이프는 그대로
      */
     private fun eraseScribbled(page: Int, st: Stroke): Boolean {
         val inkDoc = ink ?: return false
@@ -2722,6 +2742,11 @@ class DocumentView @JvmOverloads constructor(
             val s = list[k]
             if (s.isBox || s.tape != null || s.fill != null || s.note != null) continue
             val hw = s.halfWidth
+            // 형광펜은 건드리지도 세지도 않는다: 형광펜 위에 글씨 ('m'·'홀'처럼 오르내리는 글자)를 쓰면 형광펜 줄을 여러 번
+            // 가로질러 긁은 것으로 오인돼 형광펜이 지워졌다. 그래서 긁은 자리에서 만난 것을 이렇게 나눈다:
+            // 형광펜만 만났다 → 아래 가로지른 횟수가 0이라 긁기가 아니다 (보통 필기). 펜만 만났다 → 긁어 지움.
+            // 둘 다 만났다 → 펜 필기만 지우고 형광펜은 둔다
+            if (s.tool == Tool.HIGHLIGHTER) continue
             val rest = s.cutWhere(step) { x, y -> region.contains(x, y, hw) } ?: continue
             cuts.add(Triple(k, s, rest))
             if (crossed < SCRIBBLE_CROSSINGS) crossed += crossings(st, s, SCRIBBLE_CROSSINGS - crossed)
@@ -2730,7 +2755,8 @@ class DocumentView @JvmOverloads constructor(
         if (crossed < SCRIBBLE_CROSSINGS) return false
         // 덜 지워져 남은 부스러기 (짧고 다른 필기와 떨어진 조각)는 마저 지운다
         val cutSet = cuts.map { it.second }.toSet()
-        val others = list.filter { it !in cutSet && !it.isBox && it.tape == null && it.fill == null && it.note == null }
+        // (형광펜은 글씨를 덮고 있어 가까이 있다고 부스러기를 살려 두면 안 되므로 이웃에서 뺀다)
+        val others = list.filter { it !in cutSet && !it.isBox && it.tape == null && it.fill == null && it.note == null && it.tool != Tool.HIGHLIGHTER }
         val stray = strayPieces(cuts.flatMap { it.third }, others, density / scale)
         for ((k, s, rest) in cuts) {
             val keep = if (stray.isEmpty()) rest else rest.filter { it !in stray }
@@ -3407,6 +3433,8 @@ class DocumentView @JvmOverloads constructor(
         private const val TAP_MS = 500L
         /** 일반 펜 도형 보정: 이 시간(ms) 동안 멈추고 있으면 맞춘다 */
         private const val HOLD_MS = 600L
+        /** 직선으로 맞춘 뒤 끝점을 따라가는 최소 길이 (dp): 시작점에 너무 가까우면 선이 사라지므로 이전 선을 둔다 */
+        private const val HOLD_MIN_LINE_DP = 4f
         /** 멈추고 있다고 보는 흔들림 범위 (dp) */
         private const val HOLD_SLOP_DP = 6f
         /** 이보다 작게 그린 획(화면 대각선, dp)은 글씨·점으로 보고 도형으로 맞추지 않는다 */
