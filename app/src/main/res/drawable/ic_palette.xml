@@ -18,6 +18,6 @@
         </aapt:attr>
     </path>
     <!-- 가운데 + -->
-    <path android:fillColor="?attr/colorControlNormal"
+    <path android:fillColor="@color/icon_tint"
         android:pathData="M11.1,8.6h1.8v2.5h2.5v1.8h-2.5v2.5h-1.8v-2.5H8.6v-1.8h2.5z" />
 </vector>

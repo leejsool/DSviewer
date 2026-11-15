@@ -97,7 +97,7 @@ class PagePanel(
     private fun px(v: Float) = (v * density).roundToInt()
     private val prefs = ctx.getSharedPreferences("tools", Context.MODE_PRIVATE)
 
-    private val accent = 0xFF3E82F7.toInt()
+    private val accent = UiColors.ACCENT
     private val onSurface = MaterialColors.getColor(panel, com.google.android.material.R.attr.colorOnSurface)
     private val onSurfaceVariant = MaterialColors.getColor(panel, com.google.android.material.R.attr.colorOnSurfaceVariant)
     private val outline = MaterialColors.getColor(panel, com.google.android.material.R.attr.colorOutlineVariant)
@@ -108,7 +108,7 @@ class PagePanel(
     private val searchBar = row()
     private val selectBar = row()
     private val title = TextView(ctx).apply {
-        textSize = if (overview) 17f else 20f
+        textSize = if (overview) 17f else 22f
         setTextColor(onSurface)
         typeface = Typeface.DEFAULT_BOLD
         isSingleLine = true
@@ -125,14 +125,14 @@ class PagePanel(
         setPadding(px(4f), 0, px(4f), 0)
     }
     private val selectCount = TextView(ctx).apply {
-        textSize = 16f
+        textSize = 15f
         setTextColor(onSurface)
         typeface = Typeface.DEFAULT_BOLD
         isSingleLine = true
     }
     /** 머리 줄 아래 한 줄 알림 (찾은 결과, 선택 도움말) */
     private val status = TextView(ctx).apply {
-        textSize = 12f
+        textSize = 13f
         setTextColor(onSurfaceVariant)
         setPadding(px(14f), 0, px(10f), px(4f))
         visibility = View.GONE
@@ -485,7 +485,7 @@ class PagePanel(
         val land = ctx.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         val w = px(if (land) 250f else 160f)
         panel.layoutParams = panel.layoutParams.apply { width = w }
-        title.textSize = if (land) 20f else 15f
+        title.textSize = if (land) 22f else 15f
         // 세로 화면(창 폭 160dp)은 단추 셋이 들어가도록 작게, 왼쪽 여백도 줄인다
         val icon = px(if (land) 36f else 30f)
         for (b in panelIcons) b.layoutParams = LinearLayout.LayoutParams(icon, icon)
@@ -1118,7 +1118,7 @@ class PagePanel(
             val check = ImageView(ctx).apply { visibility = View.GONE }
             // 여러 쪽을 함께 끌 때 가운데에 뜨는 'n쪽' 묶음 표시
             val stack = TextView(ctx).apply {
-                textSize = 14f
+                textSize = 13f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(Color.WHITE)
                 gravity = Gravity.CENTER

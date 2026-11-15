@@ -81,7 +81,7 @@ class FolderTree(
             addView(plus, LinearLayout.LayoutParams(px(28f), px(28f)).apply { marginStart = px(20f); marginEnd = px(16f) })
             addView(TextView(activity).apply {
                 text = "폴더 추가"
-                textSize = 16f
+                textSize = 15f
                 setTextColor(onSurface)
             })
             setOnClickListener {
@@ -165,12 +165,12 @@ class FolderTree(
             }
             val icon = ImageView(activity).apply { scaleType = ImageView.ScaleType.FIT_CENTER }
             val name = TextView(activity).apply {
-                textSize = 16f
+                textSize = 15f
                 isSingleLine = true
                 ellipsize = android.text.TextUtils.TruncateAt.END
             }
             val count = TextView(activity).apply {
-                textSize = 14f
+                textSize = 13f
                 setTextColor(muted)
             }
             root.addView(indent, LinearLayout.LayoutParams(0, 1))

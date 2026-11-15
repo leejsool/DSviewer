@@ -77,7 +77,7 @@ class Updater(private val activity: AppCompatActivity) {
         }
         box.addView(bar, LinearLayout.LayoutParams(-1, -2).apply { topMargin = (10 * d).toInt() })
         notes = TextView(activity).apply {
-            textSize = 14f
+            textSize = 13f
             setTextColor(attrColor(com.google.android.material.R.attr.colorOnSurfaceVariant))
             setPadding(0, (12 * d).toInt(), 0, 0)
             visibility = View.GONE

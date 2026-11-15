@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 탭 줄 오른쪽 아이콘 단추의 바탕: 누르면 물결, 켜진 단추(state_selected)는 아래에 짧은 밑줄 -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="?attr/colorControlHighlight">
+    <item>
+        <selector>
+            <item android:state_selected="true">
+                <layer-list>
+                    <item android:width="18dp" android:height="3dp" android:bottom="4dp" android:gravity="bottom|center_horizontal">
+                        <shape android:shape="rectangle">
+                            <solid android:color="@color/active_stroke" />
+                            <corners android:radius="1.5dp" />
+                        </shape>
+                    </item>
+                </layer-list>
+            </item>
+            <item>
+                <color android:color="@android:color/transparent" />
+            </item>
+        </selector>
+    </item>
+</ripple>

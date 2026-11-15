@@ -1,7 +1,7 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp" android:height="24dp"
     android:viewportWidth="24" android:viewportHeight="24"
-    android:tint="?attr/colorControlNormal">
+    android:tint="@color/icon_tint">
     <!-- 읽기 모드(읽기 전용): 펼친 책에 눈. 책은 줄여 왼쪽 위에, 오른쪽 아래 눈 자리는 책에서 동그랗게 뺀다 -->
     <group>
         <!-- 쪽 전체(시계 방향)에서 눈 자리 동그라미(반시계 방향)를 뺀다 -->

@@ -3,7 +3,7 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp" android:height="24dp"
     android:viewportWidth="24" android:viewportHeight="24"
-    android:tint="?attr/colorControlNormal">
+    android:tint="@color/icon_tint">
     <path android:fillColor="@android:color/white"
         android:pathData="M7.5,6a1.5,1.5 0,1 0,3 0a1.5,1.5 0,1 0,-3 0zM7.5,12a1.5,1.5 0,1 0,3 0a1.5,1.5 0,1 0,-3 0zM7.5,18a1.5,1.5 0,1 0,3 0a1.5,1.5 0,1 0,-3 0zM13.5,6a1.5,1.5 0,1 0,3 0a1.5,1.5 0,1 0,-3 0zM13.5,12a1.5,1.5 0,1 0,3 0a1.5,1.5 0,1 0,-3 0zM13.5,18a1.5,1.5 0,1 0,3 0a1.5,1.5 0,1 0,-3 0z" />
 </vector>

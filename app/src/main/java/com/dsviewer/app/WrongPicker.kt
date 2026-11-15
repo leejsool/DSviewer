@@ -42,10 +42,10 @@ internal class WrongPicker(private val view: View, private val host: Host) {
     private var y0 = 0f
     /** 끄는 중이거나 골라 둔 영역 (쪽 [page]의 좌표) */
     private var rect: RectF? = null
-    private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x302979FF }
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = UiColors.alpha(UiColors.DOC_SELECT, 0x30) }
     private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        color = 0xFF2979FF.toInt()
+        color = UiColors.DOC_SELECT
     }
 
     /** 오답 영역 고르기를 시작한다 */

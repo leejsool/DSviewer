@@ -491,7 +491,7 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
                 width = px(if (c) 16f else 18f); height = width
                 marginStart = px(2f)
             }
-            title.setTextSize(TypedValue.COMPLEX_UNIT_SP, if (c) 12f else 13f)
+            title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             if (closable) {
                 // × 그림은 왼쪽 문서 아이콘과 같은 크기, 좌우 여백도 아이콘처럼 좁게 (누르는 자리는 위아래로 넉넉히)
                 val glyph = if (c) 14f else 16f
@@ -558,7 +558,8 @@ class ChromeTabBar @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
 
         fun refreshColors() {
             title.setTextColor(if (active) textActive else textInactive)
-            title.paint.isFakeBoldText = active
+            // 고른 탭 제목은 굵은 글꼴로 (기기 글꼴에 굵은 자형이 있으면 그것을 쓴다)
+            title.typeface = if (active) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT
             isSelected = active
             title.post { updateMarquee() }
         }

@@ -59,7 +59,7 @@
                     android:layout_height="wrap_content"
                     android:contentDescription="가늘게"
                     android:text="−"
-                    android:textSize="20sp" />
+                    android:textSize="22sp" />
 
                 <com.google.android.material.slider.Slider
                     android:id="@+id/widthSlider"
@@ -75,7 +75,7 @@
                     android:layout_height="wrap_content"
                     android:contentDescription="굵게"
                     android:text="+"
-                    android:textSize="20sp" />
+                    android:textSize="22sp" />
             </LinearLayout>
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 아이콘 색: 켜진/고른 단추(state_selected)는 강조색, 나머지는 보통 아이콘 색.
+     단추에 isSelected만 주면 아이콘 색이 따라 바뀐다 (묶음 칸 안의 아이콘도 부모의 선택 상태를 물려받는다) -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_selected="true" android:color="@color/active_stroke" />
+    <item android:color="?attr/colorControlNormal" />
+</selector>

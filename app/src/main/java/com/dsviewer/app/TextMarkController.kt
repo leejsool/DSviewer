@@ -26,7 +26,7 @@ internal class TextMarkController(private val view: View, private val host: Host
     }
 
     private val density = view.resources.displayMetrics.density
-    private val selPaint = Paint().apply { color = 0x551E6FD9 }
+    private val selPaint = Paint().apply { color = UiColors.alpha(UiColors.DOC_SELECT, 0x55) }
 
     /** 글자를 끌고 있는 중 */
     var active = false

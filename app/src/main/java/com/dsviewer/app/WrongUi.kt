@@ -250,7 +250,7 @@ class WrongUi(private val a: AppCompatActivity, private val prefs: SharedPrefere
         }
         val symbolScroll = HorizontalScrollView(a).apply { isHorizontalScrollBarEnabled = false }
         val tagScroll = HorizontalScrollView(a).apply { isHorizontalScrollBarEnabled = false }
-        val countText = TextView(a).apply { textSize = 12f; setPadding(0, dp(8), 0, dp(4)) }
+        val countText = TextView(a).apply { textSize = 13f; setPadding(0, dp(8), 0, dp(4)) }
         val rows = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
         val dueChip = Chip(a).apply { isCheckable = true }
         root.addView(search)
@@ -363,7 +363,7 @@ class WrongUi(private val a: AppCompatActivity, private val prefs: SharedPrefere
         }, LinearLayout.LayoutParams(0, dp(12), 1f))
         row.addView(TextView(a).apply {
             text = right
-            textSize = 12f
+            textSize = 13f
             gravity = Gravity.END
         }, LinearLayout.LayoutParams(dp(112), ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(8) })
         return row
@@ -395,7 +395,7 @@ class WrongUi(private val a: AppCompatActivity, private val prefs: SharedPrefere
             root.addView(label("복습 단계"))
             val most = s.stages.max().coerceAtLeast(1)
             for ((i, n) in s.stages.withIndex()) {
-                root.addView(barRow(smallText(if (i == 0) "복습 전" else "${i}단계"), n / most.toFloat(), 0xFF3E82F7.toInt(), "${n}개"))
+                root.addView(barRow(smallText(if (i == 0) "복습 전" else "${i}단계"), n / most.toFloat(), UiColors.ACCENT, "${n}개"))
             }
 
             root.addView(label("기호별 정답률"))
@@ -410,7 +410,7 @@ class WrongUi(private val a: AppCompatActivity, private val prefs: SharedPrefere
             if (tags.isNotEmpty()) {
                 root.addView(label("해시태그별 정답률 (약한 것부터 · 누르면 그 태그만 복습)"))
                 for (g in tags.take(15)) {
-                    root.addView(barRow(smallText("#${g.key}").apply { setTextColor(0xFF1565C0.toInt()); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END },
+                    root.addView(barRow(smallText("#${g.key}").apply { setTextColor(UiColors.ACCENT); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END },
                         g.accuracy, accuracyColor(g.accuracy), "${g.count}개 · " + (g.accuracy?.let { "${pct(it)}%" } ?: "복습 전")) {
                         dialog?.dismiss()
                         onReviewTag(g.key)
@@ -448,7 +448,7 @@ class WrongUi(private val a: AppCompatActivity, private val prefs: SharedPrefere
         if (e.tags.isNotEmpty()) mid.addView(TextView(a).apply {
             text = WrongNote.tagsText(e.tags)
             textSize = 13f
-            setTextColor(0xFF1565C0.toInt())
+            setTextColor(UiColors.ACCENT)
         })
         mid.addView(TextView(a).apply {
             text = "${page + 1}쪽 · ${e.date}"
@@ -460,12 +460,12 @@ class WrongUi(private val a: AppCompatActivity, private val prefs: SharedPrefere
         mid.addView(TextView(a).apply {
             if (!e.review) {
                 text = "복습 안 함"
-                textSize = 12f
+                textSize = 13f
                 setTextColor(0xFF90A4AE.toInt())
             } else {
                 text = ReviewSchedule.label(e.stage, e.dueDay, today) +
                     (ReviewSchedule.accuracy(e.history)?.let { " · 정답률 ${(it * 100).roundToInt()}%" } ?: "")
-                textSize = 12f
+                textSize = 13f
                 val due = e.isDue(today)
                 setTextColor(if (due) 0xFFE65100.toInt() else 0xFF00796B.toInt())
                 if (due) setTypeface(typeface, Typeface.BOLD)
@@ -475,7 +475,7 @@ class WrongUi(private val a: AppCompatActivity, private val prefs: SharedPrefere
         fun action(text: String, f: () -> Unit) = TextView(a).apply {
             this.text = text
             textSize = 13f
-            setTextColor(0xFF1565C0.toInt())
+            setTextColor(UiColors.ACCENT)
             setPadding(dp(10), dp(8), dp(10), dp(8))
             setOnClickListener { f() }
         }

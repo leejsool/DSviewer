@@ -308,7 +308,7 @@ class OptionsDialog(
             })
             row.addView(TextView(a).apply {
                 text = c.hints.getOrNull(i).orEmpty()
-                textSize = 12f
+                textSize = 13f
                 setTextColor(hintColor)
                 // 설명은 이름 첫 글자에 맞춘다 (아이콘이 있으면 그만큼 더 들여)
                 setPadding(dp(40) + if (choiceIcon != null) iconSize + iconGap else 0, 0, dp(8), dp(6))
@@ -377,7 +377,7 @@ class OptionsDialog(
         item.hint?.let {
             texts.addView(TextView(a).apply {
                 text = it
-                textSize = 12f
+                textSize = 13f
                 setTextColor(MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurfaceVariant))
             })
         }

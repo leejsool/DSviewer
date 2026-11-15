@@ -486,10 +486,10 @@ class TableController(private val host: Host) {
 
     // ================= 그리기 =================
 
-    private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = 0x331E6FD9 }
+    private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = UiColors.alpha(UiColors.DOC_SELECT, 0x33) }
     private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        color = 0xFF1E6FD9.toInt()
+        color = UiColors.DOC_SELECT
         strokeJoin = Paint.Join.ROUND
         strokeCap = Paint.Cap.ROUND
     }

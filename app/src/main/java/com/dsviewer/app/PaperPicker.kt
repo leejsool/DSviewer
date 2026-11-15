@@ -76,7 +76,7 @@ internal class PaperPicker(private val ctx: Context, initial: Paper, private val
 
     private val density = ctx.resources.displayMetrics.density
     private fun dp(v: Int) = (v * density).roundToInt()
-    private val accent = 0xFF3E82F7.toInt()
+    private val accent = UiColors.ACCENT
     private val cards = LinkedHashMap<Paper, View>()
 
     val view = HorizontalScrollView(ctx).apply {
@@ -125,7 +125,7 @@ internal class PaperPicker(private val ctx: Context, initial: Paper, private val
             val on = p == selected
             card.background = GradientDrawable().apply {
                 cornerRadius = dp(8).toFloat()
-                setColor(if (on) 0x1A3E82F7 else Color.TRANSPARENT)
+                setColor(if (on) UiColors.alpha(accent, 0x1A) else Color.TRANSPARENT)
                 setStroke(dp(if (on) 2 else 1), if (on) accent else 0x22000000)
             }
         }

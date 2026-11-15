@@ -158,7 +158,7 @@ class ThumbPagePicker(
             val image = ImageView(activity).apply { scaleType = ImageView.ScaleType.FIT_XY }
             val label = TextView(activity).apply {
                 gravity = Gravity.CENTER
-                textSize = 12f
+                textSize = 13f
             }
             root.addView(image)
             root.addView(label)

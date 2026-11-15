@@ -621,7 +621,7 @@ class DocumentView @JvmOverloads constructor(
     private val rotBubblePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xE0303030.toInt() }
     private val rotBubbleText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
-        textSize = 14f * resources.displayMetrics.density
+        textSize = 13f * resources.displayMetrics.density
         typeface = android.graphics.Typeface.DEFAULT_BOLD
     }
     /** 고른 표를 고치는 일 (칸 고르기·선 끌기·줄 긋기·줄 지우기·줄 칸 넣고 빼기·셀 합치기 나누기·제목 줄) */
@@ -3416,7 +3416,7 @@ class DocumentView @JvmOverloads constructor(
         private const val EDGE_TAP_FRAC = 0.16f
         /** 발표를 켜고 끌 때 높이가 바뀌면 쪽 크기를 다시 맞추는 시간 (ms) */
         private const val REFIT_WINDOW_MS = 1500L
-        private const val SEL_COLOR = 0xFF1E6FD9.toInt()
+        private const val SEL_COLOR = UiColors.DOC_SELECT
         /** 크기 조절 손잡이 반지름(그리기)과 누르는 범위 */
         private const val HANDLE_DP = 7f
         private const val HANDLE_TOUCH_DP = 24f

@@ -307,7 +307,7 @@ internal class SymmetryController(private val view: View, private val host: Host
     }
 
     companion object {
-        private const val ACCENT = 0xFF2979FF.toInt()
+        private const val ACCENT = UiColors.DOC_SELECT
         /** 흐리게 보이는 미리 보기의 진하기 */
         private const val PREVIEW_ALPHA = 0.55f
         /** 복사·이동의 처음 접는 선이 도형 오른쪽 끝에서 떨어지는 거리 (pt) */

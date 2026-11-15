@@ -37,7 +37,8 @@ android {
     buildTypes {
         debug {
             // 시험용 빌드는 배포본(com.dsviewer.app)과 다른 앱 'DSnote 개발'로 깔린다: 지우고 다시 깔아도 진짜 앱의 자료·버전이 안 건드려진다
-            applicationIdSuffix = ".dev"
+            // -PdevSuffix=.dev2 처럼 주면 다른 이름으로 깔린다 (기기의 개발 앱이 다른 PC의 디버그 키로 서명돼 있어 덮어 깔 수 없을 때, 그 앱의 자료를 지우지 않고 시험하려고)
+            applicationIdSuffix = (project.findProperty("devSuffix") as String?) ?: ".dev"
             versionNameSuffix = "-dev"
         }
         release {

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 아이콘 아래 이름표의 글자색: 고른 칸(state_selected)은 강조색 (아이콘의 color/icon_tint 와 짝) -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_selected="true" android:color="@color/active_stroke" />
+    <item android:color="?attr/colorOnSurface" />
+</selector>

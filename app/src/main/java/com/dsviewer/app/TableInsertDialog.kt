@@ -49,7 +49,7 @@ object TableInsertDialog {
             setPadding((22 * d).toInt(), (6 * d).toInt(), (22 * d).toInt(), 0)
         }
         val label = TextView(activity).apply {
-            textSize = 18f
+            textSize = 17f
             gravity = Gravity.CENTER
             setPadding(0, (6 * d).toInt(), 0, (6 * d).toInt())
         }
@@ -89,7 +89,7 @@ object TableInsertDialog {
             }
             line.addView(TextView(activity).apply {
                 text = name
-                textSize = 16f
+                textSize = 15f
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
                     .apply { marginEnd = (6 * d).toInt() }
             })
@@ -136,7 +136,7 @@ object TableInsertDialog {
         // 제목 줄
         root.addView(TextView(activity).apply {
             text = "제목 줄 (칠하고 굵은 선으로 나눔)"
-            textSize = 14f
+            textSize = 13f
             setPadding(0, (8 * d).toInt(), 0, 0)
         })
         val group = RadioGroup(activity).apply { orientation = RadioGroup.HORIZONTAL }
@@ -175,7 +175,7 @@ object TableInsertDialog {
                 gravity = Gravity.CENTER
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             }
-            box.addView(TextView(activity).apply { text = hint; textSize = 14f })
+            box.addView(TextView(activity).apply { text = hint; textSize = 13f })
             val edit = EditText(activity).apply {
                 inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
                 setText(initial.roundToInt().toString())
@@ -192,7 +192,7 @@ object TableInsertDialog {
                 })
             }
             box.addView(edit)
-            box.addView(TextView(activity).apply { text = "mm"; textSize = 14f })
+            box.addView(TextView(activity).apply { text = "mm"; textSize = 13f })
             return box to edit
         }
         val sizeRow = LinearLayout(activity).apply {
@@ -236,7 +236,7 @@ object TableInsertDialog {
         private var cols = 1
         var onPick: ((Int, Int) -> Unit)? = null
         private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = MaterialColors.getColor(ctx, androidx.appcompat.R.attr.colorPrimary, 0xFF1E6FD9.toInt())
+            color = MaterialColors.getColor(ctx, androidx.appcompat.R.attr.colorPrimary, UiColors.ACCENT)
         }
         private val edgeOff = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE

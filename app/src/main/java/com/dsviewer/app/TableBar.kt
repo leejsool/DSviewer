@@ -66,7 +66,7 @@ class TableBar(
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
             minimumWidth = (52 * d).toInt()
-            setPadding((5 * d).toInt(), (4 * d).toInt(), (5 * d).toInt(), (3 * d).toInt())
+            setPadding((5 * d).toInt(), (4 * d).toInt(), (5 * d).toInt(), (6 * d).toInt())
             setBackgroundResource(R.drawable.bg_tool)
             contentDescription = desc
             tooltipText = desc
@@ -83,6 +83,7 @@ class TableBar(
             text = label
             isSingleLine = true
             setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_LabelMedium)
+            setTextColor(activity.getColorStateList(R.color.label_tint))
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         })
         row.addView(v)
@@ -189,11 +190,11 @@ class TableBar(
             }
             line.addView(TextView(activity).apply {
                 text = label
-                textSize = 16f
+                textSize = 15f
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             })
             val value = TextView(activity).apply {
-                textSize = 18f
+                textSize = 17f
                 gravity = Gravity.CENTER
                 minWidth = (44 * d).toInt()
             }

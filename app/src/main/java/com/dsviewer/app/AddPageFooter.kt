@@ -67,7 +67,7 @@ internal class AddPageFooter(
     }
     private val pullIcon = Paint(Paint.ANTI_ALIAS_FLAG)
     private val pullText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        textSize = 14f * density
+        textSize = 13f * density
         textAlign = Paint.Align.CENTER
     }
 
@@ -82,8 +82,8 @@ internal class AddPageFooter(
     private val addFill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val addLine = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val addText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        textSize = 14f * density
-        isFakeBoldText = true
+        textSize = 13f * density
+        typeface = android.graphics.Typeface.DEFAULT_BOLD
     }
     private val touchSlop = ViewConfiguration.get(view.context).scaledTouchSlop
     private val tmpRect = RectF()

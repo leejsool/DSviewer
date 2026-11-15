@@ -86,16 +86,17 @@ class WidthSwatchView @JvmOverloads constructor(ctx: Context, attrs: AttributeSe
     private val fg = MaterialColors.getColor(this, com.google.android.material.R.attr.colorOnSurface)
     private val number = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textAlign = Paint.Align.CENTER
-        textSize = dp(9.5f)
+        textSize = dp(11f)
         color = MaterialColors.getColor(this@WidthSwatchView, com.google.android.material.R.attr.colorOnSurfaceVariant)
     }
 
     override fun onDraw(canvas: Canvas) {
         // 아래 한 줄은 수치, 그 위 남은 자리 가운데에 모양
-        val numH = dp(11f)
+        // 맨 아래 3dp는 고른 칸의 밑줄(bg_tool) 자리라 수치를 그 위에 둔다
+        val numH = dp(15f)
         val cx = width / 2f
         val cy = (height - numH) / 2f + dp(1f)
-        canvas.drawText(kind.short(value), cx, height - dp(3f), number)
+        canvas.drawText(kind.short(value), cx, height - dp(5f), number)
         val t = kind.t(value)
         if (kind == WidthKind.ERASER) {
             paint.style = Paint.Style.STROKE

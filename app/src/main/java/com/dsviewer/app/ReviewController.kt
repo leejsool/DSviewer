@@ -81,7 +81,7 @@ internal class ReviewController(
     private fun dp(v: Int) = (v * density).roundToInt()
 
     private val title = TextView(activity).apply {
-        textSize = 14f
+        textSize = 13f
         setTypeface(typeface, android.graphics.Typeface.BOLD)
         setSingleLine()
         ellipsize = android.text.TextUtils.TruncateAt.END
@@ -107,7 +107,7 @@ internal class ReviewController(
         addView(ScrollView(activity).apply { addView(answerImage, FrameLayout.LayoutParams(-1, -2)) }, FrameLayout.LayoutParams(-1, -1))
         addView(TextView(activity).apply {
             text = "정답 · 전에 쓴 풀이"
-            textSize = 12f
+            textSize = 13f
             setTextColor(Color.WHITE)
             setPadding(dp(10), dp(4), dp(10), dp(4))
             background = GradientDrawable().apply { setColor(0xCC37474F.toInt()); cornerRadius = dp(12).toFloat() }

@@ -137,7 +137,7 @@ class Feedback(private val activity: AppCompatActivity) {
         }
         box.addView(withCrash)
         val note = TextView(activity).apply {
-            textSize = 12f
+            textSize = 13f
             setTextColor(MaterialColors.getColor(activity.window.decorView, com.google.android.material.R.attr.colorOnSurfaceVariant))
             text = if (FeedbackConfig.ready) "문서 내용과 파일 이름은 보내지 않습니다." else "건의를 받는 곳이 아직 준비되지 않았습니다."
             setPadding(0, dp(8), 0, dp(4))

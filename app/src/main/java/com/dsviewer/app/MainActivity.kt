@@ -977,7 +977,7 @@ class MainActivity : AppCompatActivity() {
                     android.text.style.ForegroundColorSpan(gray),
                     android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
                 )
-                textSize = 16f
+                textSize = 15f
                 minHeight = (48 * d).toInt()
                 isChecked = g in shown
                 setOnCheckedChangeListener { _, on ->
@@ -1789,7 +1789,7 @@ class MainActivity : AppCompatActivity() {
         }
         val text = TextView(this).apply {
             this.text = label
-            textSize = 12f
+            textSize = 13f
             setTextColor(onSurface)
             setPadding(0, (3 * d).toInt(), 0, 0)
         }

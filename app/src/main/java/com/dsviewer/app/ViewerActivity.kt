@@ -7,7 +7,6 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.ImageDecoder
 import android.graphics.RectF
-import android.graphics.drawable.GradientDrawable
 import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Bundle
@@ -1311,19 +1310,9 @@ class ViewerActivity : AppCompatActivity() {
         popup.show()
     }
 
-    /** 켜진 보기 단추는 바탕에 옅은 동그라미 */
+    /** 켜진 보기 단추는 아이콘이 강조색이 되고 아래에 짧은 밑줄이 생긴다 (drawable/bg_action · color/icon_tint) */
     private fun ImageButton.setActive(on: Boolean) {
-        if (isSelected == on && background != null) return
         isSelected = on
-        background = if (on) GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            // 탭 줄 바탕과 확실히 구분되는 진한 파랑 바탕 + 테두리
-            setColor(getColor(R.color.active_fill))
-            setStroke((2 * resources.displayMetrics.density).toInt(), getColor(R.color.active_stroke))
-        } else android.util.TypedValue().let { tv ->
-            theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, tv, true)
-            getDrawable(tv.resourceId)
-        }
     }
 
     // ================= 페이지 관리 · 읽기 모드 · 전체 화면 =================
@@ -2420,7 +2409,7 @@ class ViewerActivity : AppCompatActivity() {
         val hint = TextView(this).apply {
             text = "가져올 부분을 끌어서 네모로 고르세요. 모서리·변을 끌면 크기, 안쪽을 끌면 옮겨집니다."
             setTextColor(Color.WHITE)
-            textSize = 14f
+            textSize = 13f
             setPadding(dp(16), dp(10), dp(16), dp(10))
             setBackgroundColor(0xAA000000.toInt())
         }

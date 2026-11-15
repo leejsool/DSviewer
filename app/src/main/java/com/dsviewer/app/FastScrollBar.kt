@@ -51,7 +51,7 @@ internal class FastScrollBar(private val view: View, private val host: Host) {
     private val barRight = 6f * density
     private val colorSurface = MaterialColors.getColor(view.context, com.google.android.material.R.attr.colorSurfaceContainerHighest, Color.WHITE)
     private val colorOnSurface = MaterialColors.getColor(view.context, com.google.android.material.R.attr.colorOnSurfaceVariant, Color.DKGRAY)
-    private val colorAccent = MaterialColors.getColor(view.context, androidx.appcompat.R.attr.colorPrimary, 0xFF1E5AA8.toInt())
+    private val colorAccent = MaterialColors.getColor(view.context, androidx.appcompat.R.attr.colorPrimary, UiColors.ACCENT)
     private val barTrackPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val handlePaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val handleEdgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {

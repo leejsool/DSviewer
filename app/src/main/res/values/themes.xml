@@ -37,7 +37,7 @@
         <item name="android:paddingHorizontal">8dp</item>
         <item name="android:paddingVertical">12dp</item>
         <item name="android:scaleType">fitCenter</item>
-        <item name="android:background">?attr/selectableItemBackgroundBorderless</item>
+        <item name="android:background">@drawable/bg_action</item>
     </style>
 
     <!-- 빈 쪽 서식(바탕·방향)을 고르는 그림 단추 (view_page_format) -->

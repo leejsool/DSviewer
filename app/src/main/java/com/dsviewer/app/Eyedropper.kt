@@ -78,12 +78,12 @@ internal object Eyedropper {
         bar.addView(TextView(activity).apply {
             text = "색을 집을 곳을 누르고 손을 떼세요"
             setTextColor(Color.WHITE)
-            textSize = 14f
+            textSize = 13f
         })
         bar.addView(TextView(activity).apply {
             text = "취소"
             setTextColor(Color.rgb(138, 180, 248))
-            textSize = 14f
+            textSize = 13f
             typeface = Typeface.DEFAULT_BOLD
             setPadding((16 * d).toInt(), (8 * d).toInt(), (12 * d).toInt(), (8 * d).toInt())
             setOnClickListener { close() }

@@ -1201,9 +1201,9 @@ internal class ToolbarController(
             gravity = android.view.Gravity.CENTER_HORIZONTAL
             minimumWidth = if (narrow) 0 else (48 * d).toInt()
             val sidePad = if (narrow) 4 else 6
-            setPadding((sidePad * d).toInt(), (5 * d).toInt(), (sidePad * d).toInt(), (3 * d).toInt())
+            // 아래 6dp: 고른 칸의 밑줄(bg_tool)이 이름표에 붙지 않게
+            setPadding((sidePad * d).toInt(), (5 * d).toInt(), (sidePad * d).toInt(), (6 * d).toInt())
             setBackgroundResource(R.drawable.bg_tool)
-            isSelected = selected
             contentDescription = if (selected) "$label (선택됨)" else label
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
@@ -1227,8 +1227,11 @@ internal class ToolbarController(
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
             )
             setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_LabelMedium)
+            setTextColor(activity.getColorStateList(R.color.label_tint))
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         })
+        // 아이콘·이름표를 넣은 뒤에 줘야 선택 상태가 그 둘에도 전해져 강조색이 된다
+        item.isSelected = selected
         return item
     }
 
@@ -2070,7 +2073,7 @@ internal class ToolbarController(
                 shape = GradientDrawable.RECTANGLE
                 cornerRadius = 6 * d
                 setColor(c)
-                if (i == s.active) setStroke((2.5f * d).toInt(), ColorStateList.valueOf(0xFF1E5AA8.toInt()))
+                if (i == s.active) setStroke((2.5f * d).toInt(), ColorStateList.valueOf(UiColors.ACCENT))
                 else setStroke((1 * d).toInt(), ColorStateList.valueOf(Color.argb(60, 0, 0, 0)))
             }
             v.contentDescription = if (i == s.active) "색상 (선택됨, 다시 누르면 색 바꾸기)" else "색상"

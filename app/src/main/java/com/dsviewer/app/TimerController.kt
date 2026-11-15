@@ -455,7 +455,7 @@ internal class TimerController(
         val state = TextView(activity).apply { gravity = Gravity.CENTER; textSize = 13f }
         val list = TextView(activity).apply {
             typeface = Typeface.MONOSPACE
-            textSize = 14f
+            textSize = 13f
             setLineSpacing(0f, 1.15f)
         }
         val scroll = ScrollView(activity).apply { addView(list) }
@@ -573,7 +573,7 @@ internal class TimerController(
             id = View.generateViewId()
             this.text = text
             isAllCaps = false
-            textSize = 14f
+            textSize = 13f
             maxLines = 2
             setPadding(dp(8), paddingTop, dp(8), paddingBottom)
         }
