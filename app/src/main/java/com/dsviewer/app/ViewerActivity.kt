@@ -570,6 +570,9 @@ class ViewerActivity : AppCompatActivity() {
                 .show()
             return
         }
+        // 나눠 보는 중에 연 새 문서는 고른 칸을 갈아치우지 않고 새 탭에 (분할 보기용으로 고른 것만 둘째 칸에).
+        // 보던 칸의 문서만 남기고 나눠 보기를 끝낸 다음 새 탭으로 간다
+        if (split && !pendingSplit) endSplit(keep = focused)
         val t = DocTab(uri, writable && !newNote, newNote)
         if (review != null) {
             t.review = review
@@ -1273,41 +1276,84 @@ class ViewerActivity : AppCompatActivity() {
             ViewMode.READ_HIDDEN -> "읽기 모드 끝내기"
         }
 
-    /** 보기 ▾: 화면을 어떻게 보여 줄지 고르는 메뉴. 켜져 있는 것은 이름 뒤에 ✓ */
+    /**
+     * 보기 ▾: 화면을 어떻게 보여 줄지 고르는 메뉴.
+     * 켜져 있는 줄은 연한 파란 바탕 + 왼쪽 굵은 파란 막대 + 파란 굵은 글자·아이콘 (탭 줄 단추의 켜짐 표시와 같은 active_stroke)
+     */
     private fun showViewMenu(anchor: View) {
-        val popup = PopupMenu(this, anchor)
-        fun add(id: Int, label: String, icon: Int, on: Boolean = false, enabled: Boolean = true) {
-            popup.menu.add(0, id, id, if (on) "$label  ✓" else label).setIcon(icon).isEnabled = enabled
+        val d = resources.displayMetrics.density
+        fun dp(v: Int) = (v * d).toInt()
+        val accent = androidx.core.content.ContextCompat.getColor(this, R.color.active_stroke)
+        val textColor = com.google.android.material.color.MaterialColors.getColor(anchor, com.google.android.material.R.attr.colorOnSurface)
+        val iconColor = com.google.android.material.color.MaterialColors.getColor(anchor, com.google.android.material.R.attr.colorOnSurfaceVariant)
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(6), 0, dp(6))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = 14 * d
+                setColor(com.google.android.material.color.MaterialColors.getColor(anchor, com.google.android.material.R.attr.colorSurfaceContainerHigh))
+            }
+            clipToOutline = true
         }
-        add(1, "양쪽 보기", R.drawable.ic_two_page, docView.twoPage)
-        add(2, "분할 보기", R.drawable.ic_split_view, split)
-        add(3, "페이지 관리", R.drawable.ic_page_panel, pagePanel.isShowing)
-        add(4, "쪽 한눈에 보기", R.drawable.ic_grid_view, overview.isShowing, ink != null)
+        val popup = android.widget.PopupWindow(box, LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT, true)
+        popup.elevation = 8 * d
+        fun add(label: String, icon: Int, on: Boolean = false, enabled: Boolean = true, act: () -> Unit) {
+            val row = FrameLayout(this).apply {
+                minimumWidth = dp(220)
+                if (on) setBackgroundColor(Color.argb(0x24, Color.red(accent), Color.green(accent), Color.blue(accent)))
+                foreground = obtainStyledAttributes(intArrayOf(android.R.attr.selectableItemBackground)).let { a ->
+                    a.getDrawable(0).also { a.recycle() }
+                }
+                isEnabled = enabled
+                alpha = if (enabled) 1f else 0.4f
+                isSelected = on
+                contentDescription = if (on) "$label, 켜짐" else label
+            }
+            val content = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                setPadding(dp(18), 0, dp(18), 0)
+            }
+            content.addView(
+                android.widget.ImageView(this).apply {
+                    setImageResource(icon)
+                    setColorFilter(if (on) accent else iconColor)
+                },
+                LinearLayout.LayoutParams(dp(22), dp(22)),
+            )
+            content.addView(
+                TextView(this).apply {
+                    text = label
+                    textSize = 15f
+                    setTextColor(if (on) accent else textColor)
+                    if (on) typeface = android.graphics.Typeface.create(typeface, android.graphics.Typeface.BOLD)
+                },
+                LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(14) },
+            )
+            row.addView(content, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, dp(48)))
+            if (on) row.addView(View(this).apply { setBackgroundColor(accent) }, FrameLayout.LayoutParams(dp(4), FrameLayout.LayoutParams.MATCH_PARENT))
+            if (enabled) row.setOnClickListener {
+                popup.dismiss()
+                act()
+            }
+            box.addView(row, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        }
+        add("양쪽 보기", R.drawable.ic_two_page, docView.twoPage) { twoPageButton.performClick() }
+        add("분할 보기", R.drawable.ic_split_view, split) { onSplitClicked(anchor) }
+        add("페이지 관리", R.drawable.ic_page_panel, pagePanel.isShowing) { pagesButton.performClick() }
+        add("쪽 한눈에 보기", R.drawable.ic_grid_view, overview.isShowing, ink != null) { toggleOverview() }
         add(
-            5, readModeLabel,
+            readModeLabel,
             when (viewMode) {
                 ViewMode.WRITE -> R.drawable.ic_write_mode
                 ViewMode.READ -> R.drawable.ic_read_mode
                 ViewMode.READ_HIDDEN -> R.drawable.ic_read_hidden
             },
             readMode,
-        )
-        add(6, "전체 화면", R.drawable.ic_fullscreen)
-        add(7, "발표 시작", R.drawable.ic_present, enabled = ink != null)
-        popup.setForceShowIcon(true)
-        popup.setOnMenuItemClickListener { item ->
-            when (item.itemId) {
-                1 -> twoPageButton.performClick()
-                2 -> onSplitClicked(anchor)
-                3 -> pagesButton.performClick()
-                4 -> toggleOverview()
-                5 -> setViewMode(viewMode.next)
-                6 -> setFullscreen(true)
-                7 -> startPresentation()
-            }
-            true
-        }
-        popup.show()
+        ) { setViewMode(viewMode.next) }
+        add("전체 화면", R.drawable.ic_fullscreen) { setFullscreen(true) }
+        add("발표 시작", R.drawable.ic_present, enabled = ink != null) { startPresentation() }
+        popup.showAsDropDown(anchor, 0, 0, android.view.Gravity.END)
     }
 
     /** 켜진 보기 단추는 아이콘이 강조색이 되고 아래에 짧은 밑줄이 생긴다 (drawable/bg_action · color/icon_tint) */
