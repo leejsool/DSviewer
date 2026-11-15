@@ -538,7 +538,7 @@ class ViewerActivity : AppCompatActivity() {
                 else -> DocColors.of(t.type)
             }
             val dirty = t.ink?.dirty == true && t.review == null
-            OpenTabInfo(t.name, if (t.review != null) R.drawable.ic_wrong_note else R.drawable.ic_doc, tint, dirty && !hideUnsavedMark(t), unsavedAsDot(t))
+            OpenTabInfo(t.name, if (t.review != null) R.drawable.ic_scrap_review else R.drawable.ic_doc, tint, dirty && !hideUnsavedMark(t), unsavedAsDot(t))
         }
     }
 
@@ -677,7 +677,7 @@ class ViewerActivity : AppCompatActivity() {
         val dirty = t.ink?.dirty == true && t.review == null
         docTabs.setUnsaved(i, dirty && !hideUnsavedMark(t), unsavedAsDot(t))
         val color = if (t.type == DocType.UNKNOWN) TAB_ICON_GRAY else DocColors.of(t.type)
-        if (t.review != null) docTabs.setIcon(i, R.drawable.ic_wrong_note, REVIEW_TAB_COLOR)
+        if (t.review != null) docTabs.setIcon(i, R.drawable.ic_scrap_review, REVIEW_TAB_COLOR)
         else docTabs.setIcon(i, R.drawable.ic_doc, color)
     }
 
@@ -1331,7 +1331,8 @@ class ViewerActivity : AppCompatActivity() {
                 LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(14) },
             )
             row.addView(content, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, dp(48)))
-            if (on) row.addView(View(this).apply { setBackgroundColor(accent) }, FrameLayout.LayoutParams(dp(4), FrameLayout.LayoutParams.MATCH_PARENT))
+            // 막대 높이는 줄 높이로 못박는다: MATCH_PARENT면 빈 View가 남은 높이를 다 차지해 켜진 줄이 화면 끝까지 늘어난다
+            if (on) row.addView(View(this).apply { setBackgroundColor(accent) }, FrameLayout.LayoutParams(dp(4), dp(48)))
             if (enabled) row.setOnClickListener {
                 popup.dismiss()
                 act()
@@ -2098,13 +2099,13 @@ class ViewerActivity : AppCompatActivity() {
     private fun showWrongMenu(anchor: View) {
         val popup = PopupMenu(this, anchor)
         val noReview = ink != null && current?.review == null
-        popup.menu.add(0, 1, 0, "스크랩하기 (영역 선택)").setIcon(R.drawable.ic_wrong_note)
+        popup.menu.add(0, 1, 0, "스크랩하기 (영역 선택)").setIcon(R.drawable.ic_scrap_add)
             .isEnabled = ink != null && !docView.readOnly
-        popup.menu.add(0, 2, 1, "스크랩 목록 · 분류").setIcon(R.drawable.ic_wrong_note)
+        popup.menu.add(0, 2, 1, "스크랩 목록 · 분류").setIcon(R.drawable.ic_scrap_list)
             .isEnabled = ink != null
-        popup.menu.add(0, 3, 2, "스크랩 복습 시작").setIcon(R.drawable.ic_wrong_note).isEnabled = noReview
-        popup.menu.add(0, 4, 3, "스크랩 문제지 PDF 만들기").setIcon(R.drawable.ic_wrong_note).isEnabled = noReview
-        popup.menu.add(0, 5, 4, "스크랩 통계").setIcon(R.drawable.ic_wrong_note).isEnabled = noReview
+        popup.menu.add(0, 3, 2, "스크랩 복습 시작").setIcon(R.drawable.ic_scrap_review).isEnabled = noReview
+        popup.menu.add(0, 4, 3, "스크랩 문제지 PDF 만들기").setIcon(R.drawable.ic_scrap_sheet).isEnabled = noReview
+        popup.menu.add(0, 5, 4, "스크랩 통계").setIcon(R.drawable.ic_scrap_stats).isEnabled = noReview
         popup.setForceShowIcon(true)
         popup.setOnMenuItemClickListener { item ->
             when (item.itemId) {
@@ -3148,7 +3149,7 @@ class ViewerActivity : AppCompatActivity() {
             TopAction("redo", "다시 실행", { redoButton }, R.drawable.ic_redo),
             TopAction("save", "저장", { saveButton }, R.drawable.ic_save),
             TopAction("insert", "삽입", { insertButton }, R.drawable.ic_insert),
-            TopAction("wrong", "스크랩", { wrongButton }, R.drawable.ic_wrong_note),
+            TopAction("wrong", "스크랩", { wrongButton }, R.drawable.ic_scrap),
             TopAction("view", "보기 (메뉴)", { viewMenuButton }, R.drawable.ic_view_menu),
             TopAction("twoPage", "양쪽 보기", { twoPageButton }, R.drawable.ic_two_page),
             TopAction("split", "분할 보기", { splitButton }, R.drawable.ic_split_view),
