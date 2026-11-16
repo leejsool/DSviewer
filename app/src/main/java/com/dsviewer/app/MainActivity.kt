@@ -1821,25 +1821,44 @@ class MainActivity : AppCompatActivity() {
 
     private fun selectedRows() = rows.filter { it.key in selected }
 
-    private fun startSelection(r: Row) {
+    /** 선택 모드를 켰지만 위아래 막대(태그·경로 줄 → 선택 줄, 명령 줄)는 아직 바꾸지 않았나 (손가락이 닿아 있는 동안 목록이 밀리지 않게) */
+    private var selectionBarsPending = false
+
+    /**
+     * 선택 모드를 켠다. [deferBars]면 손가락이 아직 화면에 있으므로 목록을 밀어내는 막대 바꿈은 [showSelectionBars]로 미룬다
+     * (태그 줄이 없어지면서 목록이 밀려 누른 자리 밑에 다른 문서가 오고, 끌기 선택이 그 문서까지 고르는 것을 막는다)
+     */
+    private fun startSelection(r: Row, deferBars: Boolean = false) {
         val key = r.key ?: return
         if (searchItem.isActionViewExpanded) searchItem.actionView?.clearFocus()
         selected += key
         if (!selecting) {
             selecting = true
-            pathBar.isVisible = false
-            tagBar.isVisible = false
-            selectBar.isVisible = true
-            actionBar.isVisible = true
+            if (deferBars) selectionBarsPending = true else applySelectionBars()
             adapter.notifyDataSetChanged()
         }
         onSelectionChanged()
         updateBack()
     }
 
+    private fun applySelectionBars() {
+        selectionBarsPending = false
+        pathBar.isVisible = false
+        tagBar.isVisible = false
+        selectBar.isVisible = true
+        actionBar.isVisible = true
+    }
+
+    /** 미뤄 둔 막대 바꿈을 지금 한다 (손을 뗐다) */
+    private fun showSelectionBars() {
+        if (selectionBarsPending && selecting) applySelectionBars()
+        selectionBarsPending = false
+    }
+
     private fun endSelection() {
         if (!selecting) return
         selecting = false
+        selectionBarsPending = false
         selected.clear()
         selectBar.isVisible = false
         actionBar.isVisible = false
@@ -2224,6 +2243,8 @@ class MainActivity : AppCompatActivity() {
             }
             // 선택 모드를 켜지 않고 끌던 문서는 놓은 뒤 고른 것을 비운다 (고른 표시가 남지 않게)
             if (r != null && !selecting) selected.clear()
+            // 손을 뗐으니 미뤄 둔 막대(선택 줄·명령 줄)를 이제 보인다
+            showSelectionBars()
         }
 
         // ---- 끌고 가는 동안 손가락을 따라다니는 떠 있는 썸네일 ----
@@ -2645,7 +2666,7 @@ class MainActivity : AppCompatActivity() {
                     // (목록을 새로 그리면 누르고 있던 칸이 사라져 끌기가 끊기므로 손을 뗄 때까지 미룬다)
                     tab == Tab.FOLDER || tab == Tab.FAVORITE -> dragSelect.beginPress(pos, r)
                     else -> {
-                        startSelection(r)
+                        startSelection(r, deferBars = true)
                         dragSelect.begin(pos)
                     }
                 }
