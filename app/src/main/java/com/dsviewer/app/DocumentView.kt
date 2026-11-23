@@ -1080,8 +1080,12 @@ class DocumentView @JvmOverloads constructor(
 
     // ================= 그리기 =================
 
+    /** 화면을 다시 그릴 때마다 (플로팅 툴바가 유리 뒤 흐린 문서를 새로 찍는다) */
+    var onDrawn: (() -> Unit)? = null
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
+        onDrawn?.invoke()
         val d = doc ?: return
         val inkDoc = ink ?: return
         val range = visibleRange()

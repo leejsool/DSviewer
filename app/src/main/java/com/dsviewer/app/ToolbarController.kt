@@ -51,6 +51,15 @@ internal class ToolbarController(
     var onSelectionImage: (anchor: View) -> Unit = {}
     /** 모든 칸의 문서 화면 (겹쳐 뜬 줄이 가리는 만큼을 칸마다 따로 알려 줄 때) */
     var allViews: () -> List<DocumentView> = { listOf(docView) }
+
+    /** 도구를 골랐을 때 (플로팅 툴바의 직전 도구 칸) */
+    var onToolSelected: (Tool) -> Unit = {}
+
+    /** 도구 아이콘 속(펜 색 등)이 바뀌었을 때 (플로팅 툴바가 비춰 그린 아이콘을 다시 그린다) */
+    var onIconsChanged: () -> Unit = {}
+
+    /** 하단 툴바 아이콘 크기를 바꿨을 때 (플로팅 툴바 단추도 같은 크기) */
+    var onIconScaleChanged: () -> Unit = {}
     /** 겹쳐 뜬 줄들의 둘레를 담는 틀 (칸의 자리를 이 틀 기준으로 재려고) */
     private val docFrame get() = findViewById<FrameLayout>(R.id.docFrame)
     private val resources get() = activity.resources
@@ -233,6 +242,7 @@ internal class ToolbarController(
         closeFlyout()
         dock.setIconScale(toolIconScale())
         findViewById<View>(R.id.toolbar).post { updateOverlayInsets() }
+        onIconScaleChanged()
     }
 
     // ================= 툴바에 보일 도구 =================
@@ -818,12 +828,18 @@ internal class ToolbarController(
         }
     }
 
+    /** 자 단추 (플로팅 툴바가 아이콘과 켜짐을 빌려 간다) */
+    val rulerView: View? get() = if (::rulerButton.isInitialized) rulerButton else null
+
+    /** 자 단추를 눌렀을 때. [anchor] 옆에 자 종류 펼침 창 */
+    fun clickRuler(anchor: View) {
+        if (!flyoutJustClosed(anchor)) showRulerFlyout(anchor)
+    }
+
     fun setupRuler() {
         rulerButton = findViewById(R.id.toolRuler)
-        rulerButton.setOnClickListener {
-            // 열려 있을 때 누르면 닫는다 (펼침 창 공통 규칙)
-            if (!flyoutJustClosed(rulerButton)) showRulerFlyout(rulerButton)
-        }
+        // 열려 있을 때 누르면 닫는다 (펼침 창 공통 규칙)
+        rulerButton.setOnClickListener { clickRuler(rulerButton) }
         updateRulerButton()
     }
 
@@ -1586,51 +1602,54 @@ internal class ToolbarController(
         updateTapeIcon()
         updateFillIcon()
         updatePenIcon()
-        toolButtons.forEach { (t, b) ->
-            b.setOnClickListener {
-                if (t == Tool.LASSO || t == Tool.LASER || t == Tool.HIGHLIGHTER) {
-                    // 형광펜·선택·레이저는 고를 것이 적어 옵션 줄 대신 버튼 옆에 펼침 창. 열려 있을 때 누르면 닫는다
-                    val reopen = !flyoutJustClosed(b)
-                    selectTool(t)
-                    if (reopen) showToolFlyout(t, b)
-                } else if (t == Tool.PEN) {
-                    // 펜: 처음 누르면 펜으로, 펜일 때 다시 누르면 펜 종류·손떨림 보정 줄을 열고 닫는다
-                    val wasPen = docView.tool == Tool.PEN
-                    val showing = optionTool == Tool.PEN
-                    selectTool(t)
-                    when {
-                        showing -> hideOptionBar()
-                        wasPen -> showOptionBar(Tool.PEN)
-                        !prefs.getBoolean("penHintShown", false) -> {
-                            prefs.edit().putBoolean("penHintShown", true).apply()
-                            toast("펜을 한 번 더 누르면 펜 종류(만년필·붓펜·연필 등)와 손떨림 보정을 고를 수 있습니다.")
-                        }
-                    }
-                } else if (t == Tool.ERASER || t == Tool.TAPE || t == Tool.FILL) {
-                    // 테이프·채우기·지우개는 누를 때마다 옵션 줄을 열고, 열려 있으면 닫는다
-                    if (t == Tool.TAPE && docView.tool != Tool.TAPE) {
-                        toast("테이프를 누르면 가린 내용이 보이고, 다시 누르면 가려집니다. 손가락으로는 어느 도구에서나 됩니다.")
-                    }
-                    if (t == Tool.FILL && docView.tool != Tool.FILL && !docView.fillErasing) {
-                        toast(if (docView.fillMode == FillMode.BUCKET) "도형 안을 누르면 그 안을 채웁니다."
-                            else "닫힌 곡선을 그리면 가장 바깥 선 안을 모두 채웁니다.")
-                    }
-                    val showing = optionTool == t
-                    selectTool(t)
-                    if (showing) hideOptionBar() else showOptionBar(t)
-                } else {
-                    if (t == Tool.TEXT && docView.tool != Tool.TEXT) {
-                        Toast.makeText(activity, "글을 넣을 자리를 누르면 글 상자가 생깁니다. 넣은 글을 누르면 고칠 수 있습니다.", Toast.LENGTH_SHORT).show()
-                    }
-                    selectTool(t)
-                }
-            }
-        }
+        toolButtons.forEach { (t, b) -> b.setOnClickListener { clickTool(t, b) } }
         selectTool(Tool.PEN)
         applyToolOrder()
         applyToolVisibility()
         setupRuler()
         applyRulerVisibility()
+    }
+
+    /**
+     * 도구 단추를 눌렀을 때 하는 일. [anchor]는 펼침 창을 붙일 단추 (하단 툴바 단추, 또는 플로팅 툴바의 같은 도구 단추)
+     */
+    fun clickTool(t: Tool, anchor: View) {
+        if (t == Tool.LASSO || t == Tool.LASER || t == Tool.HIGHLIGHTER) {
+            // 형광펜·선택·레이저는 고를 것이 적어 옵션 줄 대신 버튼 옆에 펼침 창. 열려 있을 때 누르면 닫는다
+            val reopen = !flyoutJustClosed(anchor)
+            selectTool(t)
+            if (reopen) showToolFlyout(t, anchor)
+        } else if (t == Tool.PEN) {
+            // 펜: 처음 누르면 펜으로, 펜일 때 다시 누르면 펜 종류·손떨림 보정 줄을 열고 닫는다
+            val wasPen = docView.tool == Tool.PEN
+            val showing = optionTool == Tool.PEN
+            selectTool(t)
+            when {
+                showing -> hideOptionBar()
+                wasPen -> showOptionBar(Tool.PEN)
+                !prefs.getBoolean("penHintShown", false) -> {
+                    prefs.edit().putBoolean("penHintShown", true).apply()
+                    toast("펜을 한 번 더 누르면 펜 종류(만년필·붓펜·연필 등)와 손떨림 보정을 고를 수 있습니다.")
+                }
+            }
+        } else if (t == Tool.ERASER || t == Tool.TAPE || t == Tool.FILL) {
+            // 테이프·채우기·지우개는 누를 때마다 옵션 줄을 열고, 열려 있으면 닫는다
+            if (t == Tool.TAPE && docView.tool != Tool.TAPE) {
+                toast("테이프를 누르면 가린 내용이 보이고, 다시 누르면 가려집니다. 손가락으로는 어느 도구에서나 됩니다.")
+            }
+            if (t == Tool.FILL && docView.tool != Tool.FILL && !docView.fillErasing) {
+                toast(if (docView.fillMode == FillMode.BUCKET) "도형 안을 누르면 그 안을 채웁니다."
+                    else "닫힌 곡선을 그리면 가장 바깥 선 안을 모두 채웁니다.")
+            }
+            val showing = optionTool == t
+            selectTool(t)
+            if (showing) hideOptionBar() else showOptionBar(t)
+        } else {
+            if (t == Tool.TEXT && docView.tool != Tool.TEXT) {
+                Toast.makeText(activity, "글을 넣을 자리를 누르면 글 상자가 생깁니다. 넣은 글을 누르면 고칠 수 있습니다.", Toast.LENGTH_SHORT).show()
+            }
+            selectTool(t)
+        }
     }
 
     fun selectTool(t: Tool) {
@@ -1642,6 +1661,7 @@ internal class ToolbarController(
         shapeBar.visibility = if (t == Tool.SHAPE) View.VISIBLE else View.GONE
         if (t != Tool.SHAPE) hideShapeOptions()
         buildColors()
+        onToolSelected(t)
     }
 
     // ----- 보정 펜 도형 줄 -----
@@ -2043,6 +2063,7 @@ internal class ToolbarController(
             button.invalidate()
         }
         (toolButtons[Tool.SHAPE]?.drawable as? ShapePenDrawable)?.markColor = docView.penColor
+        onIconsChanged()
     }
 
     private fun buildColors() {

@@ -146,6 +146,35 @@ class ScribbleTest {
         assertNull(ScribbleRegion.detect(ohIeung(), 1f))
     }
 
+    /** 영문 'm'을 한 획으로: 기둥을 내려 긋고 그대로 되올라가 아치를 두 번 (높이 [h], 아치 너비 [w]) */
+    private fun letterM(h: Float, w: Float, round: Boolean): Stroke {
+        val pts = ArrayList<Pair<Float, Float>>()
+        pts.add(0f to 0f); pts.add(0f to h); pts.add(0f to 0f)        // 기둥 내려갔다 되올라감
+        for (k in 0..1) {
+            val x0 = k * w
+            if (round) {
+                for (d in 0..180 step 15) {
+                    val a = d * PI / 180
+                    pts.add((x0 + w / 2 - w / 2 * cos(a)).toFloat() to (-sin(a).toFloat() * h * 0.35f))
+                }
+            } else {
+                pts.add(x0 + w / 2 to -h * 0.35f)
+            }
+            pts.add(x0 + w to 0f); pts.add(x0 + w to h)               // 아치 끝에서 내려감
+            if (k == 0) pts.add(x0 + w to 0f)                          // 다음 아치를 위해 되올라감
+        }
+        return stroke(pts)
+    }
+
+    @Test
+    fun letterMIsNotScribble() {
+        val bad = ArrayList<String>()
+        for (h in listOf(14f, 24f, 40f, 60f)) for (wr in listOf(0.4f, 0.6f, 0.9f)) for (round in listOf(true, false)) {
+            if (ScribbleRegion.detect(letterM(h, h * wr, round), 1f) != null) bad.add("h=$h w=$wr round=$round")
+        }
+        assertTrue("긁기로 오인된 m: $bad", bad.isEmpty())
+    }
+
     @Test
     fun scribbleCrossesWordManyTimes() {
         // 긁은 선은 아래 세로획들을 여러 번 가로지른다

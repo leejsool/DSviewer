@@ -66,6 +66,7 @@ class ViewerActivity : AppCompatActivity() {
     private lateinit var pageLabel: TextView
     private lateinit var textEditor: InlineTextEditor
     private lateinit var tools: ToolbarController
+    private lateinit var floating: FloatingToolbar
     private lateinit var noteEditor: NoteInlineEditor
 
     private lateinit var docTabs: ChromeTabBar
@@ -235,6 +236,7 @@ class ViewerActivity : AppCompatActivity() {
         tools.watchOverlays()
         setupTabs()
         setupActions()
+        setupFloatingToolbar()
         onBackPressedDispatcher.addCallback(this, backCallback)
         timer.restore()
         calc.restore()
@@ -1237,6 +1239,44 @@ class ViewerActivity : AppCompatActivity() {
         updateActions()
     }
 
+    /**
+     * 플로팅 툴바: 상단·하단 툴바까지 손이 닿지 않을 때 문서 위에 띄우는 작은 툴바 (보기 메뉴에서 켜고 끈다).
+     * 단추마다 원래 단추를 그대로 쓴다: 아이콘·켜짐은 원래 단추를 비추고, 메뉴·펼침 창은 플로팅 툴바 단추 옆에 연다
+     */
+    private fun setupFloatingToolbar() {
+        val tool = FloatingToolbar.Group.TOOL
+        val top = FloatingToolbar.Group.TOP
+        fun item(key: String, label: String, group: FloatingToolbar.Group, source: () -> View?, click: (View) -> Unit) =
+            FloatingToolbar.Item(key, label, group, source, click)
+        val toolItems = tools.toolNames.map { (t, name) ->
+            item(t.name, name, tool, { tools.toolButtons[t] }) { a -> tools.clickTool(t, a) }
+        } + item("RULER", "자", tool, { tools.rulerView }) { a -> tools.clickRuler(a) }
+        val topItems = listOf(
+            item(FloatBarMath.UNDO, "실행 취소", top, { undoButton }) { undoButton.performClick() },
+            item("redo", "다시 실행", top, { redoButton }) { redoButton.performClick() },
+            item("save", "저장", top, { saveButton }) { saveButton.performClick() },
+            item("insert", "삽입", top, { insertButton }) { a -> if (insertButton.isEnabled) showInsertMenu(a) },
+            item("wrong", "스크랩", top, { wrongButton }) { a -> if (wrongButton.isEnabled) showWrongMenu(a) },
+            item("view", "보기", top, { viewMenuButton }) { a -> showViewMenu(a) },
+            item("twoPage", "양쪽 보기", top, { twoPageButton }) { twoPageButton.performClick() },
+            item("split", "분할 보기", top, { splitButton }) { a -> onSplitClicked(a) },
+            item("pages", "페이지 관리", top, { pagesButton }) { pagesButton.performClick() },
+            item("overview", "쪽 한눈에 보기", top, { overviewButton }) { if (overviewButton.isEnabled) overviewButton.performClick() },
+            item("readMode", "읽기 모드", top, { readModeButton }) { readModeButton.performClick() },
+            item("fullscreen", "전체 화면", top, { fullscreenButton }) { fullscreenButton.performClick() },
+            item("more", "더 보기", top, { findViewById(R.id.actionMore) }) { a -> showMoreMenu(a) },
+        )
+        floating = FloatingToolbar(
+            this, prefs, findViewById(R.id.docFrame), { splitHost }, toolItems + topItems,
+            iconScale = { tools.toolIconScale() }, currentToolKey = { docView.tool.name },
+        )
+        tools.onToolSelected = { floating.onToolSelected(it.name) }
+        tools.onIconsChanged = { floating.invalidateIcons() }
+        tools.onIconScaleChanged = { floating.rebuild() }
+        for (p in panes) p.view.onDrawn = floating::onDocDrawn
+        floating.setup()
+    }
+
     /** 지금 탭의 상태에 맞춰 버튼을 켜고 끈다 (예전 invalidateOptionsMenu 자리) */
     private fun updateActions() {
         applyActionVisibility()
@@ -1354,6 +1394,7 @@ class ViewerActivity : AppCompatActivity() {
         ) { setViewMode(viewMode.next) }
         add("전체 화면", R.drawable.ic_fullscreen) { setFullscreen(true) }
         add("발표 시작", R.drawable.ic_present, enabled = ink != null) { startPresentation() }
+        add("플로팅 툴바", R.drawable.ic_floating_toolbar, floating.isShown) { floating.setShown(!floating.isShown) }
         popup.showAsDropDown(anchor, 0, 0, android.view.Gravity.END)
     }
 

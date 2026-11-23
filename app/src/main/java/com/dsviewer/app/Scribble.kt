@@ -51,6 +51,9 @@ class ScribbleRegion private constructor(
     companion object {
         /** 적어도 이만큼 오가야 긁기로 본다 */
         private const val MIN_PASSES = 4
+        /** 한 번 오갈 때 옆으로 밀려 가는 거리가 오간 길이의 이만큼보다 크면 글자('m' 같은)일 수 있어 왕복이 더 많아야 한다 */
+        private const val MAX_DRIFT = 0.1f
+        private const val MIN_PASSES_DRIFTING = 7
         /** 이어진 두 번이 이만큼 (코사인) 정반대여야 (약 127°보다 크게 되돌아감) */
         private const val REVERSE_COS = -0.6f
         /** 이어진 두 번의 길이가 짧은 쪽이 긴 쪽의 이만큼은 되어야 */
@@ -119,7 +122,28 @@ class ScribbleRegion private constructor(
             // 점을 콕콕 찍은 것은 긁기가 아니다 (점 찍다 손이 떨리거나 작게 맴돈 것까지 거른다).
             // 전자칠판처럼 큰 화면에서는 굵은 펜으로 점을 비벼 크게 찍는데, dp만으로는 그것이 긁기만큼 커 보인다.
             // 점은 펜 굵기의 몇 배를 넘지 못하므로 크기를 펜 굵기와도 견준다
-            if (chords.sorted()[n / 2] < max(MIN_CHORD_DP * unit, MIN_CHORD_WIDTHS * st.width)) return null
+            val medianChord = chords.sorted()[n / 2]
+            if (medianChord < max(MIN_CHORD_DP * unit, MIN_CHORD_WIDTHS * st.width)) return null
+            // 오가는 방향과 수직으로 한 번 오갈 때마다 얼마나 옆으로 밀려 가나: 긁기는 같은 자리를 빽빽이 오가지만
+            // 영문 'm'·'w'처럼 위아래로 오르내리며 옆으로 나아가는 글자는 한 번 오갈 때마다 꽤 밀려 간다.
+            // 많이 밀려 가는데 왕복이 적으면 (글자 하나) 긁기가 아니다
+            var axX = 0f
+            var axY = 0f
+            for (k in 0 until n) {
+                val sign = if (k % 2 == 0) 1f else -1f
+                axX += vx[k] * sign
+                axY += vy[k] * sign
+            }
+            val axLen = hypot(axX, axY)
+            if (axLen > 0f) {
+                var lo = Float.MAX_VALUE
+                var hi = -Float.MAX_VALUE
+                for (idx in pts) {
+                    val side = (-axY * st.x(idx) + axX * st.y(idx)) / axLen
+                    lo = minOf(lo, side); hi = maxOf(hi, side)
+                }
+                if ((hi - lo) / n > MAX_DRIFT * medianChord && turns.size < MIN_PASSES_DRIFTING) return null
+            }
             var l = st.x(0); var r = l; var t = st.y(0); var b = t
             for (i in 1 until st.count) {
                 l = minOf(l, st.x(i)); r = maxOf(r, st.x(i))
