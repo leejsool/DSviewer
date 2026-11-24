@@ -3,7 +3,8 @@ package com.dsviewer.app
 /**
  * 플로팅 툴바의 계산 (화면과 상관없는 부분만 모아 단위 테스트한다).
  *
- * 기본 칸: 실행 취소 · 펜 · 형광펜 · 직전 도구. 사용자가 옵션에서 고른 단추(extra)가 그 뒤에 붙고,
+ * 기본 칸: 실행 취소 · 펜 · 형광펜 · 직전 도구. 앞의 셋은 처음부터 켜져 있지만 옵션에서 뺄 수 있고(hidden),
+ * 사용자가 옵션에서 고른 단추(extra)가 그 뒤에 붙고,
  * 단추 수에 따라 칸 수가 저절로 정해진다 (사용자가 크기를 정하지 않는다).
  */
 object FloatBarMath {
@@ -11,8 +12,8 @@ object FloatBarMath {
     const val PEN = "PEN"
     const val HIGHLIGHTER = "HIGHLIGHTER"
 
-    /** 늘 있는 앞의 세 칸 */
-    val FIXED = listOf(UNDO, PEN, HIGHLIGHTER)
+    /** 처음부터 올라 있는 앞의 세 칸 (옵션에서 끄면 빠진다) */
+    val DEFAULTS = listOf(UNDO, PEN, HIGHLIGHTER)
 
     /** 직전 도구 칸에 올 수 있는 도구 (실행 취소 · 펜 · 형광펜이 아닌 그리기 도구) */
     val RECENT_CANDIDATES = listOf("LASSO", "ERASER", "SHAPE", "TEXT", "LASER", "TAPE", "FILL")
@@ -20,10 +21,14 @@ object FloatBarMath {
     /** 투명도(%) 범위와 처음 값. 100이면 바탕 색이 전혀 없는 맑은 유리 */
     const val MIN_TRANSPARENCY = 40
     const val MAX_TRANSPARENCY = 100
-    const val DEFAULT_TRANSPARENCY = 88
+    const val DEFAULT_TRANSPARENCY = 95
 
-    /** 단추 [n]개를 늘어놓을 칸 수: 6개까지 2칸(2×2, 2×3), 12개까지 3칸, 그보다 많으면 4칸 */
+    /** 단추 한 변 (dp, 아이콘 배율 1일 때). 아이콘은 24dp 그대로 두고 단추만 예전 44dp의 80% */
+    const val BUTTON_DP = 35.2f
+
+    /** 단추 [n]개를 늘어놓을 칸 수: 1개면 1칸, 6개까지 2칸(1×2, 2×2, 2×3), 12개까지 3칸, 그보다 많으면 4칸 */
     fun columns(n: Int): Int = when {
+        n <= 1 -> 1
         n <= 6 -> 2
         n <= 12 -> 3
         else -> 4
@@ -41,16 +46,16 @@ object FloatBarMath {
      * 기록이 없으면 후보 차례에서 처음으로 비어 있는 것 (처음엔 선택 도구)
      */
     fun recentSlot(history: List<String>, extra: Collection<String>): String? {
-        val taken = FIXED.toSet() + extra
+        val taken = DEFAULTS.toSet() + extra
         return history.firstOrNull { it in RECENT_CANDIDATES && it !in taken }
             ?: RECENT_CANDIDATES.firstOrNull { it !in taken }
     }
 
-    /** 툴바에 보일 단추 차례: 실행 취소 · 펜 · 형광펜 · 직전 도구 · 사용자가 더한 단추 */
-    fun slots(history: List<String>, extra: List<String>): List<String> {
-        val extras = extra.filter { it !in FIXED }.distinct()
+    /** 툴바에 보일 단추 차례: 실행 취소 · 펜 · 형광펜 (그 가운데 [hidden]은 빼고) · 직전 도구 · 사용자가 더한 단추 */
+    fun slots(history: List<String>, extra: List<String>, hidden: Collection<String> = emptyList()): List<String> {
+        val extras = extra.filter { it !in DEFAULTS }.distinct()
         val recent = recentSlot(history, extras)
-        return FIXED + listOfNotNull(recent) + extras
+        return DEFAULTS.filter { it !in hidden } + listOfNotNull(recent) + extras
     }
 
     /** 저장한 쉼표 목록을 읽는다. [valid]에 없는 이름(옛 버전·지운 기능)은 버린다 */

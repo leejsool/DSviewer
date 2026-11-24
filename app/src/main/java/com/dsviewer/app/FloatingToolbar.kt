@@ -15,9 +15,12 @@ import android.graphics.PixelFormat
 import android.graphics.RadialGradient
 import android.graphics.Rect
 import android.graphics.RectF
+import android.graphics.RenderEffect
+import android.graphics.RenderNode
 import android.graphics.Shader
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -32,6 +35,7 @@ import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.google.android.material.chip.Chip
@@ -46,14 +50,16 @@ import kotlin.math.roundToInt
 /**
  * 플로팅 툴바: 상단·하단 툴바까지 손이 닿지 않을 때 문서 위 아무 곳에나 띄워 두는 작은 유리 툴바.
  *
- * - 기본 단추는 실행 취소 · 펜 · 형광펜 · 직전 도구(실행 취소·펜·형광펜이 아닌, 가장 최근에 쓴 도구) 2×2.
+ * - 처음 단추는 실행 취소 · 펜 · 형광펜 · 직전 도구(실행 취소·펜·형광펜이 아닌, 가장 최근에 쓴 도구) 2×2.
+ *   앞의 셋도 옵션에서 끌 수 있어서 2×2보다 작아질 수 있다 (1칸, 1×2, 2칸+1).
  * - 위쪽 손잡이: 끌면 옮기고, 톡 누르면 플로팅 툴바 옵션(단추 더하기 · 투명도). 오른쪽 꺾쇠로 접고 편다.
  * - 단추는 상단·하단 툴바의 진짜 단추를 그대로 부른다: 아이콘을 비춰 그리고([MirrorDrawable]) 누르면 같은 일을 한다.
  *   그래서 펜 색·지우개 모양·켜짐 표시가 원래 단추와 늘 같다.
  * - 크기는 사용자가 정하지 않는다: 단추 수에 따라 칸 수가 정해진다 ([FloatBarMath.columns]).
- * - 바탕은 뒤의 문서를 작게 그려 흐리게 한 그림 위에 옅은 흰색과 광택을 얹은 유리 ([GlassPanel]).
+ * - 바탕은 뒤의 문서를 흐리게 다시 그린 위에 옅은 흰색과 광택을 얹은 유리 ([GlassPanel]). 문서와 같은 화면에서 그려 뒤처지지 않는다.
+ * - 처음부터 켜져 있다 (1.2.2부터. 업데이트 뒤 한 번은 꺼 두었어도 켠다: floatBarDefaultOn).
  *
- * prefs: floatBarOn · floatBarFolded · floatBarX/Y(화면 크기에 대한 비율) · floatBarExtra · floatBarHistory · floatBarTransparency
+ * prefs: floatBarOn · floatBarDefaultOn · floatBarFolded · floatBarX/Y(화면 크기에 대한 비율) · floatBarExtra · floatBarHidden(끈 기본 단추) · floatBarHistory · floatBarTransparency
  */
 internal class FloatingToolbar(
     private val activity: AppCompatActivity,
@@ -78,7 +84,7 @@ internal class FloatingToolbar(
     private val handle = LinearLayout(activity).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
-        minimumWidth = dpx(96f)
+        minimumWidth = dpx(2 * (FloatBarMath.BUTTON_DP + 4f))
     }
     private val grip = LinearLayout(activity).apply {
         orientation = LinearLayout.HORIZONTAL
@@ -103,7 +109,9 @@ internal class FloatingToolbar(
 
     private val valid = items.map { it.key }.toSet()
     private var history = FloatBarMath.parseKeys(prefs.getString("floatBarHistory", null), FloatBarMath.RECENT_CANDIDATES)
-    private var extra = FloatBarMath.parseKeys(prefs.getString("floatBarExtra", null), valid - FloatBarMath.FIXED.toSet())
+    private var extra = FloatBarMath.parseKeys(prefs.getString("floatBarExtra", null), valid - FloatBarMath.DEFAULTS.toSet())
+    // 기본 세 칸(실행 취소 · 펜 · 형광펜) 가운데 사용자가 옵션에서 끈 것
+    private var hidden = FloatBarMath.parseKeys(prefs.getString("floatBarHidden", null), FloatBarMath.DEFAULTS)
     private var folded = prefs.getBoolean("floatBarFolded", false)
     private var transparency = prefs.getInt("floatBarTransparency", FloatBarMath.DEFAULT_TRANSPARENCY)
     // 처음 자리: 왼쪽 아래 (키가 작은 사람이 닿기 쉬운 곳)
@@ -113,7 +121,7 @@ internal class FloatingToolbar(
 
     private var popup: PopupWindow? = null
 
-    val isShown get() = prefs.getBoolean("floatBarOn", false)
+    val isShown get() = prefs.getBoolean("floatBarOn", true)
 
     fun setup() {
         val iconColor = MaterialColors.getColor(frame, com.google.android.material.R.attr.colorOnSurfaceVariant)
@@ -126,9 +134,15 @@ internal class FloatingToolbar(
         handle.addView(grip, LinearLayout.LayoutParams(0, dpx(26f), 1f))
         handle.addView(foldButton, LinearLayout.LayoutParams(dpx(26f), dpx(26f)).apply { marginStart = dpx(4f) })
         column.addView(handle, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dpx(26f)))
-        column.addView(grid, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dpx(4f) })
+        // 단추가 한두 개면 손잡이보다 좁다: 가운데에
+        column.addView(grid, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dpx(4f)
+            gravity = Gravity.CENTER_HORIZONTAL
+        })
         panel.addView(column, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT))
         panel.tint = FloatBarMath.tintAlpha(transparency)
+        panel.backdropSource = backdropSource
+        panel.backdropColor = ContextCompat.getColor(activity, R.color.doc_bg)
         // 문서·선택 막대 위에 뜨도록 높이를 주되, 그림자는 유리 모양대로 직접 그린다 (시스템 그림자는 반투명 바탕 안으로 비친다)
         panel.elevation = 8 * d
         panel.outlineProvider = null
@@ -152,6 +166,10 @@ internal class FloatingToolbar(
             if (panel.visibility == View.VISIBLE) syncIcons()
             true
         }
+        // 1.2.2부터 플로팅 툴바가 기본으로 켜진다. 업데이트한 뒤 처음 한 번은 (예전에 꺼 두었어도) 켜서 보여 준다
+        if (!prefs.getBoolean("floatBarDefaultOn", false)) {
+            prefs.edit().putBoolean("floatBarOn", true).putBoolean("floatBarDefaultOn", true).apply()
+        }
         rebuild()
         applyShown()
     }
@@ -162,15 +180,15 @@ internal class FloatingToolbar(
 
     /** 단추를 다시 늘어놓는다 (더한 단추·직전 도구·아이콘 크기가 바뀌었을 때) */
     fun rebuild() {
-        val keys = FloatBarMath.slots(history, extra).filter { it in byKey }
+        val keys = currentSlots()
         val recentKey = FloatBarMath.recentSlot(history, extra)
-        val size = dpx(44f * iconScale())
+        val size = dpx(FloatBarMath.BUTTON_DP * iconScale())
         val gap = dpx(4f)
         grid.removeAllViews()
         grid.columnCount = FloatBarMath.columns(keys.size)
         buttons = keys.mapIndexed { i, k ->
             val item = byKey.getValue(k)
-            FloatButton(activity, k, item.source, recent = i == 3 && k == recentKey).also { b ->
+            FloatButton(activity, k, item.source, recent = k == recentKey).also { b ->
                 b.contentDescription = item.label
                 b.tooltipText = item.label
                 b.setOnClickListener { item.onClick(b) }
@@ -183,6 +201,8 @@ internal class FloatingToolbar(
         }
         applyFolded()
     }
+
+    private fun currentSlots() = FloatBarMath.slots(history, extra, hidden).filter { it in byKey }
 
     /** 펜 색처럼 원래 단추 아이콘 속만 바뀌었을 때 (그림 개체는 같아서 [syncIcons]가 모른다) */
     fun invalidateIcons() {
@@ -214,7 +234,7 @@ internal class FloatingToolbar(
             history = next
             prefs.edit().putString("floatBarHistory", history.joinToString(",")).apply()
         }
-        if (FloatBarMath.slots(history, extra).filter { it in byKey } != buttons.map { it.key }) rebuild()
+        if (currentSlots() != buttons.map { it.key }) rebuild()
         invalidateIcons()
     }
 
@@ -300,14 +320,14 @@ internal class FloatingToolbar(
     private fun moveTo(x: Float, y: Float) {
         val m = panel.margin
         panel.x = FloatBarMath.clamp(x + m, panel.width - 2 * m, frame.width.toFloat()) - m
-        panel.y = FloatBarMath.clamp(y + m, panel.height - 2 * m, frame.height.toFloat()) - m
+        panel.y = FloatBarMath.clamp(y + m, panel.glassHeight, frame.height.toFloat()) - m
         queueCapture()
     }
 
     private fun savePosition() {
         val m = panel.margin
         fx = FloatBarMath.toFraction(panel.x + m, panel.width - 2 * m, frame.width.toFloat())
-        fy = FloatBarMath.toFraction(panel.y + m, panel.height - 2 * m, frame.height.toFloat())
+        fy = FloatBarMath.toFraction(panel.y + m, panel.glassHeight, frame.height.toFloat())
         prefs.edit().putFloat("floatBarX", fx).putFloat("floatBarY", fy).apply()
     }
 
@@ -317,70 +337,21 @@ internal class FloatingToolbar(
         placed = true
         val m = panel.margin
         panel.x = FloatBarMath.fromFraction(fx, panel.width - 2 * m, frame.width.toFloat()) - m
-        panel.y = FloatBarMath.fromFraction(fy, panel.height - 2 * m, frame.height.toFloat()) - m
+        panel.y = FloatBarMath.fromFraction(fy, panel.glassHeight, frame.height.toFloat()) - m
         queueCapture()
     }
 
     // ================= 유리 뒤 흐린 문서 =================
+    // 흐린 바탕은 유리 판이 자기를 그릴 때 그 자리에서 문서를 다시 그려 만든다 ([GlassPanel.drawBackdrop]).
+    // 문서와 같은 화면(프레임)에서 그려지므로, 옮기거나 스크롤해도 뒤처지지 않는다.
 
-    private var snapshot: Bitmap? = null
-    private var pixels = IntArray(0)
-    private var capturing = false
-    private val captureRunnable = Runnable { capture() }
-
-    /** 문서 화면이 다시 그려졌을 때 (DocumentView.onDrawn). 너무 자주 찍지 않게 잠깐 모아서 */
+    /** 문서 화면이 다시 그려졌을 때 (DocumentView.onDrawn). 같은 화면에서 유리도 다시 그린다 */
     fun onDocDrawn() {
-        if (capturing || panel.visibility != View.VISIBLE) return
-        if (!pending) {
-            pending = true
-            panel.postDelayed(captureRunnable, 90)
-        }
+        if (panel.isCapturing || panel.visibility != View.VISIBLE) return
+        panel.invalidate()
     }
 
-    private var pending = false
-
-    /** 옮기는 중처럼 바로 다음 화면에 맞춰 찍어야 할 때 */
     private fun queueCapture() {
-        panel.removeCallbacks(captureRunnable)
-        pending = true
-        panel.postOnAnimation(captureRunnable)
-    }
-
-    /** 유리 뒤에 있는 문서 부분을 작게 그려 흐리게 한다 (1.5dp가 한 점) */
-    private fun capture() {
-        pending = false
-        if (panel.visibility != View.VISIBLE || panel.width == 0 || frame.width == 0) return
-        val src = backdropSource()
-        if (src.width == 0 || src.height == 0) return
-        val m = panel.margin
-        val gw = panel.width - 2 * m
-        val gh = panel.height - 2 * m
-        val s = 1f / (1.5f * d)
-        val bw = max(1, ceil(gw * s).toInt())
-        val bh = max(1, ceil(gh * s).toInt())
-        val bmp = snapshot?.takeIf { it.width == bw && it.height == bh }
-            ?: Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888).also { snapshot = it }
-        val frameLoc = IntArray(2)
-        val srcLoc = IntArray(2)
-        frame.getLocationInWindow(frameLoc)
-        src.getLocationInWindow(srcLoc)
-        val c = Canvas(bmp)
-        c.drawColor(ContextCompat.getColor(activity, R.color.doc_bg))
-        c.scale(s, s)
-        c.translate(srcLoc[0] - frameLoc[0] - (panel.x + m), srcLoc[1] - frameLoc[1] - (panel.y + m))
-        capturing = true
-        try {
-            src.draw(c)
-        } catch (e: RuntimeException) {
-            return
-        } finally {
-            capturing = false
-        }
-        if (pixels.size != bw * bh) pixels = IntArray(bw * bh)
-        bmp.getPixels(pixels, 0, bw, 0, 0, bw, bh)
-        FloatBarMath.boxBlur(pixels, bw, bh, radius = 1, passes = 2)
-        bmp.setPixels(pixels, 0, bw, 0, 0, bw, bh)
-        panel.backdrop = bmp
         panel.invalidate()
     }
 
@@ -406,11 +377,10 @@ internal class FloatingToolbar(
             setTextColor(onSurface)
             typeface = android.graphics.Typeface.create(typeface, android.graphics.Typeface.BOLD)
         })
-        content.addView(label("실행 취소 · 펜 · 형광펜 · 직전 도구는 늘 있습니다. 더 올릴 단추를 고르세요.", 4f))
         content.addView(label("그리기 도구 (하단 툴바)", 10f))
-        content.addView(chips(items.filter { it.group == Group.TOOL && it.key !in FloatBarMath.FIXED }))
+        content.addView(chips(items.filter { it.group == Group.TOOL }))
         content.addView(label("문서 · 보기 기능 (상단 툴바)", 10f))
-        content.addView(chips(items.filter { it.group == Group.TOP && it.key !in FloatBarMath.FIXED }))
+        content.addView(chips(items.filter { it.group == Group.TOP }))
 
         val value = TextView(activity).apply {
             textSize = 13f
@@ -444,8 +414,9 @@ internal class FloatingToolbar(
             setPadding(0, dpx(8f), 0, 0)
             addView(actionChip("기본으로", R.drawable.ic_history) {
                 extra = emptyList()
+                hidden = emptyList()
                 transparency = FloatBarMath.DEFAULT_TRANSPARENCY
-                prefs.edit().remove("floatBarExtra").remove("floatBarTransparency").apply()
+                prefs.edit().remove("floatBarExtra").remove("floatBarHidden").remove("floatBarTransparency").apply()
                 panel.tint = FloatBarMath.tintAlpha(transparency)
                 rebuild()
                 showOptions()
@@ -518,7 +489,8 @@ internal class FloatingToolbar(
                 text = item.label
                 textSize = 13f
                 isCheckable = true
-                isChecked = item.key in extra
+                val isDefault = item.key in FloatBarMath.DEFAULTS
+                isChecked = if (isDefault) item.key !in hidden else item.key in extra
                 isCheckedIconVisible = false
                 chipIcon = MirrorDrawable({ sourceIcon(item.key) }, dpx(18f))
                 isChipIconVisible = true
@@ -531,8 +503,14 @@ internal class FloatingToolbar(
                 chipStrokeColor = ColorStateList(arrayOf(checked, none), intArrayOf(Color.rgb(0x9D, 0xBD, 0xE6), Color.rgb(0xC9, 0xD3, 0xE2)))
                 setTextColor(ColorStateList(arrayOf(checked, none), intArrayOf(Color.rgb(0x1B, 0x35, 0x57), Color.rgb(0x3E, 0x4A, 0x5C))))
                 setOnCheckedChangeListener { _, on ->
-                    extra = if (on) (extra + item.key).distinct() else extra - item.key
-                    prefs.edit().putString("floatBarExtra", extra.joinToString(",")).apply()
+                    if (isDefault) {
+                        // 기본 세 칸은 끄면 '뺀 목록'에 넣는다 (켜면 원래 자리로 돌아온다)
+                        hidden = if (on) hidden - item.key else (hidden + item.key).distinct()
+                        prefs.edit().putString("floatBarHidden", hidden.joinToString(",")).apply()
+                    } else {
+                        extra = if (on) (extra + item.key).distinct() else extra - item.key
+                        prefs.edit().putString("floatBarExtra", extra.joinToString(",")).apply()
+                    }
                     rebuild()
                 }
             })
@@ -578,16 +556,33 @@ internal class MirrorDrawable(private val source: () -> Drawable?, private val s
 }
 
 /**
- * 플로팅 툴바의 유리 판. 바깥 [margin]은 그림자 자리이고 그 안쪽 둥근 네모가 유리다.
- * 뒤 문서를 흐리게 한 그림([backdrop]) 위에 옅은 흰색([tint]), 위쪽 반사광, 대각선 광택, 흰 테두리를 얹는다
+ * 플로팅 툴바의 유리 판. 바깥 [margin](아래는 [marginBottom])은 그림자 자리이고 그 안쪽 둥근 네모가 유리다.
+ * 뒤 문서를 흐리게 한 바탕([drawBackdrop]) 위에 옅은 흰색([tint]), 위쪽 반사광, 대각선 광택, 흰 테두리를 얹는다
  */
 @SuppressLint("ViewConstructor")
 internal class GlassPanel(ctx: Context) : FrameLayout(ctx) {
     private val d = resources.displayMetrics.density
-    val margin = 12 * d
+    // 그림자 자리. 그림자는 14dp로 퍼지고 5dp 아래로 내려가 있어서 아래쪽에 더 넉넉히 둔다 (모자라면 끄트머리가 잘려 보인다)
+    val margin = 16 * d
+    val marginBottom = 28 * d
+    val glassHeight get() = height - margin - marginBottom
     private val radius = 22 * d
-    var backdrop: Bitmap? = null
-    var tint = 0.12f
+
+    /** 유리 뒤에 비칠 문서 화면 */
+    var backdropSource: (() -> View)? = null
+    var backdropColor = Color.WHITE
+
+    /** 유리 뒤를 그리려고 문서를 다시 그리는 중 (그 사이 문서가 '그려졌다'고 알려도 무시한다) */
+    var isCapturing = false
+        private set
+    private val blurRadius = 2.5f * d
+    private var blurNode: RenderNode? = null
+    private var snapshot: Bitmap? = null
+    private var pixels = IntArray(0)
+    private val srcLoc = IntArray(2)
+    private val selfLoc = IntArray(2)
+
+    var tint = 0.05f
         set(v) {
             if (field != v) {
                 field = v
@@ -623,19 +618,19 @@ internal class GlassPanel(ctx: Context) : FrameLayout(ctx) {
     init {
         setWillNotDraw(false)
         val m = margin.toInt()
-        setPadding(m + (8 * d).toInt(), m + (6 * d).toInt(), m + (8 * d).toInt(), m + (8 * d).toInt())
+        setPadding(m + (8 * d).toInt(), m + (6 * d).toInt(), m + (8 * d).toInt(), marginBottom.toInt() + (8 * d).toInt())
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
-        glass.set(margin, margin, w - margin, h - margin)
+        glass.set(margin, margin, w - margin, h - marginBottom)
         path.reset()
         path.addRoundRect(glass, radius, radius, Path.Direction.CW)
         gloss.set(glass.left + 10 * d, glass.top + 2 * d, glass.right - 10 * d, glass.top + min(glass.height() * 0.46f, 60 * d))
-        glossPaint.shader = LinearGradient(0f, gloss.top, 0f, gloss.bottom, Color.argb(160, 255, 255, 255), Color.argb(18, 255, 255, 255), Shader.TileMode.CLAMP)
+        glossPaint.shader = LinearGradient(0f, gloss.top, 0f, gloss.bottom, Color.argb(100, 255, 255, 255), Color.argb(8, 255, 255, 255), Shader.TileMode.CLAMP)
         sheenPaint.shader = LinearGradient(
             glass.left, glass.top, glass.right, glass.bottom,
-            intArrayOf(Color.argb(90, 255, 255, 255), Color.argb(0, 255, 255, 255), Color.argb(0, 255, 255, 255), Color.argb(56, 255, 255, 255)),
+            intArrayOf(Color.argb(55, 255, 255, 255), Color.argb(0, 255, 255, 255), Color.argb(0, 255, 255, 255), Color.argb(34, 255, 255, 255)),
             floatArrayOf(0f, 0.32f, 0.7f, 1f), Shader.TileMode.CLAMP,
         )
         rim.set(glass); rim.inset(0.6f * d, 0.6f * d)
@@ -653,10 +648,10 @@ internal class GlassPanel(ctx: Context) : FrameLayout(ctx) {
 
         canvas.save()
         canvas.clipPath(path)
-        backdrop?.let { canvas.drawBitmap(it, null, glass, bmpPaint) }
+        drawBackdrop(canvas)
         if (tintShaderFor != tint) {
             tintShaderFor = tint
-            val top = ((tint + 0.1f).coerceAtMost(1f) * 255).toInt()
+            val top = ((tint + 0.06f).coerceAtMost(1f) * 255).toInt()
             val bottom = (tint * 255).toInt()
             tintPaint.shader = LinearGradient(0f, glass.top, 0f, glass.bottom, Color.argb(top, 255, 255, 255), Color.argb(bottom, 240, 245, 252), Shader.TileMode.CLAMP)
         }
@@ -666,6 +661,69 @@ internal class GlassPanel(ctx: Context) : FrameLayout(ctx) {
         canvas.restore()
         canvas.drawRoundRect(rim, radius, radius, rimPaint)
         canvas.drawRoundRect(line, radius, radius, linePaint)
+    }
+
+    /**
+     * 유리 뒤 문서를 흐리게 그린다. 유리 판이 그려지는 바로 그 화면에서 문서를 다시 그려 만들기 때문에
+     * 툴바를 옮기거나 문서를 스크롤해도 바탕이 늦게 따라오지 않는다.
+     * Android 12 이상: 문서를 그리기 목록(RenderNode)으로 기록해 GPU 흐림(RenderEffect)을 건다 — 픽셀을 CPU로 만지지 않는다.
+     * 그 아래: 작은 그림에 그려 상자 흐림 (1.5dp가 한 점).
+     */
+    private fun drawBackdrop(canvas: Canvas) {
+        val src = backdropSource?.invoke() ?: return
+        if (isCapturing || src.width == 0 || src.height == 0) return
+        src.getLocationInWindow(srcLoc)
+        getLocationInWindow(selfLoc)
+        val dx = (srcLoc[0] - selfLoc[0]).toFloat()
+        val dy = (srcLoc[1] - selfLoc[1]).toFloat()
+        isCapturing = true
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && canvas.isHardwareAccelerated) drawBlurredGpu(canvas, src, dx, dy)
+            else drawBlurredBitmap(canvas, src, dx, dy)
+        } catch (_: RuntimeException) {
+        } finally {
+            isCapturing = false
+        }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.S)
+    private fun drawBlurredGpu(canvas: Canvas, src: View, dx: Float, dy: Float) {
+        val node = blurNode ?: RenderNode("glassBackdrop").also {
+            it.setRenderEffect(RenderEffect.createBlurEffect(blurRadius, blurRadius, Shader.TileMode.CLAMP))
+            blurNode = it
+        }
+        // 가장자리도 진짜 문서로 흐리도록 흐림 폭만큼 넓게 기록한다 (바깥은 유리 모양으로 잘린다)
+        val pad = ceil(blurRadius * 2).toInt()
+        val l = glass.left.toInt() - pad
+        val t = glass.top.toInt() - pad
+        node.setPosition(l, t, ceil(glass.right).toInt() + pad, ceil(glass.bottom).toInt() + pad)
+        val rc = node.beginRecording()
+        try {
+            rc.drawColor(backdropColor)
+            rc.translate(dx - l, dy - t)
+            src.draw(rc)
+        } finally {
+            node.endRecording()
+        }
+        canvas.drawRenderNode(node)
+    }
+
+    private fun drawBlurredBitmap(canvas: Canvas, src: View, dx: Float, dy: Float) {
+        val s = 1f / (1.5f * d)
+        val bw = max(1, ceil(glass.width() * s).toInt())
+        val bh = max(1, ceil(glass.height() * s).toInt())
+        val bmp = snapshot?.takeIf { it.width == bw && it.height == bh }
+            ?: Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888).also { snapshot = it }
+        val c = Canvas(bmp)
+        c.drawColor(backdropColor)
+        c.scale(s, s)
+        c.translate(dx - glass.left, dy - glass.top)
+        src.draw(c)
+        if (pixels.size != bw * bh) pixels = IntArray(bw * bh)
+        bmp.getPixels(pixels, 0, bw, 0, 0, bw, bh)
+        FloatBarMath.boxBlur(pixels, bw, bh, radius = 1, passes = 2)
+        bmp.setPixels(pixels, 0, bw, 0, 0, bw, bh)
+        canvas.drawBitmap(bmp, null, glass, bmpPaint)
     }
 
     /** 유리 위를 누른 것은 문서로 넘기지 않는다 (바깥 그림자 여백은 넘긴다) */
@@ -715,9 +773,10 @@ internal class FloatButton(ctx: Context, val key: String, private val source: ()
         val on = src?.isSelected == true
         val w = width.toFloat()
         val h = height.toFloat()
-        val k = w / (44 * d)
+        // k = 아이콘 배율. 단추는 작아졌어도 아이콘은 24dp × 배율 그대로
+        val k = w / (FloatBarMath.BUTTON_DP * d)
         rect.set(0.5f * d, 0.5f * d, w - 0.5f * d, h - 0.5f * d)
-        val r = 13 * d * k
+        val r = 10.5f * d * k
         if (shaderOn != on) {
             shaderOn = on
             bg.shader = RadialGradient(
@@ -742,12 +801,12 @@ internal class FloatButton(ctx: Context, val key: String, private val source: ()
             canvas.restoreToCount(save)
         } else icon.draw(canvas)
         if (on) {
-            val bw = 20 * d
-            val bh = 3 * d
-            bar.set(w / 2 - bw / 2, h - 4 * d * k - bh, w / 2 + bw / 2, h - 4 * d * k)
+            val bw = 16 * d
+            val bh = 2.5f * d
+            bar.set(w / 2 - bw / 2, h - 2.5f * d * k - bh, w / 2 + bw / 2, h - 2.5f * d * k)
             canvas.drawRoundRect(bar, bh / 2, bh / 2, mark)
         }
-        if (recent) canvas.drawCircle(w - 7 * d * k, 7 * d * k, 2.5f * d, dot)
+        if (recent) canvas.drawCircle(w - 5.5f * d * k, 5.5f * d * k, 2.2f * d, dot)
     }
 
     override fun drawableStateChanged() {

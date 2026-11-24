@@ -200,6 +200,8 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         // 업데이트로 받아 둔 설치 파일은 앱이 새로 켜질 때 지운다
         if (savedInstanceState == null) Updater.clearOld(this)
+        // 앱을 켤 때 (뷰어에서 '새 탭'으로 부른 것은 빼고): 일주일에 한 번 새 버전 확인
+        if (savedInstanceState == null && intent?.action == Intent.ACTION_MAIN) updater.autoCheck()
         setContentView(R.layout.activity_main)
         applyInsets(findViewById(R.id.root))
 

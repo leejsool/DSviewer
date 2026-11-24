@@ -49,6 +49,17 @@ class FloatBarMathTest {
         assertEquals(listOf("undo", "PEN", "HIGHLIGHTER", "LASSO", "redo", "save"), s)
     }
 
+    @Test fun defaultButtonsCanBeTurnedOff() {
+        // 펜을 끄면 빠지고 나머지 차례는 그대로
+        assertEquals(listOf("undo", "HIGHLIGHTER", "LASSO"), FloatBarMath.slots(emptyList(), emptyList(), listOf("PEN")))
+        // 셋 다 끄면 직전 도구 하나만 (1칸)
+        val one = FloatBarMath.slots(emptyList(), emptyList(), FloatBarMath.DEFAULTS)
+        assertEquals(listOf("LASSO"), one)
+        assertEquals(1, FloatBarMath.columns(one.size))
+        assertEquals(2, FloatBarMath.columns(2))   // 1×2
+        assertEquals(2, FloatBarMath.rows(3))      // 2칸 + 1
+    }
+
     @Test fun parseKeysDropsUnknown() {
         assertEquals(listOf("redo", "ERASER"), FloatBarMath.parseKeys("redo, ERASER,,gone,redo", setOf("redo", "ERASER")))
         assertTrue(FloatBarMath.parseKeys(null, setOf("redo")).isEmpty())

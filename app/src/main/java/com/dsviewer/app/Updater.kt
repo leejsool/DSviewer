@@ -32,7 +32,11 @@ import java.security.MessageDigest
 
 /**
  * 앱 정보·업데이트: 지금 버전을 보여 주고, GitHub 릴리스의 최신 APK를 받아 설치 화면까지 이어 준다.
- * 눌렀을 때만 인터넷에 접속한다 (저절로 확인하지 않음). 설치는 안드로이드 설치 화면에서 사용자가 '설치'를 눌러야 끝난다.
+ * 설치는 안드로이드 설치 화면에서 사용자가 '설치'를 눌러야 끝난다.
+ *
+ * 저절로 확인 ([autoCheck]): 앱을 켤 때 일주일에 한 번 조용히 확인하고, 새 버전이 있을 때만 알린다.
+ * 알림을 '나중에'로 닫으면 2주일 동안 알리지 않는다 ([UpdateSchedule]).
+ * prefs("update"): lastCheck · snoozeUntil
  */
 class Updater(private val activity: AppCompatActivity) {
 
@@ -47,6 +51,13 @@ class Updater(private val activity: AppCompatActivity) {
     private var ready: File? = null
     private var waitingForPermission = false
 
+    private val prefs = activity.getSharedPreferences("update", android.content.Context.MODE_PRIVATE)
+    /** 저절로 확인해서 연 알림 상자인지, 그 상자에서 '업데이트'를 눌렀는지 (안 누르고 닫으면 2주일 미룬다) */
+    private var auto = false
+    private var accepted = false
+    /** 확인을 마쳤을 때 앱이 화면에 없었으면, 돌아왔을 때 알린다 */
+    private var pendingOffer: Release? = null
+
     private lateinit var status: TextView
     private lateinit var notes: TextView
     private lateinit var bar: LinearProgressIndicator
@@ -54,6 +65,38 @@ class Updater(private val activity: AppCompatActivity) {
     // ================= 대화 상자 =================
 
     fun show() {
+        buildDialog(auto = false)
+        check()
+    }
+
+    /** 앱을 켤 때 (MainActivity). 일주일에 한 번 조용히 확인하고 새 버전이 있을 때만 알린다. 실패해도 아무것도 보이지 않는다 */
+    fun autoCheck() {
+        val now = System.currentTimeMillis()
+        if (!UpdateSchedule.shouldCheck(now, prefs.getLong("lastCheck", 0L), prefs.getLong("snoozeUntil", 0L))) return
+        activity.lifecycleScope.launch {
+            val r = try {
+                withContext(Dispatchers.IO) { fetchLatest() }
+            } catch (e: Exception) {
+                prefs.edit().putLong("lastCheck", UpdateSchedule.lastCheckAfterFailure(now)).apply()
+                return@launch
+            }
+            prefs.edit().putLong("lastCheck", now).apply()
+            if (!isNewer(r.name, currentName())) return@launch
+            if (activity.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) offer(r)
+            else pendingOffer = r
+        }
+    }
+
+    /** 새 버전 알림 상자 */
+    private fun offer(r: Release) {
+        if (dialog != null || activity.isFinishing || activity.isDestroyed) return
+        buildDialog(auto = true)
+        showRelease(r)
+    }
+
+    private fun buildDialog(auto: Boolean) {
+        this.auto = auto
+        accepted = false
         val box = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             val p = (24 * d).toInt()
@@ -85,21 +128,24 @@ class Updater(private val activity: AppCompatActivity) {
         val scroll = android.widget.ScrollView(activity).apply { addView(notes) }
         box.addView(scroll, LinearLayout.LayoutParams(-1, -2))
 
-        dialog = MaterialAlertDialogBuilder(activity)
-            .setTitle("앱 정보 · 업데이트")
+        val builder = MaterialAlertDialogBuilder(activity)
+            .setTitle(if (auto) "새 버전이 나왔습니다" else "앱 정보 · 업데이트")
             .setView(box)
             .setPositiveButton("업데이트 확인", null)
-            .setNeutralButton("건의 · 오류 신고", null)
-            .setNegativeButton("닫기", null)
-            .create()
-            .also { dlg ->
-                dlg.setOnDismissListener { job?.cancel(); dialog = null }
-                dlg.show()
-                // 단추를 눌러도 상자가 닫히지 않게 직접 건다
-                dlg.getButton(DialogInterface.BUTTON_NEGATIVE).setOnClickListener { dlg.dismiss() }
-                dlg.getButton(DialogInterface.BUTTON_NEUTRAL).setOnClickListener { Feedback(activity).show() }
+            .setNegativeButton(if (auto) "나중에" else "닫기", null)
+        if (!auto) builder.setNeutralButton("건의 · 오류 신고", null)
+        dialog = builder.create().also { dlg ->
+            dlg.setOnDismissListener {
+                job?.cancel()
+                dialog = null
+                // 알림을 받고도 업데이트하지 않았으면 2주일 동안 알리지 않는다
+                if (auto && !accepted) prefs.edit().putLong("snoozeUntil", UpdateSchedule.snoozeUntil(System.currentTimeMillis())).apply()
             }
-        check()
+            dlg.show()
+            // 단추를 눌러도 상자가 닫히지 않게 직접 건다
+            dlg.getButton(DialogInterface.BUTTON_NEGATIVE).setOnClickListener { dlg.dismiss() }
+            if (!auto) dlg.getButton(DialogInterface.BUTTON_NEUTRAL).setOnClickListener { Feedback(activity).show() }
+        }
     }
 
     private fun setAction(label: String, onClick: () -> Unit) {
@@ -140,14 +186,18 @@ class Updater(private val activity: AppCompatActivity) {
                 setAction("다시 확인") { check() }
                 return@launch
             }
-            release = r
-            status.text = "새 버전이 있습니다: ${r.name}  (${mb(r.size)})"
-            if (r.notes.isNotBlank()) {
-                notes.text = r.notes
-                notes.visibility = View.VISIBLE
-            }
-            setAction("업데이트") { download(r) }
+            showRelease(r)
         }
+    }
+
+    private fun showRelease(r: Release) {
+        release = r
+        status.text = "새 버전이 있습니다: ${r.name}  (${mb(r.size)})"
+        if (r.notes.isNotBlank()) {
+            notes.text = r.notes
+            notes.visibility = View.VISIBLE
+        }
+        setAction("업데이트") { download(r) }
     }
 
     /** GitHub의 최신 릴리스 정보 (APK는 .apk로 끝나는 첫 파일) */
@@ -198,6 +248,7 @@ class Updater(private val activity: AppCompatActivity) {
     // ================= 내려받기·설치 =================
 
     private fun download(r: Release) {
+        accepted = true
         job?.cancel()
         hideAction()
         notes.visibility = View.GONE
@@ -308,6 +359,7 @@ class Updater(private val activity: AppCompatActivity) {
 
     /** 설정에서 돌아왔을 때: 허용했으면 받아 둔 APK를 이어서 설치한다 */
     fun onResume() {
+        pendingOffer?.let { pendingOffer = null; offer(it) }
         val f = ready ?: return
         if (waitingForPermission && dialog != null && activity.packageManager.canRequestPackageInstalls()) install(f)
     }
